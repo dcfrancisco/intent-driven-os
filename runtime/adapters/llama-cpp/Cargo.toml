@@ -1,0 +1,17 @@
+[package]
+name = "oid-llama-cpp-adapter"
+description = "Contract-only llama.cpp backend adapter skeleton for the Intelligent Runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+oid-runtime = { path = "../.." }
+oid-shared = { path = "../../../shared" }
+
+[lints]
+workspace = true
+

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "shared",
+    "runtime",
+    "runtime/adapters/llama-cpp",
+    "console",
+    "crates/common",
+    "crates/intent-runtime",
+    "crates/linux-skills",
+    "crates/policy-engine",
+    "crates/verification-engine",
+    "crates/evidence-engine",
+    "crates/plugin-sdk",
+    "crates/model-runner",
+    "crates/desktop-shell",
+    "crates/docs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.82"
+authors = ["Open Intelligence Desktop contributors"]
+repository = "https://github.com/open-intelligence-desktop/open-intelligence-desktop"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

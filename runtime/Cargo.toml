@@ -1,0 +1,16 @@
+[package]
+name = "oid-runtime"
+description = "Phase 1 Intelligent Runtime architecture and lifecycle foundation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+oid-shared = { path = "../shared" }
+
+[lints]
+workspace = true
+
