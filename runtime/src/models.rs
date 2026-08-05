@@ -13,6 +13,12 @@ pub enum ModelStatus {
     Registered,
     /// A backend reports the model as loaded.
     Loaded,
+    /// A backend is currently loading the model.
+    Loading,
+    /// A backend is currently unloading the model.
+    Unloading,
+    /// Loading or unloading failed.
+    Failed,
     /// The model is unavailable or invalid.
     Unavailable,
 }
@@ -22,6 +28,9 @@ impl ModelStatus {
         match self {
             Self::Registered => "registered",
             Self::Loaded => "loaded",
+            Self::Loading => "loading",
+            Self::Unloading => "unloading",
+            Self::Failed => "failed",
             Self::Unavailable => "unavailable",
         }
     }
@@ -29,6 +38,9 @@ impl ModelStatus {
     fn parse(value: &str) -> Self {
         match value {
             "loaded" => Self::Loaded,
+            "loading" => Self::Loading,
+            "unloading" => Self::Unloading,
+            "failed" => Self::Failed,
             "unavailable" => Self::Unavailable,
             _ => Self::Registered,
         }
@@ -194,8 +206,11 @@ impl ModelRegistry {
         drop(models);
         let event = match status {
             ModelStatus::Loaded => RuntimeEvent::ModelLoaded(id.to_owned()),
-            ModelStatus::Registered | ModelStatus::Unavailable => {
+            ModelStatus::Registered | ModelStatus::Unavailable | ModelStatus::Failed => {
                 RuntimeEvent::ModelUnloaded(id.to_owned())
+            }
+            ModelStatus::Loading | ModelStatus::Unloading => {
+                RuntimeEvent::ModelLoading(id.to_owned())
             }
         };
         self.bus.publish(&event);
@@ -248,6 +263,107 @@ impl ModelCatalog for ModelRegistry {
 /// Empty catalog retained for the lower-level foundation runtime.
 #[derive(Clone, Debug, Default)]
 pub struct EmptyModelCatalog;
+
+/// Configurable GGUF model discovery service.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelDiscovery {
+    directories: Vec<PathBuf>,
+}
+
+impl ModelDiscovery {
+    /// Construct discovery for explicit directories.
+    #[must_use]
+    pub const fn new(directories: Vec<PathBuf>) -> Self {
+        Self { directories }
+    }
+
+    /// Return the default user and workspace model directories.
+    #[must_use]
+    pub fn default_directories() -> Vec<PathBuf> {
+        let mut directories = Vec::new();
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = PathBuf::from(home);
+            directories.push(home.join(".local/share/intelligent-runtime/models"));
+            directories.push(home.join("Models"));
+        }
+        directories.push(PathBuf::from("models"));
+        directories
+    }
+
+    /// Discover GGUF files and register metadata without loading models.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a discovery directory cannot be read or metadata
+    /// cannot be registered.
+    pub fn discover(
+        &self,
+        registry: &ModelRegistry,
+        backend: &str,
+    ) -> Result<Vec<ModelMetadata>, RuntimeError> {
+        let mut discovered = Vec::new();
+        for directory in &self.directories {
+            if directory.is_dir() {
+                Self::visit(directory, registry, backend, &mut discovered)?;
+            }
+        }
+        Ok(discovered)
+    }
+
+    fn visit(
+        directory: &Path,
+        registry: &ModelRegistry,
+        backend: &str,
+        discovered: &mut Vec<ModelMetadata>,
+    ) -> Result<(), RuntimeError> {
+        let entries = fs::read_dir(directory)
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        for entry in entries {
+            let path = entry
+                .map_err(|error| RuntimeError::Persistence(error.to_string()))?
+                .path();
+            if path.is_dir() {
+                Self::visit(&path, registry, backend, discovered)?;
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
+            {
+                let id = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .ok_or_else(|| RuntimeError::InvalidModel(path.display().to_string()))?
+                    .to_owned();
+                if registry.inspect(&id).is_some() {
+                    continue;
+                }
+                let bytes = path
+                    .metadata()
+                    .map(|metadata| metadata.len())
+                    .unwrap_or_default();
+                let model = ModelMetadata {
+                    id: id.clone(),
+                    name: path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or(&id)
+                        .to_owned(),
+                    family: "unknown".to_owned(),
+                    backend: backend.to_owned(),
+                    quantization: "unknown".to_owned(),
+                    context_window: 0,
+                    memory_requirement_mb: bytes.div_ceil(1_048_576),
+                    capabilities: vec!["text".to_owned()],
+                    status: ModelStatus::Registered,
+                    checksum: None,
+                    location: path.display().to_string(),
+                };
+                registry.register(model.clone())?;
+                discovered.push(model);
+            }
+        }
+        Ok(())
+    }
+}
 
 impl ModelCatalog for EmptyModelCatalog {
     fn list(&self) -> Vec<ModelMetadata> {
@@ -349,7 +465,7 @@ fn decode_registry(contents: &str) -> Result<BTreeMap<String, ModelMetadata>, Ru
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelMetadata, ModelRegistry, ModelStatus};
+    use super::{ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus};
     use oid_shared::{EventBus, RuntimeEvent};
 
     fn model() -> ModelMetadata {
@@ -399,5 +515,23 @@ mod tests {
             "demo"
         );
         std::fs::remove_file(path).expect("remove test registry");
+    }
+
+    #[test]
+    fn discovers_only_gguf_files_and_registers_metadata() {
+        let directory =
+            std::env::temp_dir().join(format!("oid-model-discovery-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create discovery directory");
+        std::fs::write(directory.join("qwen3.gguf"), [0_u8; 8]).expect("write gguf");
+        std::fs::write(directory.join("notes.txt"), "not a model").expect("write note");
+        let bus = EventBus::new();
+        let registry = ModelRegistry::in_memory(bus);
+        let discovered = ModelDiscovery::new(vec![directory.clone()])
+            .discover(&registry, "llama.cpp")
+            .expect("discover models");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].id, "qwen3");
+        assert_eq!(registry.list().len(), 1);
+        std::fs::remove_dir_all(directory).expect("remove discovery directory");
     }
 }

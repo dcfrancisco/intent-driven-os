@@ -1,5 +1,6 @@
 //! Backend contracts and runtime-owned backend management.
 
+use crate::models::ModelMetadata;
 use oid_shared::{EventBus, RuntimeError, RuntimeEvent};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -13,6 +14,17 @@ pub struct BackendDescriptor {
     pub name: String,
     /// Adapter contract version.
     pub version: String,
+    /// Native engine/library version or build information, when available.
+    pub library_version: Option<String>,
+}
+
+/// Result of a backend model load operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedModel {
+    /// Runtime model identifier.
+    pub model_id: String,
+    /// Backend-reported model memory in bytes.
+    pub memory_bytes: u64,
 }
 
 /// Runtime view of a backend registration.
@@ -116,7 +128,7 @@ pub trait Backend: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when the backend cannot load the requested model.
-    fn load_model(&self, model_id: &str) -> Result<(), RuntimeError>;
+    fn load_model(&self, model: &ModelMetadata) -> Result<LoadedModel, RuntimeError>;
     /// Unload a model by runtime model identifier.
     ///
     /// # Errors
@@ -146,6 +158,14 @@ pub trait Backend: Send + Sync {
     fn embeddings(&self, request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError>;
     /// Report tool support without exposing backend-native types.
     fn tool_support(&self) -> ToolSupport;
+    /// Count tokens using the backend's tokenizer when available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backend has no tokenizer.
+    fn tokenize(&self, _text: &str) -> Result<usize, RuntimeError> {
+        Err(RuntimeError::NotImplemented("tokenization"))
+    }
 }
 
 #[derive(Default)]
@@ -221,6 +241,8 @@ impl BackendManager {
         drop(state);
         self.bus
             .publish(&RuntimeEvent::BackendEnabled(id.to_owned()));
+        self.bus
+            .publish(&RuntimeEvent::BackendInitialized(id.to_owned()));
         Ok(())
     }
 
@@ -316,6 +338,60 @@ impl BackendManager {
             .and_then(|state| state.backends.get(id).map(|backend| backend.health()))
     }
 
+    /// Load a model through the selected active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or loading fails.
+    pub fn load_model(&self, model: &ModelMetadata) -> Result<LoadedModel, RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .load_model(model)
+    }
+
+    /// Unload a model through the selected active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or unloading fails.
+    pub fn unload_model(&self, model_id: &str) -> Result<(), RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .unload_model(model_id)
+    }
+
+    /// Tokenize text through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or tokenization fails.
+    pub fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .tokenize(text)
+    }
+
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, BackendManagerState>, RuntimeError> {
         self.state
             .lock()
@@ -333,6 +409,7 @@ impl Backend for MockBackend {
             id: "mock".to_owned(),
             name: "Mock Backend".to_owned(),
             version: "0.1".to_owned(),
+            library_version: Some("mock-0.1".to_owned()),
         }
     }
 
@@ -352,8 +429,11 @@ impl Backend for MockBackend {
         Ok(Vec::new())
     }
 
-    fn load_model(&self, _model_id: &str) -> Result<(), RuntimeError> {
-        Ok(())
+    fn load_model(&self, model: &ModelMetadata) -> Result<LoadedModel, RuntimeError> {
+        Ok(LoadedModel {
+            model_id: model.id.clone(),
+            memory_bytes: model.memory_requirement_mb * 1_048_576,
+        })
     }
 
     fn unload_model(&self, _model_id: &str) -> Result<(), RuntimeError> {
@@ -385,6 +465,10 @@ impl Backend for MockBackend {
             reason: "mock backend has no tool implementation".to_owned(),
         }
     }
+
+    fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
+        Ok(text.split_whitespace().count())
+    }
 }
 
 #[cfg(test)]
@@ -404,5 +488,31 @@ mod tests {
         assert!(summary[0].enabled);
         assert!(summary[0].active);
         assert_eq!(manager.active_backend().as_deref(), Some("mock"));
+    }
+
+    #[test]
+    fn mock_backend_reports_load_memory_and_token_count() {
+        use crate::models::{ModelMetadata, ModelStatus};
+        let manager = BackendManager::new(EventBus::new());
+        manager.register(Box::new(MockBackend)).expect("register");
+        manager.enable("mock").expect("enable");
+        let model = ModelMetadata {
+            id: "demo".to_owned(),
+            name: "Demo".to_owned(),
+            family: "demo".to_owned(),
+            backend: "mock".to_owned(),
+            quantization: "none".to_owned(),
+            context_window: 128,
+            memory_requirement_mb: 2,
+            capabilities: vec!["text".to_owned()],
+            status: ModelStatus::Registered,
+            checksum: None,
+            location: "demo.gguf".to_owned(),
+        };
+        assert_eq!(
+            manager.load_model(&model).expect("load").memory_bytes,
+            2 * 1_048_576
+        );
+        assert_eq!(manager.tokenize("hello world"), Ok(2));
     }
 }

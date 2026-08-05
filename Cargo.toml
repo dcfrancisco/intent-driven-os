@@ -4,6 +4,7 @@ members = [
     "shared",
     "runtime",
     "runtime/adapters/llama-cpp",
+    "runtime/adapters/llama-cpp/sys",
     "console",
     "crates/common",
     "crates/intent-runtime",

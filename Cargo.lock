@@ -43,6 +43,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oid-llama-cpp-sys"
+version = "0.1.0"
+
+[[package]]
 name = "oid-model-runner"
 version = "0.1.0"
 
@@ -58,6 +62,7 @@ version = "0.1.0"
 name = "oid-runtime"
 version = "0.1.0"
 dependencies = [
+ "oid-llama-cpp-sys",
  "oid-shared",
 ]
 

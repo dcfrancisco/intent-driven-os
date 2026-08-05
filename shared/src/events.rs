@@ -58,6 +58,14 @@ pub enum RuntimeEvent {
     HardwareDetected,
     /// Runtime health changed.
     HealthUpdated(String),
+    /// A backend initialization completed.
+    BackendInitialized(String),
+    /// A model began loading.
+    ModelLoading(String),
+    /// A model began unloading.
+    ModelUnloading(String),
+    /// Hardware-backed tokenizer became available.
+    TokenizerReady(String),
 }
 
 /// A subscription to events published by an [`EventBus`].

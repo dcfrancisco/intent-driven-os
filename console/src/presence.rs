@@ -99,7 +99,11 @@ impl PresenceIndicator {
             | RuntimeEvent::ModelLoaded(_)
             | RuntimeEvent::ModelUnloaded(_)
             | RuntimeEvent::HardwareDetected
-            | RuntimeEvent::HealthUpdated(_) => self.state,
+            | RuntimeEvent::HealthUpdated(_)
+            | RuntimeEvent::BackendInitialized(_)
+            | RuntimeEvent::ModelLoading(_)
+            | RuntimeEvent::ModelUnloading(_)
+            | RuntimeEvent::TokenizerReady(_) => self.state,
         };
     }
 }

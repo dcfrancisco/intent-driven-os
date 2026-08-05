@@ -10,7 +10,7 @@ repository.workspace = true
 
 [dependencies]
 oid-shared = { path = "../shared" }
+oid-llama-cpp-sys = { path = "adapters/llama-cpp/sys" }
 
 [lints]
 workspace = true
-

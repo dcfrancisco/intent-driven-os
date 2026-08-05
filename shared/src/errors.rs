@@ -30,6 +30,16 @@ pub enum RuntimeError {
     ModelNotFound(String),
     /// Persistent model registry storage failed.
     Persistence(String),
+    /// The native llama.cpp library is not available.
+    NativeBackendUnavailable(String),
+    /// A native backend operation failed.
+    NativeBackend(String),
+    /// A model file is invalid for the requested operation.
+    InvalidModel(String),
+    /// A model lifecycle operation failed.
+    ModelLifecycle(String),
+    /// Tokenization could not be completed.
+    Tokenization(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -55,6 +65,13 @@ impl fmt::Display for RuntimeError {
             Self::Persistence(message) => {
                 write!(formatter, "model registry persistence error: {message}")
             }
+            Self::NativeBackendUnavailable(message) => {
+                write!(formatter, "native backend unavailable: {message}")
+            }
+            Self::NativeBackend(message) => write!(formatter, "native backend error: {message}"),
+            Self::InvalidModel(message) => write!(formatter, "invalid model: {message}"),
+            Self::ModelLifecycle(message) => write!(formatter, "model lifecycle error: {message}"),
+            Self::Tokenization(message) => write!(formatter, "tokenization error: {message}"),
         }
     }
 }

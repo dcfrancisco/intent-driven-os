@@ -18,10 +18,12 @@ impl StatusBar {
     pub fn line(runtime: &dyn RuntimeService, time: &str) -> String {
         let snapshot = runtime.snapshot();
         format!(
-            " Runtime: {} | Active backend: {} | Loaded model: {} | Uptime: {}s | Time: {}",
+            " Runtime: {} | Active backend: {} | Backend version: {} | Loaded model: {} | Model memory: {} | Uptime: {}s | Time: {}",
             snapshot.health,
             snapshot.backend,
+            snapshot.backend_version.as_deref().unwrap_or("--"),
             snapshot.loaded_model.as_deref().unwrap_or("None"),
+            snapshot.model_memory_bytes.map_or_else(|| "--".to_owned(), |bytes| format!("{} MB", bytes / 1_048_576)),
             snapshot.uptime_seconds,
             time
         )
@@ -50,7 +52,9 @@ mod tests {
         let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
         let line = StatusBar::line(&runtime, "12:34:56");
         assert!(line.contains("Runtime: Healthy"));
-        assert!(line.contains("Active backend: mock"));
+        assert!(line.contains("Active backend: None"));
+        assert!(line.contains("Backend version: --"));
+        assert!(line.contains("Model memory: --"));
         assert!(line.contains("Loaded model: None"));
         assert!(line.contains("Uptime: "));
         assert!(line.contains("Time: 12:34:56"));

@@ -26,5 +26,9 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0024 | Model Registry | Persistent model metadata management |
 | WP-0025 | Hardware Discovery | Platform-neutral hardware service |
 | WP-0026 | llama.cpp Adapter Skeleton | Contract-only first backend adapter |
+| WP-0027 | Native llama.cpp Integration | Direct official C API lifecycle and health integration |
+| WP-0028 | Model Discovery | Configurable recursive GGUF discovery |
+| WP-0029 | Model Loader | Single-model load/unload lifecycle and memory accounting |
+| WP-0030 | Tokenizer | Backend-routed UTF-8 token counting |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

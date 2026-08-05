@@ -68,6 +68,7 @@ impl<'a> HistoryView<'a> {
 
 /// Process the Phase 2 built-in command set.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn execute(
     input: &str,
     history: &HistoryView<'_>,
@@ -85,8 +86,14 @@ pub fn execute(
                 "  runtime  Show runtime service details".to_owned(),
                 "  health   Show runtime health".to_owned(),
                 "  backend  Show backend registrations".to_owned(),
+                "  backend info  Show active backend details".to_owned(),
                 "  models   List registered model metadata".to_owned(),
                 "  model inspect <id>  Inspect model metadata".to_owned(),
+                "  model load <id>  Load a GGUF model".to_owned(),
+                "  model unload <id>  Unload a model".to_owned(),
+                "  model status  Show model lifecycle state".to_owned(),
+                "  tokenize <text>  Count tokens in text".to_owned(),
+                "  count <path>  Count file tokens".to_owned(),
                 "  hardware Show discovered hardware".to_owned(),
                 "  history  Show command history".to_owned(),
                 "  clear    Clear the console".to_owned(),
@@ -108,6 +115,7 @@ pub fn execute(
             )
         }
         "backend" | "backend list" => (backend_lines(runtime), CommandAction::Continue),
+        "backend info" => (backend_info_lines(runtime), CommandAction::Continue),
         "backend status" => {
             let snapshot = runtime.snapshot();
             let health = runtime
@@ -129,6 +137,35 @@ pub fn execute(
                 |model| model_lines_for(&model),
             );
             (output, CommandAction::Continue)
+        }
+        _ if command.starts_with("model load ") => {
+            let id = command.trim_start_matches("model load ").trim();
+            (
+                operation_result_unit(runtime.model_load(id), &format!("Model loaded: {id}")),
+                CommandAction::Continue,
+            )
+        }
+        _ if command.starts_with("model unload ") => {
+            let id = command.trim_start_matches("model unload ").trim();
+            (
+                operation_result_unit(runtime.model_unload(id), &format!("Model unloaded: {id}")),
+                CommandAction::Continue,
+            )
+        }
+        "model status" => (model_lines(runtime), CommandAction::Continue),
+        _ if command.starts_with("tokenize ") => {
+            let text = command.trim_start_matches("tokenize ");
+            (token_count_lines(runtime, text), CommandAction::Continue)
+        }
+        _ if command.starts_with("count ") => {
+            let path = command.trim_start_matches("count ").trim();
+            let output = std::fs::read_to_string(path)
+                .map_err(|error| oid_runtime::RuntimeError::Persistence(error.to_string()))
+                .and_then(|text| runtime.tokenize(&text));
+            (
+                operation_result(output, &format!("Tokens in {path}")),
+                CommandAction::Continue,
+            )
         }
         "hardware" => (hardware_lines(runtime), CommandAction::Continue),
         "history" => (
@@ -187,6 +224,42 @@ fn backend_lines(runtime: &dyn RuntimeService) -> Vec<String> {
             )
         })
         .collect()
+}
+
+fn backend_info_lines(runtime: &dyn RuntimeService) -> Vec<String> {
+    let snapshot = runtime.snapshot();
+    vec![
+        format!("Backend : {}", snapshot.backend),
+        format!(
+            "Version : {}",
+            snapshot.backend_version.as_deref().unwrap_or("Unavailable")
+        ),
+        format!("Health  : {}", snapshot.health),
+    ]
+}
+
+fn token_count_lines(runtime: &dyn RuntimeService, text: &str) -> Vec<String> {
+    operation_result(runtime.tokenize(text), "Tokens")
+}
+
+fn operation_result<T: std::fmt::Display>(
+    result: Result<T, oid_runtime::RuntimeError>,
+    success: &str,
+) -> Vec<String> {
+    result.map_or_else(
+        |error| vec![format!("Error: {error}")],
+        |value| vec![format!("{success}: {value}")],
+    )
+}
+
+fn operation_result_unit(
+    result: Result<(), oid_runtime::RuntimeError>,
+    success: &str,
+) -> Vec<String> {
+    result.map_or_else(
+        |error| vec![format!("Error: {error}")],
+        |()| vec![success.to_owned()],
+    )
 }
 
 fn model_lines(runtime: &dyn RuntimeService) -> Vec<String> {

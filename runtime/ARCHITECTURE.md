@@ -23,7 +23,7 @@ flowchart LR
 
 The runtime should be usable in-process for local consumers and as a local service over a Unix socket. An optional TCP endpoint may be added for controlled multi-process or enterprise deployments.
 
-## Phase 3 runtime services
+## Phase 4 runtime services
 
 The runtime foundation now separates four service concerns:
 
@@ -32,10 +32,32 @@ The runtime foundation now separates four service concerns:
 - `HardwareService` owns normalized CPU, memory, operating-system, architecture, and SIMD discovery, with GPU/NPU placeholders.
 - `RuntimeService` is the client-facing read/query boundary consumed by the AI Console.
 
-The `oid-llama-cpp-adapter` crate implements only the `Backend` contract and
-depends on `oid-runtime`; the runtime does not depend on the adapter. This
-keeps future vLLM, Ollama, Docker Model Runner, and remote provider adapters
-behind the same boundary without creating circular dependencies.
+The runtime owns the composition root and registers `LlamaCppAdapter` through
+the common `Backend` contract. The `oid-llama-cpp-adapter` package re-exports
+that stable runtime boundary for future plugin loading; the console never
+constructs or accesses a concrete adapter. The `oid-llama-cpp-sys` crate is the
+only unsafe boundary and links directly to `libllama` when configured.
+
+### Native API boundary
+
+The adapter calls `llama_backend_init`, `llama_backend_free`,
+`llama_print_system_info`, `llama_model_load_from_file`, `llama_model_free`,
+`llama_model_size`, and `llama_tokenize`. The public runtime exposes only
+descriptors, health, model lifecycle results, and token counts. No llama.cpp
+pointer, context, sampler, GGUF parser, or inference operation crosses the
+runtime API.
+
+### Model discovery and lifecycle
+
+`ModelDiscovery` recursively scans configured directories for case-insensitive
+`.gguf` files and registers metadata without opening a model. Defaults are
+`~/.local/share/intelligent-runtime/models`, `~/Models`, and `./models`.
+
+The initial loader admits one model. It publishes `ModelLoading`, transitions
+metadata to `Loading`, calls the active backend, records backend-reported
+memory, then publishes `ModelLoaded`. Failure records `Failed` and emits an
+error event. Unload follows the corresponding `ModelUnloading` and
+`ModelUnloaded` path.
 
 ## Module responsibilities
 

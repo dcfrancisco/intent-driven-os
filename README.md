@@ -6,7 +6,12 @@ The runtime has no UI. It manages model lifecycle, hardware resources, backend a
 
 ## Status
 
-This repository contains the Phase 2 Rust workspace foundation and interactive console reference client. The runtime uses deterministic mock services; AI inference, llama.cpp, hardware probing, and Linux operations are not implemented.
+This repository contains the Phase 4 Rust workspace and interactive console
+reference client. The runtime now has a backend-neutral native llama.cpp
+integration boundary, GGUF discovery, model lifecycle management, and
+tokenizer routing. Text generation and other AI capabilities are intentionally
+not implemented yet. Without `LLAMA_CPP_LIB_DIR`, the native backend reports
+unavailable while the console remains usable for architecture validation.
 
 ## Workspace
 
@@ -14,6 +19,8 @@ This repository contains the Phase 2 Rust workspace foundation and interactive c
 | --- | --- |
 | `oid-shared` | Runtime/console types, errors, configuration, and events |
 | `oid-runtime` | Intelligent Runtime lifecycle, service interfaces, and mock runtime |
+| `oid-llama-cpp-adapter` | Public package boundary for the native llama.cpp adapter |
+| `oid-llama-cpp-sys` | Direct, opt-in official llama.cpp C API link boundary |
 | `oid-console` | Keyboard-first interactive AI Console reference client |
 | `oid-common` | Shared models, errors, configuration, logging, and utilities |
 | `oid-intent-runtime` | Intent contracts and lifecycle state machine |

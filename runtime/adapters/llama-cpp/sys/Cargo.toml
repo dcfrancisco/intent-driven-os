@@ -1,0 +1,19 @@
+[package]
+name = "oid-llama-cpp-sys"
+description = "Direct, opt-in FFI boundary for the official llama.cpp C API."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_debug_implementations = "warn"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

@@ -23,6 +23,10 @@ pub struct RuntimeSnapshot {
     pub loaded_model: Option<String>,
     /// Seconds since the mock/runtime service started.
     pub uptime_seconds: u64,
+    /// Backend-reported library information.
+    pub backend_version: Option<String>,
+    /// Memory used by the loaded model.
+    pub model_memory_bytes: Option<u64>,
 }
 
 /// Runtime-facing service contract used by clients.
@@ -39,6 +43,24 @@ pub trait RuntimeService: Send + Sync {
     fn model_list(&self) -> Vec<ModelMetadata>;
     /// Inspect model metadata by identifier.
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata>;
+    /// Load a registered model through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model is unknown or the backend rejects it.
+    fn model_load(&self, id: &str) -> Result<(), oid_shared::RuntimeError>;
+    /// Unload the active model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model is not loaded or the backend rejects it.
+    fn model_unload(&self, id: &str) -> Result<(), oid_shared::RuntimeError>;
+    /// Count tokens using the active backend tokenizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no tokenizer is available or tokenization fails.
+    fn tokenize(&self, text: &str) -> Result<usize, oid_shared::RuntimeError>;
     /// Return normalized hardware information.
     fn hardware(&self) -> HardwareSnapshot;
     /// Return an event publisher handle.
