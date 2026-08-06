@@ -92,9 +92,32 @@ stateDiagram-v2
     RollbackFailed --> [*]
 ```
 
-The lifecycle contracts are now implemented in `oid-intent-runtime`. Execution adapters,
-policy implementations, persistence, and rollback behavior remain intentionally absent.
+The lifecycle contracts are now implemented in `oid-intent-runtime`. The first
+read-only and directory-operation adapters use the shared execution model;
+broader Linux adapters, durable approvals, and crash recovery remain future work.
 State transitions are explicit, auditable, and testable.
+
+## Operation planning
+
+Every governed skill follows a canonical execution model:
+
+```mermaid
+flowchart LR
+    Request[Skill Request] --> Plan[OperationPlan]
+    Plan --> Inspect[Inspect / Serialize]
+    Plan --> Approval[Policy and Approval]
+    Approval --> Approved[ApprovedOperationPlan]
+    Approved --> Execute[ExecutionResult]
+    Execute --> Verify[VerificationResult]
+    Verify --> Evidence[Evidence]
+    Execute --> Rollback[RollbackResult]
+```
+
+`OperationPlan` declares risk, approval requirements, ordered steps,
+verification checks, and rollback support before execution. A raw skill request
+cannot be executed directly. The common crate stores an `IntentContext` snapshot
+to preserve clean dependency direction between the intent runtime and all
+operation providers.
 
 ## Non-functional constraints
 

@@ -1,19 +1,21 @@
 //! First end-to-end, read-only intent execution slice.
 
-use oid_common::{EvidenceId, IntentId, OidError, OperationId, SkillId};
+use oid_common::{
+    ApprovedOperationPlan, EvidenceId, IntentContext, IntentId, OidError, OperationId,
+    OperationPlan,
+};
 use oid_evidence_engine::{
     EvidenceRecord, EvidenceStore, FileEvidenceStore, InMemoryEvidenceStore,
 };
 use oid_intent_runtime::{IntentSession, IntentState};
 use oid_linux_skills::{
-    CreateDirectorySkill, LinuxSystemHealthSkill, OperationRequest, Skill, SystemHealthSkill,
+    CreateDirectorySkill, LinuxSystemHealthSkill, Skill, SkillRequest, SystemHealthSkill,
 };
 use oid_policy_engine::{
     Approval, ApprovalStore, AuthorizationDecision, AuthorizationRequest, InMemoryApprovalStore,
     PolicyEvaluator, ReadOnlyPolicy,
 };
 use oid_shared::{EventBus, RuntimeEvent};
-use oid_verification_engine::{InMemoryVerifier, Verifier};
 
 /// Execute the read-only system-health vertical slice.
 ///
@@ -26,23 +28,37 @@ use oid_verification_engine::{InMemoryVerifier, Verifier};
 pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
     let intent_id = IntentId::new("intent-system-health")?;
     let operation_id = OperationId::new("operation-system-health")?;
-    let skill_id = SkillId::new("system-health")?;
     let mut intent =
         IntentSession::new(intent_id.clone(), "inspect system health", events.clone())?;
+    let skill: Box<dyn Skill> = if std::env::consts::OS == "linux" {
+        Box::new(LinuxSystemHealthSkill::default())
+    } else {
+        Box::new(SystemHealthSkill::default())
+    };
+    let request = SkillRequest {
+        id: operation_id.clone(),
+        arguments: String::new(),
+    };
+    let mut plan = skill.plan(&request)?;
+    plan.intent = Some(IntentContext {
+        id: intent_id.clone(),
+        description: intent.intent().description.clone(),
+    });
+    plan.validate()?;
     let mut evidence = InMemoryEvidenceStore::default();
     append_evidence(
         &mut evidence,
         &intent_id,
         &operation_id,
         "plan",
-        "Inspect portable system health",
+        &plan.to_json()?,
     )?;
 
     intent.transition(IntentState::Authorized)?;
     let policy = ReadOnlyPolicy;
     let decision = policy.evaluate(&AuthorizationRequest {
         operation_id: operation_id.clone(),
-        skill_id,
+        skill_id: plan.skill.clone(),
         mutates_system: false,
     })?;
     append_evidence(
@@ -54,15 +70,9 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
     )?;
 
     intent.transition(IntentState::Executing)?;
-    let request = OperationRequest {
-        id: operation_id.clone(),
-        arguments: String::new(),
-    };
-    let result = if std::env::consts::OS == "linux" {
-        LinuxSystemHealthSkill::default().execute(&request)
-    } else {
-        SystemHealthSkill::default().execute(&request)
-    }?;
+    let plan_output = render_plan(&plan, "Executing");
+    let approved = ApprovedOperationPlan::new(plan, "policy:none")?;
+    let result = skill.execute(&approved)?;
     append_evidence(
         &mut evidence,
         &intent_id,
@@ -73,9 +83,7 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
     events.publish(&RuntimeEvent::OperationCompleted(operation_id.to_string()));
 
     intent.transition(IntentState::Verifying)?;
-    let mut verifier = InMemoryVerifier::default();
-    verifier.mark_successful(operation_id.clone());
-    let report = verifier.verify(&operation_id)?;
+    let report = skill.verify(&result)?;
     if !report.passed {
         intent.transition(IntentState::Failed)?;
         return Err(OidError::Verification(report.summary));
@@ -99,13 +107,13 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
         events.publish(&RuntimeEvent::EvidenceRecorded(id.clone()));
     }
 
-    Ok(vec![
-        format!(
-            "Intent: {} [{}]",
-            intent.intent().description,
-            intent.intent().state.as_str()
-        ),
-        "Plan: inspect portable system health".to_owned(),
+    let mut output = vec![format!(
+        "Intent: {} [{}]",
+        intent.intent().description,
+        intent.intent().state.as_str()
+    )];
+    output.extend(plan_output);
+    output.extend([
         "Policy: allowed (read-only operation; approval not required)".to_owned(),
         format!("Result: {}", result.summary),
         format!("Verification: {}", report.summary),
@@ -114,7 +122,8 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
             evidence_ids.join(", ")
         ),
         "Rollback: not applicable (read-only operation)".to_owned(),
-    ])
+    ]);
+    Ok(output)
 }
 
 /// Execute the explicitly approved directory-creation flow.
@@ -126,6 +135,7 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
 /// # Errors
 ///
 /// Returns an error when policy, validation, execution, verification, or evidence persistence fails.
+#[allow(clippy::too_many_lines)]
 pub fn run_create_directory(
     events: &EventBus,
     path: &str,
@@ -134,24 +144,33 @@ pub fn run_create_directory(
 ) -> Result<Vec<String>, OidError> {
     let intent_id = IntentId::new("intent-create-directory")?;
     let operation_id = OperationId::new("operation-create-directory")?;
-    let skill_id = SkillId::new("create-directory")?;
     let mut intent = IntentSession::new(
         intent_id.clone(),
         format!("create directory {path}"),
         events.clone(),
     )?;
+    let skill = CreateDirectorySkill::new();
+    let request = SkillRequest {
+        id: operation_id.clone(),
+        arguments: path.to_owned(),
+    };
+    let mut plan = skill.plan(&request)?;
+    plan.intent = Some(IntentContext {
+        id: intent_id.clone(),
+        description: intent.intent().description.clone(),
+    });
+    plan.validate()?;
     let mut evidence = FileEvidenceStore::new(evidence_path);
     append_evidence_store(
         &mut evidence,
         &intent_id,
         &operation_id,
         "plan",
-        &format!("Create directory {path}"),
+        &plan.to_json()?,
     )?;
-    intent.transition(IntentState::Authorized)?;
     let decision = ReadOnlyPolicy.evaluate(&AuthorizationRequest {
         operation_id: operation_id.clone(),
-        skill_id,
+        skill_id: plan.skill.clone(),
         mutates_system: true,
     })?;
     append_evidence_store(
@@ -166,15 +185,18 @@ pub fn run_create_directory(
             "mutating directory operation was not gated".to_owned(),
         ));
     };
+    intent.transition(IntentState::Authorized)?;
     if !approved {
         intent.transition(IntentState::AwaitingApproval)?;
         events.publish(&RuntimeEvent::ApprovalRequested);
-        return Ok(vec![
-            format!("Plan: create directory {path}"),
+        let mut output = render_plan(&plan, "Awaiting approval");
+        output.extend([
             format!("Why: {reason}"),
-            "Approval required: rerun with `--approve`".to_owned(),
+            "Run again with:".to_owned(),
+            format!("create directory {path} --approve"),
             format!("Evidence log: {}", evidence.path().display()),
         ]);
+        return Ok(output);
     }
 
     let mut approvals = InMemoryApprovalStore::default();
@@ -189,12 +211,9 @@ pub fn run_create_directory(
     }
     events.publish(&RuntimeEvent::ApprovalGranted);
     intent.transition(IntentState::Executing)?;
-    let request = OperationRequest {
-        id: operation_id.clone(),
-        arguments: path.to_owned(),
-    };
-    let skill = CreateDirectorySkill::new();
-    let result = skill.execute(&request)?;
+    let plan_output = render_plan(&plan, "Executing");
+    let approved_plan = ApprovedOperationPlan::new(plan, "user (--approve)")?;
+    let result = skill.execute(&approved_plan)?;
     append_evidence_store(
         &mut evidence,
         &intent_id,
@@ -204,9 +223,7 @@ pub fn run_create_directory(
     )?;
     events.publish(&RuntimeEvent::OperationCompleted(operation_id.to_string()));
     intent.transition(IntentState::Verifying)?;
-    let mut verifier = InMemoryVerifier::default();
-    verifier.mark_successful(operation_id.clone());
-    let report = verifier.verify(&operation_id)?;
+    let report = skill.verify(&result)?;
     if !report.passed {
         intent.transition(IntentState::Failed)?;
         return Err(OidError::Verification(report.summary));
@@ -219,18 +236,54 @@ pub fn run_create_directory(
         "verification",
         &report.summary,
     )?;
-    Ok(vec![
-        format!(
-            "Intent: {} [{}]",
-            intent.intent().description,
-            intent.intent().state.as_str()
-        ),
+    let mut output = vec![format!(
+        "Intent: {} [{}]",
+        intent.intent().description,
+        intent.intent().state.as_str()
+    )];
+    output.extend(plan_output);
+    output.extend([
         format!("Result: {}", result.summary),
         format!("Verification: {}", report.summary),
         format!("Evidence log: {}", evidence.path().display()),
         "Rollback: available with the same operation instance while the directory remains empty"
             .to_owned(),
-    ])
+    ]);
+    Ok(output)
+}
+
+/// Render the canonical plan in the standard terminal format.
+#[must_use]
+pub fn render_plan(plan: &OperationPlan, status: &str) -> Vec<String> {
+    let mut lines = vec![
+        "Operation Plan".to_owned(),
+        "──────────────────────────".to_owned(),
+        String::new(),
+        format!("Summary\n{}", plan.summary),
+        format!("Rationale\n{}", plan.rationale),
+        format!("Risk\n{}", plan.risk.as_str()),
+        format!("Approval\n{}", plan.approval.as_str()),
+        "Steps".to_owned(),
+    ];
+    lines.extend(
+        plan.steps
+            .iter()
+            .map(|step| format!("{}. {}", step.order, step.description)),
+    );
+    lines.push("Verification".to_owned());
+    lines.extend(
+        plan.verification
+            .checks
+            .iter()
+            .map(|check| format!("- {}", check.description)),
+    );
+    lines.push("Rollback".to_owned());
+    lines.push(plan.rollback.as_ref().map_or_else(
+        || "Not applicable".to_owned(),
+        |rollback| rollback.description.clone(),
+    ));
+    lines.push(format!("Status\n{status}"));
+    lines
 }
 
 fn append_evidence(

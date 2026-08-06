@@ -8,6 +8,14 @@
 
 use std::fmt;
 
+pub mod operation;
+
+pub use operation::{
+    ActionType, ApprovalRequirement, ApprovedOperationPlan, ExecutionResult, IntentContext,
+    OperationPlan, OperationStep, RiskLevel, RollbackPlan, RollbackResult, RollbackStep,
+    VerificationCheck, VerificationPlan, VerificationResult,
+};
+
 macro_rules! identifier {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*

@@ -3,21 +3,14 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use oid_common::{OidError, OperationId};
+use oid_common::{
+    ExecutionResult, OidError, OperationId, RollbackPlan, RollbackResult, VerificationPlan,
+    VerificationResult,
+};
 use std::collections::BTreeSet;
 
-/// Result of checking an operation's postconditions.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct VerificationReport {
-    /// Operation that was checked.
-    pub operation_id: OperationId,
-    /// Whether all required checks passed.
-    pub passed: bool,
-    /// Human-readable check summary.
-    pub summary: String,
-    /// Whether rollback should be attempted.
-    pub rollback_required: bool,
-}
+/// Backward-compatible name for the canonical verification result.
+pub type VerificationReport = VerificationResult;
 
 /// Post-operation verification boundary.
 pub trait Verifier: Send + Sync {
@@ -26,14 +19,22 @@ pub trait Verifier: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when verification cannot be performed.
-    fn verify(&self, operation_id: &OperationId) -> Result<VerificationReport, OidError>;
+    fn verify(
+        &self,
+        plan: &VerificationPlan,
+        execution: &ExecutionResult,
+    ) -> Result<VerificationResult, OidError>;
 
     /// Validate that a rollback restored the expected state.
     ///
     /// # Errors
     ///
     /// Returns an error when rollback verification cannot be performed.
-    fn verify_rollback(&self, operation_id: &OperationId) -> Result<VerificationReport, OidError>;
+    fn verify_rollback(
+        &self,
+        plan: &RollbackPlan,
+        execution: &ExecutionResult,
+    ) -> Result<RollbackResult, OidError>;
 }
 
 /// Deterministic verifier used by read-only operations and contract tests.
@@ -50,10 +51,14 @@ impl InMemoryVerifier {
 }
 
 impl Verifier for InMemoryVerifier {
-    fn verify(&self, operation_id: &OperationId) -> Result<VerificationReport, OidError> {
-        let passed = self.successful.contains(operation_id);
-        Ok(VerificationReport {
-            operation_id: operation_id.clone(),
+    fn verify(
+        &self,
+        plan: &VerificationPlan,
+        execution: &ExecutionResult,
+    ) -> Result<VerificationResult, OidError> {
+        let passed = !plan.checks.is_empty() && self.successful.contains(&execution.operation_id);
+        Ok(VerificationResult {
+            operation_id: execution.operation_id.clone(),
             passed,
             summary: if passed {
                 "postconditions passed"
@@ -61,16 +66,22 @@ impl Verifier for InMemoryVerifier {
                 "operation was not recorded"
             }
             .to_owned(),
-            rollback_required: false,
         })
     }
 
-    fn verify_rollback(&self, operation_id: &OperationId) -> Result<VerificationReport, OidError> {
-        Ok(VerificationReport {
-            operation_id: operation_id.clone(),
-            passed: false,
-            summary: "rollback is not applicable to this read-only operation".to_owned(),
-            rollback_required: false,
+    fn verify_rollback(
+        &self,
+        plan: &RollbackPlan,
+        execution: &ExecutionResult,
+    ) -> Result<RollbackResult, OidError> {
+        Ok(RollbackResult {
+            operation_id: execution.operation_id.clone(),
+            changed: plan.supported,
+            summary: if plan.supported {
+                plan.description.clone()
+            } else {
+                "rollback is not supported".to_owned()
+            },
         })
     }
 }

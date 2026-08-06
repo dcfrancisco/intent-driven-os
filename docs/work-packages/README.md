@@ -36,5 +36,7 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0034 | Runtime Metrics | Prompt, output, latency, throughput, and context metrics |
 | WP-0035 | Cancellation | Request cancellation without process termination |
 | WP-0036 | Generation Events | Observable generation lifecycle events |
+| WP-0037 | Dynamic CLI Capability Framework | Native, intent, and runtime-registered capability command routing |
+| WP-0038 | Operation Planning Framework | Canonical plan, approval, execution, verification, and rollback lifecycle |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

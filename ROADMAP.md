@@ -18,13 +18,20 @@
 - Add durable append-only file evidence storage.
 - Add the first explicitly approved, rollback-capable directory operation.
 
+## Operation Planning Framework — complete
+
+- Define canonical operation plans, steps, risk, approval, verification, and rollback models.
+- Require approved plans for skill execution.
+- Render inspectable plans in the terminal.
+- Migrate system-health and create-directory flows to the common lifecycle.
+
 ## Safe Linux operations — next
 
 - Add an operation registry and allowlist instead of direct skill selection.
 - Add durable approval records and crash recovery for interrupted operations.
 - Add more read-only skills before expanding mutating capabilities.
 
-## Safe Linux operations
+## Additional safe Linux operations
 
 - Implement a small, allowlisted set of read-only skills first.
 - Add explicit authorization and approval decisions.

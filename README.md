@@ -20,6 +20,9 @@ There is no chat history, prompt template, tool execution, or agent loop.
 The operation foundation now includes a read-only system-health flow, Linux
 `/proc` inspection, append-only file evidence, and an explicitly approved
 `create directory <path> --approve` operation with empty-directory rollback.
+Milestone 3 makes the execution model canonical: every governed skill produces
+an inspectable `OperationPlan` before approval, execution, verification, and
+rollback.
 
 ## Workspace
 

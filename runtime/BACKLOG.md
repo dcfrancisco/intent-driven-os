@@ -47,6 +47,9 @@ Items are intentionally written as design and implementation slices for future w
 
 ## v0.3 — Compatibility and extensibility
 
+- [ ] Define the dynamic CLI capability framework: native command pass-through,
+  runtime capability registration, routing, completion, collision handling, and
+  evidence integration. See WP-0037.
 - [ ] Define OpenAI-compatible chat/completions translation, streaming mapping, errors, and capability gaps.
 - [ ] Evaluate and specify a second adapter from vLLM, ONNX Runtime, OpenVINO, or TensorRT-LLM.
 - [ ] Define Ollama and Docker Model Runner adapter boundaries.
@@ -63,4 +66,3 @@ Items are intentionally written as design and implementation slices for future w
 - [ ] Define upgrade, cache migration, rollback, and disaster recovery procedures.
 - [ ] Publish backend support matrix, hardware support matrix, capacity guidance, and SLOs.
 - [ ] Define OIP integration contracts and interoperability test suite.
-

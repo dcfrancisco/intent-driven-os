@@ -10,3 +10,4 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0006 — Security by Default](0006-security-by-default.md)
 - [ADR-0007 — Hardware-Aware Runtime](0007-hardware-aware-runtime.md)
 - [ADR-0008 — Plugin Architecture](0008-plugin-architecture.md)
+- [ADR-0009 — Canonical Operation Planning Framework](0009-operation-planning-framework.md)

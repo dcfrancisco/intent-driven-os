@@ -5,7 +5,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-use oid_common::{OidError, OperationId, SkillId};
+use oid_common::{
+    ActionType, ApprovalRequirement, ApprovedOperationPlan, ExecutionResult, OidError, OperationId,
+    OperationPlan, OperationStep, RiskLevel, RollbackPlan, RollbackResult, RollbackStep, SkillId,
+    VerificationCheck, VerificationPlan, VerificationResult,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -22,40 +26,62 @@ pub struct SkillDescriptor {
 
 /// Input passed to a skill adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperationRequest {
+pub struct SkillRequest {
     /// Stable operation identity.
     pub id: OperationId,
     /// Serialized, skill-specific arguments.
     pub arguments: String,
 }
 
-/// Result returned by a skill adapter.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperationResult {
-    /// Human-readable summary of the observed change.
-    pub summary: String,
-    /// Whether the adapter reports that a change occurred.
-    pub changed: bool,
-}
+/// Backward-compatible name for a skill request.
+pub type OperationRequest = SkillRequest;
+
+/// Backward-compatible name for an execution result.
+pub type OperationResult = ExecutionResult;
 
 /// Typed boundary for a Linux operation.
 pub trait Skill: Send + Sync {
     /// Return the capability metadata.
     fn descriptor(&self) -> &SkillDescriptor;
 
-    /// Execute the operation after policy and approval have succeeded.
+    /// Produce a validated operation plan without changing system state.
     ///
     /// # Errors
     ///
-    /// Returns an operation error when the adapter cannot complete the request.
-    fn execute(&self, request: &OperationRequest) -> Result<OperationResult, OidError>;
+    /// Returns an error when the request cannot be planned safely.
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError>;
 
-    /// Attempt a rollback when the operation provides one.
+    /// Execute only an approved operation plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operation error when the approved plan cannot be completed.
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError>;
+
+    /// Verify the execution against the plan's declared checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when verification cannot be completed.
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError>;
+
+    /// Roll back an execution when the plan declares rollback support.
     ///
     /// # Errors
     ///
     /// Returns an error when rollback is unavailable or fails.
-    fn rollback(&self, _request: &OperationRequest) -> Result<OperationResult, OidError> {
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError>;
+
+    /// Return a standard unsupported rollback result for read-only skills.
+    ///
+    /// # Errors
+    ///
+    /// Always returns an error because no rollback implementation is available.
+    fn no_rollback(execution: &ExecutionResult) -> Result<RollbackResult, OidError>
+    where
+        Self: Sized,
+    {
+        let _ = execution;
         Err(OidError::NotFound("rollback implementation".to_owned()))
     }
 }
@@ -83,7 +109,20 @@ impl Skill for SystemHealthSkill {
         &self.descriptor
     }
 
-    fn execute(&self, _request: &OperationRequest) -> Result<OperationResult, OidError> {
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        health_plan(
+            request.id.clone(),
+            self.descriptor.id.clone(),
+            "system health",
+        )
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        if approved_plan.plan.skill != self.descriptor.id {
+            return Err(OidError::Unauthorized(
+                "plan belongs to another skill".to_owned(),
+            ));
+        }
         let platform = std::env::consts::OS;
         let uptime = std::fs::read_to_string("/proc/uptime")
             .ok()
@@ -93,10 +132,23 @@ impl Skill for SystemHealthSkill {
             .ok()
             .and_then(|value| value.split_whitespace().next().map(str::to_owned))
             .unwrap_or_else(|| "unavailable".to_owned());
-        Ok(OperationResult {
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
             summary: format!("platform={platform}; uptime_seconds={uptime}; load_1m={load}"),
             changed: false,
         })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(VerificationResult {
+            operation_id: execution.operation_id.clone(),
+            passed: true,
+            summary: "health snapshot collected".to_owned(),
+        })
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
     }
 }
 
@@ -123,7 +175,15 @@ impl Skill for LinuxSystemHealthSkill {
         &self.descriptor
     }
 
-    fn execute(&self, _request: &OperationRequest) -> Result<OperationResult, OidError> {
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        health_plan(
+            request.id.clone(),
+            self.descriptor.id.clone(),
+            "Linux /proc health",
+        )
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
         if std::env::consts::OS != "linux" {
             return Err(OidError::Execution(
                 "linux-system-health requires a Linux host".to_owned(),
@@ -137,10 +197,23 @@ impl Skill for LinuxSystemHealthSkill {
             .find(|line| line.starts_with("MemAvailable:"))
             .unwrap_or("MemAvailable: unavailable")
             .to_owned();
-        Ok(OperationResult {
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
             summary: format!("platform=linux; uptime_seconds={uptime}; load_1m={load}; {memory}"),
             changed: false,
         })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(VerificationResult {
+            operation_id: execution.operation_id.clone(),
+            passed: true,
+            summary: "Linux /proc checks passed".to_owned(),
+        })
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
     }
 }
 
@@ -190,8 +263,49 @@ impl Skill for CreateDirectorySkill {
         &self.descriptor
     }
 
-    fn execute(&self, request: &OperationRequest) -> Result<OperationResult, OidError> {
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
         let path = validate_directory_path(&request.arguments)?;
+        Ok(OperationPlan {
+            id: request.id.clone(),
+            intent: None,
+            skill: self.descriptor.id.clone(),
+            summary: "Create directory".to_owned(),
+            rationale: format!(
+                "Create the explicitly requested directory {}",
+                path.display()
+            ),
+            risk: RiskLevel::Low,
+            approval: ApprovalRequirement::User,
+            steps: vec![OperationStep {
+                order: 1,
+                description: format!("Create {}", path.display()),
+                action: ActionType::CreateDirectory {
+                    path: path.display().to_string(),
+                },
+                affects_system_state: true,
+            }],
+            verification: VerificationPlan {
+                checks: vec![VerificationCheck {
+                    description: "Directory exists".to_owned(),
+                    kind: "directory-exists".to_owned(),
+                }],
+            },
+            rollback: Some(RollbackPlan {
+                supported: true,
+                description: "Delete directory if empty".to_owned(),
+                steps: vec![RollbackStep {
+                    order: 1,
+                    description: format!("Delete {} if empty", path.display()),
+                    action: ActionType::RemoveDirectory {
+                        path: path.display().to_string(),
+                    },
+                }],
+            }),
+        })
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        let path = plan_directory_path(&approved_plan.plan)?;
         std::fs::create_dir(&path)
             .map_err(|error| OidError::Execution(format!("create {}: {error}", path.display())))?;
         *self
@@ -199,35 +313,94 @@ impl Skill for CreateDirectorySkill {
             .lock()
             .map_err(|_| OidError::Execution("directory skill lock poisoned".to_owned()))? =
             Some(path.clone());
-        Ok(OperationResult {
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
             summary: format!("created directory {}", path.display()),
             changed: true,
         })
     }
 
-    fn rollback(&self, request: &OperationRequest) -> Result<OperationResult, OidError> {
-        let path = parse_directory_path(&request.arguments)?;
-        if !path.is_dir() {
-            return Err(OidError::NotFound("created directory".to_owned()));
-        }
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        let path = self
+            .created
+            .lock()
+            .map_err(|_| OidError::Execution("directory skill lock poisoned".to_owned()))?
+            .clone()
+            .ok_or_else(|| OidError::NotFound("created directory".to_owned()))?;
+        Ok(VerificationResult {
+            operation_id: execution.operation_id.clone(),
+            passed: path.is_dir(),
+            summary: if path.is_dir() {
+                "directory exists".to_owned()
+            } else {
+                "directory does not exist".to_owned()
+            },
+        })
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        let _ = execution;
         let created = self
             .created
             .lock()
             .map_err(|_| OidError::Execution("directory skill lock poisoned".to_owned()))?;
-        if created.as_deref() != Some(path.as_path()) {
-            return Err(OidError::NotFound(
-                "directory created by this operation".to_owned(),
-            ));
-        }
+        let Some(path) = created.clone() else {
+            return Err(OidError::NotFound("created directory".to_owned()));
+        };
         drop(created);
+        if !path.is_dir() {
+            return Err(OidError::NotFound("created directory".to_owned()));
+        }
         std::fs::remove_dir(&path).map_err(|error| {
             OidError::Execution(format!("rollback {}: {error}", path.display()))
         })?;
-        Ok(OperationResult {
+        Ok(RollbackResult {
+            operation_id: execution.operation_id.clone(),
             summary: format!("removed directory {}", path.display()),
             changed: true,
         })
     }
+}
+
+fn health_plan(
+    id: OperationId,
+    skill: SkillId,
+    description: &str,
+) -> Result<OperationPlan, OidError> {
+    let plan = OperationPlan {
+        id,
+        intent: None,
+        skill,
+        summary: "Inspect system health".to_owned(),
+        rationale: description.to_owned(),
+        risk: RiskLevel::None,
+        approval: ApprovalRequirement::None,
+        steps: vec![OperationStep {
+            order: 1,
+            description: description.to_owned(),
+            action: ActionType::InspectSystemHealth,
+            affects_system_state: false,
+        }],
+        verification: VerificationPlan {
+            checks: vec![VerificationCheck {
+                description: "Health snapshot is readable".to_owned(),
+                kind: "snapshot-readable".to_owned(),
+            }],
+        },
+        rollback: None,
+    };
+    plan.validate()?;
+    Ok(plan)
+}
+
+fn plan_directory_path(plan: &OperationPlan) -> Result<PathBuf, OidError> {
+    plan.steps
+        .iter()
+        .find_map(|step| match &step.action {
+            ActionType::CreateDirectory { path } => Some(parse_directory_path(path)),
+            _ => None,
+        })
+        .ok_or_else(|| OidError::InvalidInput("directory plan has no create step".to_owned()))?
 }
 
 fn validate_directory_path(raw: &str) -> Result<PathBuf, OidError> {
@@ -278,24 +451,22 @@ pub const fn boundary_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{CreateDirectorySkill, OperationRequest, Skill, SystemHealthSkill};
-    use oid_common::OperationId;
+    use oid_common::{ApprovedOperationPlan, OperationId};
 
     #[test]
     fn system_health_is_read_only_and_has_no_rollback() {
         let skill = SystemHealthSkill::default();
+        let request = OperationRequest {
+            id: OperationId::new("operation-1").expect("valid id"),
+            arguments: String::new(),
+        };
+        let plan = skill.plan(&request).expect("health plan succeeds");
+        let approved = ApprovedOperationPlan::new(plan, "test").expect("plan approved");
         let result = skill
-            .execute(&OperationRequest {
-                id: OperationId::new("operation-1").expect("valid id"),
-                arguments: String::new(),
-            })
+            .execute(&approved)
             .expect("health inspection succeeds");
         assert!(!result.changed);
-        assert!(skill
-            .rollback(&OperationRequest {
-                id: OperationId::new("operation-1").expect("valid id"),
-                arguments: String::new(),
-            })
-            .is_err());
+        assert!(skill.rollback(&result).is_err());
     }
 
     #[test]
@@ -305,7 +476,7 @@ mod tests {
             id: OperationId::new("operation-2").expect("valid id"),
             arguments: "../outside".to_owned(),
         };
-        assert!(skill.execute(&request).is_err());
+        assert!(skill.plan(&request).is_err());
     }
 
     #[test]
@@ -317,11 +488,11 @@ mod tests {
             id: OperationId::new("operation-3").expect("valid id"),
             arguments: path.clone(),
         };
-        let result = skill.execute(&request).expect("directory creation works");
+        let plan = skill.plan(&request).expect("directory plan works");
+        let approved = ApprovedOperationPlan::new(plan, "test").expect("plan approved");
+        let result = skill.execute(&approved).expect("directory creation works");
         assert!(result.changed);
-        skill
-            .rollback(&request)
-            .expect("empty directory rolls back");
+        skill.rollback(&result).expect("empty directory rolls back");
         assert!(!std::path::Path::new(&path).exists());
     }
 }
