@@ -11,6 +11,7 @@ pub mod api;
 pub mod backends;
 pub mod config;
 pub mod core;
+pub mod generation;
 pub mod hardware;
 pub mod lifecycle;
 pub mod logging;
@@ -25,6 +26,10 @@ pub use backends::{
     MockBackend,
 };
 pub use core::Runtime;
+pub use generation::{
+    GenerationMessage, GenerationOptions, GenerationRequest, GenerationResult,
+    GenerationStatistics, GenerationStream,
+};
 pub use hardware::{HardwareService, HardwareSnapshot};
 pub use mock::MockRuntime;
 pub use models::{ModelMetadata, ModelRegistry, ModelStatus};

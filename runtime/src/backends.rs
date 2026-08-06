@@ -1,12 +1,14 @@
 //! Backend contracts and runtime-owned backend management.
 
+use crate::generation::{GenerationOptions, GenerationStatistics};
 use crate::models::ModelMetadata;
 use oid_shared::{EventBus, RuntimeError, RuntimeEvent};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 /// Stable backend identity and capability metadata.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BackendDescriptor {
     /// Stable machine-readable identifier.
     pub id: String,
@@ -28,7 +30,7 @@ pub struct LoadedModel {
 }
 
 /// Runtime view of a backend registration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BackendSummary {
     /// Backend descriptor supplied by the adapter.
     pub descriptor: BackendDescriptor,
@@ -50,7 +52,7 @@ pub enum BackendHealth {
 }
 
 /// Request passed to a backend generation operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GenerationRequest {
     /// Correlation identifier for cancellation and tracing.
     pub request_id: String,
@@ -58,6 +60,8 @@ pub struct GenerationRequest {
     pub model_id: String,
     /// Prompt or input content.
     pub input: String,
+    /// Sampling and context options.
+    pub options: GenerationOptions,
 }
 
 /// One backend-neutral streamed output item.
@@ -144,6 +148,35 @@ pub trait Backend: Send + Sync {
         &self,
         request: &GenerationRequest,
     ) -> Result<Vec<StreamChunk>, RuntimeError>;
+    /// Stream generated text directly to a runtime-owned callback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when generation cannot start or the backend fails.
+    fn generate_streaming(
+        &self,
+        request: &GenerationRequest,
+        callback: &mut dyn FnMut(&str) -> bool,
+        cancellation: &AtomicBool,
+    ) -> Result<GenerationStatistics, RuntimeError> {
+        let chunks = self.generate_stream(request)?;
+        let mut generated_tokens = 0_u64;
+        for chunk in chunks {
+            if chunk.done {
+                break;
+            }
+            if cancellation.load(std::sync::atomic::Ordering::SeqCst) || !callback(&chunk.text) {
+                return Err(RuntimeError::ModelLifecycle(
+                    "generation cancelled".to_owned(),
+                ));
+            }
+            generated_tokens += 1;
+        }
+        Ok(GenerationStatistics {
+            generated_tokens,
+            ..GenerationStatistics::default()
+        })
+    }
     /// Cancel an active generation.
     ///
     /// # Errors
@@ -392,6 +425,29 @@ impl BackendManager {
             .tokenize(text)
     }
 
+    /// Stream generation through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or generation fails.
+    pub fn generate_streaming(
+        &self,
+        request: &GenerationRequest,
+        callback: &mut dyn FnMut(&str) -> bool,
+        cancellation: &AtomicBool,
+    ) -> Result<GenerationStatistics, RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .generate_streaming(request, callback, cancellation)
+    }
+
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, BackendManagerState>, RuntimeError> {
         self.state
             .lock()
@@ -444,11 +500,18 @@ impl Backend for MockBackend {
         &self,
         request: &GenerationRequest,
     ) -> Result<Vec<StreamChunk>, RuntimeError> {
-        Ok(vec![StreamChunk {
-            request_id: request.request_id.clone(),
-            text: "Mock generation is not AI inference.".to_owned(),
-            done: true,
-        }])
+        Ok(vec![
+            StreamChunk {
+                request_id: request.request_id.clone(),
+                text: "Mock generation is not AI inference.".to_owned(),
+                done: false,
+            },
+            StreamChunk {
+                request_id: request.request_id.clone(),
+                text: String::new(),
+                done: true,
+            },
+        ])
     }
 
     fn cancel_generation(&self, _request_id: &str) -> Result<(), RuntimeError> {
@@ -473,7 +536,8 @@ impl Backend for MockBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendManager, MockBackend};
+    use super::{BackendManager, GenerationRequest, MockBackend};
+    use crate::generation::GenerationOptions;
     use oid_shared::EventBus;
 
     #[test]
@@ -514,5 +578,31 @@ mod tests {
             2 * 1_048_576
         );
         assert_eq!(manager.tokenize("hello world"), Ok(2));
+    }
+
+    #[test]
+    fn backend_streaming_delivers_fragments_and_statistics() {
+        let manager = BackendManager::new(EventBus::new());
+        manager.register(Box::new(MockBackend)).expect("register");
+        manager.enable("mock").expect("enable");
+        let request = GenerationRequest {
+            request_id: "request".to_owned(),
+            model_id: "demo".to_owned(),
+            input: "hello".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let mut output = String::new();
+        let statistics = manager
+            .generate_streaming(
+                &request,
+                &mut |text| {
+                    output.push_str(text);
+                    true
+                },
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .expect("stream");
+        assert_eq!(statistics.generated_tokens, 1);
+        assert!(output.contains("Mock generation"));
     }
 }

@@ -11,3 +11,5 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+oid-common = { path = "../common" }

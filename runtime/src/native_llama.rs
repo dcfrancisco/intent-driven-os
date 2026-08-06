@@ -140,6 +140,41 @@ impl Backend for LlamaCppAdapter {
         Err(RuntimeError::NotImplemented("text generation"))
     }
 
+    fn generate_streaming(
+        &self,
+        request: &crate::backends::GenerationRequest,
+        callback: &mut dyn FnMut(&str) -> bool,
+        cancellation: &std::sync::atomic::AtomicBool,
+    ) -> Result<crate::generation::GenerationStatistics, RuntimeError> {
+        let loaded = self
+            .model
+            .lock()
+            .map_err(|_| RuntimeError::BackendManagerUnavailable)?;
+        let (_, model) = loaded.as_ref().ok_or_else(|| {
+            RuntimeError::ModelLifecycle("load a model before generating".to_owned())
+        })?;
+        let options = &request.options;
+        let stats = model
+            .generate_stream(
+                &request.input,
+                options.context_size,
+                options.max_tokens,
+                options.temperature,
+                options.top_p,
+                options.top_k,
+                options.seed,
+                callback,
+                cancellation,
+            )
+            .map_err(RuntimeError::NativeBackend)?;
+        Ok(crate::generation::GenerationStatistics {
+            prompt_tokens: stats.prompt_tokens,
+            generated_tokens: stats.generated_tokens,
+            context_tokens: stats.context_tokens,
+            ..crate::generation::GenerationStatistics::default()
+        })
+    }
+
     fn cancel_generation(&self, _request_id: &str) -> Result<(), RuntimeError> {
         Err(RuntimeError::NotImplemented("generation cancellation"))
     }

@@ -92,7 +92,9 @@ stateDiagram-v2
     RollbackFailed --> [*]
 ```
 
-This is a target lifecycle, not implemented business logic. State transitions must be explicit, auditable, and testable.
+The lifecycle contracts are now implemented in `oid-intent-runtime`. Execution adapters,
+policy implementations, persistence, and rollback behavior remain intentionally absent.
+State transitions are explicit, auditable, and testable.
 
 ## Non-functional constraints
 

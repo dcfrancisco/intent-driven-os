@@ -18,12 +18,14 @@ impl StatusBar {
     pub fn line(runtime: &dyn RuntimeService, time: &str) -> String {
         let snapshot = runtime.snapshot();
         format!(
-            " Runtime: {} | Active backend: {} | Backend version: {} | Loaded model: {} | Model memory: {} | Uptime: {}s | Time: {}",
+            " Runtime: {} | Active backend: {} | Backend version: {} | Loaded model: {} | Model memory: {} | Context: {} | TPS: {} | Uptime: {}s | Time: {}",
             snapshot.health,
             snapshot.backend,
             snapshot.backend_version.as_deref().unwrap_or("--"),
             snapshot.loaded_model.as_deref().unwrap_or("None"),
             snapshot.model_memory_bytes.map_or_else(|| "--".to_owned(), |bytes| format!("{} MB", bytes / 1_048_576)),
+            snapshot.loaded_context.map_or_else(|| "--".to_owned(), |context| context.to_string()),
+            snapshot.current_tokens_per_second.map_or_else(|| "--".to_owned(), |tps| format!("{tps:.1}")),
             snapshot.uptime_seconds,
             time
         )

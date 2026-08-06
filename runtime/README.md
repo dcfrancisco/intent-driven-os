@@ -19,7 +19,7 @@ publishes lifecycle and command events without requiring an inference backend.
 All backend, inference, Linux-operation, and real hardware behavior remains
 future work.
 
-## Phase 4 services
+## Phase 5 services
 
 `BackendManager` owns registration, enablement, selection, and health for
 backend adapters. `ModelRegistry` stores model metadata only and can persist it
@@ -36,3 +36,9 @@ Phase 4 adds recursive `.gguf` discovery, metadata-only registry population,
 one-model-at-a-time loading/unloading, backend-reported model memory, and
 native tokenizer routing. Text generation, streaming, chat, embeddings, and
 GGUF parsing remain outside this milestone.
+
+Generation is represented by `GenerationRequest`, `GenerationOptions`,
+`GenerationStream`, `GenerationResult`, and `GenerationStatistics`. A runtime
+client receives the stream immediately; a worker publishes token events while
+the client consumes output. Cancellation is an atomic request signal and does
+not stop the process or unload the model.

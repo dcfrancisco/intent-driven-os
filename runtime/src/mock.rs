@@ -4,12 +4,15 @@ use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
     hardware::{HardwareService, HardwareSnapshot},
     models::{ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
+    GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
     LlamaCppAdapter, RuntimeApi, RuntimeConfig, RuntimeError, RuntimeService, RuntimeSnapshot,
     RuntimeStatus,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Instant, SystemTime};
 
 /// Fake runtime service used until a real model backend is integrated.
 #[derive(Clone, Debug)]
@@ -21,6 +24,7 @@ pub struct MockRuntime {
     hardware: HardwareService,
     started_at: Instant,
     loaded: Arc<Mutex<Option<LoadedModel>>>,
+    active_generation: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 impl MockRuntime {
@@ -45,6 +49,7 @@ impl MockRuntime {
             hardware,
             started_at: Instant::now(),
             loaded: Arc::new(Mutex::new(None)),
+            active_generation: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -104,6 +109,9 @@ impl RuntimeService for MockRuntime {
                 .lock()
                 .ok()
                 .and_then(|loaded| loaded.as_ref().map(|model| model.memory_bytes)),
+            generating: false,
+            current_tokens_per_second: None,
+            loaded_context: None,
         }
     }
 
@@ -177,6 +185,110 @@ impl RuntimeService for MockRuntime {
         self.bus
             .publish(&RuntimeEvent::TokenizerReady("llama.cpp".to_owned()));
         Ok(count)
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
+        if self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .is_none()
+        {
+            return Err(RuntimeError::ModelLifecycle(
+                "load a model before generating".to_owned(),
+            ));
+        }
+        let (sender, receiver) = mpsc::channel();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        *self
+            .active_generation
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))? =
+            Some(cancellation.clone());
+        let cancel_for_worker = cancellation.clone();
+        let bus = self.bus.clone();
+        let backends = self.backends.clone();
+        thread::spawn(move || {
+            let started = SystemTime::now();
+            bus.publish(&RuntimeEvent::GenerationStarted(request.request_id.clone()));
+            let backend_request = crate::backends::GenerationRequest {
+                request_id: request.request_id.clone(),
+                model_id: request.model_id.clone(),
+                input: request.prompt.clone(),
+                options: request.options.clone(),
+            };
+            let mut generated = String::new();
+            let mut first = true;
+            let result = backends.generate_streaming(
+                &backend_request,
+                &mut |token| {
+                    if cancel_for_worker.load(Ordering::SeqCst) {
+                        return false;
+                    }
+                    if first {
+                        bus.publish(&RuntimeEvent::FirstToken(request.request_id.clone()));
+                        first = false;
+                    }
+                    generated.push_str(token);
+                    let _ = sender.send(GenerationMessage::Token(token.to_owned()));
+                    bus.publish(&RuntimeEvent::TokenGenerated(request.request_id.clone()));
+                    true
+                },
+                &cancel_for_worker,
+            );
+            if cancel_for_worker.load(Ordering::SeqCst)
+                || result
+                    .as_ref()
+                    .is_err_and(|error| error.to_string().contains("cancelled"))
+            {
+                bus.publish(&RuntimeEvent::GenerationCancelled(
+                    request.request_id.clone(),
+                ));
+                return;
+            }
+            let statistics = match result {
+                Ok(statistics) => statistics,
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = sender.send(GenerationMessage::Failed(error));
+                    bus.publish(&RuntimeEvent::GenerationFailed(message));
+                    return;
+                }
+            };
+            let latency_ms = started
+                .elapsed()
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or_default();
+            let statistics = GenerationStatistics {
+                prompt_tokens: statistics.prompt_tokens,
+                generated_tokens: statistics.generated_tokens,
+                tokens_per_second: if latency_ms == 0 {
+                    statistics.generated_tokens as f64
+                } else {
+                    statistics.generated_tokens as f64 / (latency_ms as f64 / 1000.0)
+                },
+                latency_ms,
+                inference_time_ms: latency_ms,
+                context_tokens: statistics.context_tokens,
+            };
+            let result = GenerationResult {
+                request_id: request.request_id.clone(),
+                text: generated,
+                statistics,
+            };
+            let _ = sender.send(GenerationMessage::Completed(result));
+            bus.publish(&RuntimeEvent::GenerationCompleted(request.request_id));
+        });
+        Ok(GenerationStream::new(receiver, cancellation))
+    }
+
+    fn cancel_generation(&self) {
+        if let Ok(active) = self.active_generation.lock() {
+            if let Some(cancellation) = active.as_ref() {
+                cancellation.store(true, Ordering::SeqCst);
+            }
+        }
     }
 
     fn hardware(&self) -> HardwareSnapshot {

@@ -1,18 +1,28 @@
 # Roadmap
 
-## Foundation — current
+## Foundation — complete
 
 - Establish the Rust workspace and crate boundaries.
 - Document architecture, contribution, security, and governance expectations.
 - Define the first architectural decision.
-- Keep all runtime and AI behavior unimplemented.
+- Keep AI behavior unimplemented while operation contracts mature.
+- Define shared identifiers, errors, and cross-context events.
+- Define intent lifecycle transitions and invariants.
+- Define policy, skill, verification, evidence, plugin, model, and shell traits.
 
-## Contracts and lifecycle
+## First implementation slice — complete
 
-- Define shared identifiers, errors, configuration, and structured event contracts.
-- Specify the intent state machine and transition invariants.
-- Define typed skill, policy, verification, evidence, plugin, and shell traits.
-- Add contract tests and deterministic in-memory test doubles.
+- Add deterministic in-memory policy, evidence, and verification test doubles.
+- Implement the Linux `/proc` health adapter and portable fallback.
+- Connect the intent lifecycle to the existing runtime event bus.
+- Add durable append-only file evidence storage.
+- Add the first explicitly approved, rollback-capable directory operation.
+
+## Safe Linux operations — next
+
+- Add an operation registry and allowlist instead of direct skill selection.
+- Add durable approval records and crash recovery for interrupted operations.
+- Add more read-only skills before expanding mutating capabilities.
 
 ## Safe Linux operations
 
@@ -33,4 +43,3 @@
 - Evaluate local model execution and the Linux Operations Model.
 - Introduce plugin discovery and capability isolation.
 - Explore Open Intelligence Platform (OIP) integration.
-

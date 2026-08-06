@@ -85,11 +85,14 @@ impl PresenceIndicator {
             RuntimeEvent::InputStarted => PresenceState::Typing,
             RuntimeEvent::CommandStarted(_)
             | RuntimeEvent::ThinkingStarted
-            | RuntimeEvent::ApprovalGranted => PresenceState::Busy,
+            | RuntimeEvent::ApprovalGranted
+            | RuntimeEvent::GenerationStarted(_) => PresenceState::Busy,
             RuntimeEvent::StreamingStarted => PresenceState::Streaming,
             RuntimeEvent::ApprovalRequested => PresenceState::Waiting,
             RuntimeEvent::WarningRaised(_) => PresenceState::Warning,
-            RuntimeEvent::ErrorRaised(_) => PresenceState::Error,
+            RuntimeEvent::ErrorRaised(_) | RuntimeEvent::GenerationFailed(_) => {
+                PresenceState::Error
+            }
             RuntimeEvent::LoggingInitialized
             | RuntimeEvent::StateChanged(_)
             | RuntimeEvent::BackendRegistered(_)
@@ -103,7 +106,16 @@ impl PresenceIndicator {
             | RuntimeEvent::BackendInitialized(_)
             | RuntimeEvent::ModelLoading(_)
             | RuntimeEvent::ModelUnloading(_)
-            | RuntimeEvent::TokenizerReady(_) => self.state,
+            | RuntimeEvent::TokenizerReady(_)
+            | RuntimeEvent::IntentStateChanged { .. }
+            | RuntimeEvent::OperationCompleted(_)
+            | RuntimeEvent::EvidenceRecorded(_) => self.state,
+            RuntimeEvent::FirstToken(_) | RuntimeEvent::TokenGenerated(_) => {
+                PresenceState::Streaming
+            }
+            RuntimeEvent::GenerationCompleted(_) | RuntimeEvent::GenerationCancelled(_) => {
+                PresenceState::Idle
+            }
         };
     }
 }

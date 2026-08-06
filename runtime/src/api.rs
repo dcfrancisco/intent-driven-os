@@ -1,5 +1,6 @@
 //! Public runtime API boundary.
 
+use crate::generation::{GenerationRequest, GenerationStream};
 use crate::{
     backends::{BackendHealth, BackendSummary},
     hardware::HardwareSnapshot,
@@ -9,7 +10,7 @@ use crate::{
 use oid_shared::{EventBus, RuntimeEvent};
 
 /// Deterministic service data used by clients such as the Phase 2 console.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RuntimeSnapshot {
     /// Runtime health label.
     pub health: &'static str,
@@ -27,6 +28,12 @@ pub struct RuntimeSnapshot {
     pub backend_version: Option<String>,
     /// Memory used by the loaded model.
     pub model_memory_bytes: Option<u64>,
+    /// Whether a generation is currently active.
+    pub generating: bool,
+    /// Current generation throughput.
+    pub current_tokens_per_second: Option<f64>,
+    /// Current context usage.
+    pub loaded_context: Option<u64>,
 }
 
 /// Runtime-facing service contract used by clients.
@@ -61,6 +68,17 @@ pub trait RuntimeService: Send + Sync {
     ///
     /// Returns an error when no tokenizer is available or tokenization fails.
     fn tokenize(&self, text: &str) -> Result<usize, oid_shared::RuntimeError>;
+    /// Start an independent non-blocking generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no model is loaded or generation cannot be admitted.
+    fn generate(
+        &self,
+        request: GenerationRequest,
+    ) -> Result<GenerationStream, oid_shared::RuntimeError>;
+    /// Cancel the active generation, if one exists.
+    fn cancel_generation(&self);
     /// Return normalized hardware information.
     fn hardware(&self) -> HardwareSnapshot;
     /// Return an event publisher handle.

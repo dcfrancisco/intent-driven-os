@@ -11,7 +11,12 @@ repository.workspace = true
 [dependencies]
 oid-runtime = { path = "../runtime" }
 oid-shared = { path = "../shared" }
+oid-common = { path = "../crates/common" }
+oid-intent-runtime = { path = "../crates/intent-runtime" }
+oid-linux-skills = { path = "../crates/linux-skills" }
+oid-policy-engine = { path = "../crates/policy-engine" }
+oid-verification-engine = { path = "../crates/verification-engine" }
+oid-evidence-engine = { path = "../crates/evidence-engine" }
 
 [lints]
 workspace = true
-

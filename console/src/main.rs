@@ -5,6 +5,7 @@
 
 mod commands;
 mod editor;
+mod foundation;
 mod history;
 mod presence;
 mod prompt;

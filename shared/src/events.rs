@@ -20,6 +20,17 @@ pub enum RuntimeEvent {
     CommandStarted(String),
     /// A console command finished processing.
     CommandCompleted(String),
+    /// An intent entered a new state.
+    IntentStateChanged {
+        /// Intent whose lifecycle state changed.
+        intent_id: String,
+        /// New state label.
+        state: String,
+    },
+    /// An operation completed successfully.
+    OperationCompleted(String),
+    /// An evidence record was persisted.
+    EvidenceRecorded(String),
     /// Runtime planning or resource selection began.
     ThinkingStarted,
     /// Runtime planning or resource selection finished.
@@ -66,6 +77,18 @@ pub enum RuntimeEvent {
     ModelUnloading(String),
     /// Hardware-backed tokenizer became available.
     TokenizerReady(String),
+    /// A generation request began.
+    GenerationStarted(String),
+    /// The first generated token was produced.
+    FirstToken(String),
+    /// A generated token was produced.
+    TokenGenerated(String),
+    /// A generation completed with metrics.
+    GenerationCompleted(String),
+    /// A generation was cancelled.
+    GenerationCancelled(String),
+    /// A generation failed.
+    GenerationFailed(String),
 }
 
 /// A subscription to events published by an [`EventBus`].

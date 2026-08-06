@@ -10,13 +10,22 @@ version = "0.1.0"
 name = "oid-console"
 version = "0.1.0"
 dependencies = [
+ "oid-common",
+ "oid-evidence-engine",
+ "oid-intent-runtime",
+ "oid-linux-skills",
+ "oid-policy-engine",
  "oid-runtime",
  "oid-shared",
+ "oid-verification-engine",
 ]
 
 [[package]]
 name = "oid-desktop-shell"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-docs"
@@ -25,14 +34,24 @@ version = "0.1.0"
 [[package]]
 name = "oid-evidence-engine"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-intent-runtime"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+ "oid-shared",
+]
 
 [[package]]
 name = "oid-linux-skills"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-llama-cpp-adapter"
@@ -49,14 +68,23 @@ version = "0.1.0"
 [[package]]
 name = "oid-model-runner"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-plugin-sdk"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-policy-engine"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]
 
 [[package]]
 name = "oid-runtime"
@@ -73,3 +101,6 @@ version = "0.1.0"
 [[package]]
 name = "oid-verification-engine"
 version = "0.1.0"
+dependencies = [
+ "oid-common",
+]

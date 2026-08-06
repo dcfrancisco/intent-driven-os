@@ -23,7 +23,7 @@ flowchart LR
 
 The runtime should be usable in-process for local consumers and as a local service over a Unix socket. An optional TCP endpoint may be added for controlled multi-process or enterprise deployments.
 
-## Phase 4 runtime services
+## Phase 5 runtime services
 
 The runtime foundation now separates four service concerns:
 
@@ -58,6 +58,30 @@ metadata to `Loading`, calls the active backend, records backend-reported
 memory, then publishes `ModelLoaded`. Failure records `Failed` and emits an
 error event. Unload follows the corresponding `ModelUnloading` and
 `ModelUnloaded` path.
+
+### Inference lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Runtime
+    participant Backend
+    participant Bus
+    Client->>Runtime: generate(GenerationRequest)
+    Runtime-->>Client: GenerationStream
+    Runtime->>Bus: GenerationStarted
+    Runtime->>Backend: decode(prompt, options)
+    Backend->>Bus: FirstToken / TokenGenerated
+    Backend-->>Client: token fragments
+    Client->>Runtime: cancel()
+    Runtime->>Backend: cancellation signal
+    Runtime->>Bus: GenerationCancelled or GenerationCompleted
+```
+
+The runtime owns request IDs, admission, cancellation, stream delivery, and
+metrics. The backend owns context creation, sampling, decoding, and token
+piece conversion. The first native adapter uses the official llama.cpp C API;
+future adapters implement the same callback boundary.
 
 ## Module responsibilities
 

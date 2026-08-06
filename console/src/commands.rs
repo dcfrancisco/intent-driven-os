@@ -1,6 +1,9 @@
 //! Intent command boundary.
 
-use oid_runtime::{BackendHealth, ModelMetadata, RuntimeService};
+use oid_runtime::{
+    BackendHealth, GenerationMessage, GenerationOptions, GenerationRequest, ModelMetadata,
+    RuntimeService,
+};
 
 /// A user-entered intent before parsing or execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,7 +79,12 @@ pub fn execute(
 ) -> CommandResult {
     let parsed = FoundationParser.parse(input.trim());
     let command = parsed.text.trim();
-    runtime.execute_command(command);
+    if !matches!(
+        command.split_whitespace().next(),
+        Some("generate" | "complete" | "explain")
+    ) {
+        runtime.execute_command(command);
+    }
     let (output, action) = match command {
         "help" => (
             vec![
@@ -85,6 +93,8 @@ pub fn execute(
                 "  status   Show runtime status".to_owned(),
                 "  runtime  Show runtime service details".to_owned(),
                 "  health   Show runtime health".to_owned(),
+                "  inspect system  Run the read-only intent foundation flow".to_owned(),
+                "  create directory <path> [--approve]  Create one approved directory".to_owned(),
                 "  backend  Show backend registrations".to_owned(),
                 "  backend info  Show active backend details".to_owned(),
                 "  models   List registered model metadata".to_owned(),
@@ -94,6 +104,9 @@ pub fn execute(
                 "  model status  Show model lifecycle state".to_owned(),
                 "  tokenize <text>  Count tokens in text".to_owned(),
                 "  count <path>  Count file tokens".to_owned(),
+                "  generate <prompt>  Generate independent text".to_owned(),
+                "  complete <path>  Complete a file prompt".to_owned(),
+                "  explain <text>  Generate an explanation".to_owned(),
                 "  hardware Show discovered hardware".to_owned(),
                 "  history  Show command history".to_owned(),
                 "  clear    Clear the console".to_owned(),
@@ -111,6 +124,30 @@ pub fn execute(
                     format!("Runtime health: {}", snapshot.health),
                     format!("Active backend: {}", snapshot.backend),
                 ],
+                CommandAction::Continue,
+            )
+        }
+        "inspect system" => (
+            crate::foundation::run_system_health(&runtime.event_bus())
+                .unwrap_or_else(|error| vec![format!("Foundation flow failed: {error}")]),
+            CommandAction::Continue,
+        ),
+        _ if command.starts_with("create directory ") => {
+            let arguments = command.trim_start_matches("create directory ").trim();
+            let approved = arguments.ends_with(" --approve");
+            let path = if approved {
+                arguments.trim_end_matches(" --approve").trim()
+            } else {
+                arguments
+            };
+            (
+                crate::foundation::run_create_directory(
+                    &runtime.event_bus(),
+                    path,
+                    approved,
+                    std::env::temp_dir().join("oid-evidence.log"),
+                )
+                .unwrap_or_else(|error| vec![format!("Directory flow failed: {error}")]),
                 CommandAction::Continue,
             )
         }
@@ -164,6 +201,23 @@ pub fn execute(
                 .and_then(|text| runtime.tokenize(&text));
             (
                 operation_result(output, &format!("Tokens in {path}")),
+                CommandAction::Continue,
+            )
+        }
+        _ if command.starts_with("generate ") || command.starts_with("explain ") => {
+            let prompt = command
+                .split_once(' ')
+                .map_or("", |(_, value)| value)
+                .trim_matches('"');
+            (generate_lines(runtime, prompt), CommandAction::Continue)
+        }
+        _ if command.starts_with("complete ") => {
+            let path = command.trim_start_matches("complete ").trim();
+            let output = std::fs::read_to_string(path)
+                .map_err(|error| oid_runtime::RuntimeError::Persistence(error.to_string()))
+                .and_then(|text| generate_lines_result(runtime, &text));
+            (
+                output.unwrap_or_else(|error| vec![format!("Error: {error}")]),
                 CommandAction::Continue,
             )
         }
@@ -240,6 +294,46 @@ fn backend_info_lines(runtime: &dyn RuntimeService) -> Vec<String> {
 
 fn token_count_lines(runtime: &dyn RuntimeService, text: &str) -> Vec<String> {
     operation_result(runtime.tokenize(text), "Tokens")
+}
+
+fn generate_lines(runtime: &dyn RuntimeService, prompt: &str) -> Vec<String> {
+    generate_lines_result(runtime, prompt).unwrap_or_else(|error| vec![format!("Error: {error}")])
+}
+
+fn generate_lines_result(
+    runtime: &dyn RuntimeService,
+    prompt: &str,
+) -> Result<Vec<String>, oid_runtime::RuntimeError> {
+    let request = GenerationRequest {
+        request_id: format!("console-{}", std::process::id()),
+        model_id: runtime.snapshot().loaded_model.unwrap_or_default(),
+        prompt: prompt.to_owned(),
+        options: GenerationOptions::default(),
+    };
+    let stream = runtime.generate(request)?;
+    let mut lines = vec!["Generating...".to_owned()];
+    loop {
+        match stream.recv().map_err(|_| {
+            oid_runtime::RuntimeError::ModelLifecycle("generation stream closed".to_owned())
+        })? {
+            GenerationMessage::Token(token) => lines.push(token),
+            GenerationMessage::Completed(result) => {
+                lines.push(format!(
+                    "Generated {} tokens at {:.1} tokens/sec",
+                    result.statistics.generated_tokens, result.statistics.tokens_per_second
+                ));
+                lines.push(format!(
+                    "Prompt tokens: {} | Context: {} | Latency: {} ms",
+                    result.statistics.prompt_tokens,
+                    result.statistics.context_tokens,
+                    result.statistics.latency_ms
+                ));
+                break;
+            }
+            GenerationMessage::Failed(error) => return Err(error),
+        }
+    }
+    Ok(lines)
 }
 
 fn operation_result<T: std::fmt::Display>(

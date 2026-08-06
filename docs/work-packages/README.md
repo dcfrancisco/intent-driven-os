@@ -30,5 +30,11 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0028 | Model Discovery | Configurable recursive GGUF discovery |
 | WP-0029 | Model Loader | Single-model load/unload lifecycle and memory accounting |
 | WP-0030 | Tokenizer | Backend-routed UTF-8 token counting |
+| WP-0031 | Inference Engine | Backend-neutral generation contracts |
+| WP-0032 | Streaming Generation | Non-blocking token streams and cancellation |
+| WP-0033 | Console Integration | `generate`, `complete`, and `explain` commands |
+| WP-0034 | Runtime Metrics | Prompt, output, latency, throughput, and context metrics |
+| WP-0035 | Cancellation | Request cancellation without process termination |
+| WP-0036 | Generation Events | Observable generation lifecycle events |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

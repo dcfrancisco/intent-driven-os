@@ -153,6 +153,7 @@ impl LineEditor {
             }
             match byte[0] {
                 3 => {
+                    runtime.cancel_generation();
                     runtime.input_stopped();
                     presence.refresh();
                     writeln!(output, "^C")?;

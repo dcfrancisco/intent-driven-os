@@ -6,12 +6,20 @@ The runtime has no UI. It manages model lifecycle, hardware resources, backend a
 
 ## Status
 
-This repository contains the Phase 4 Rust workspace and interactive console
+This repository contains the Phase 5 Rust workspace and interactive console
 reference client. The runtime now has a backend-neutral native llama.cpp
 integration boundary, GGUF discovery, model lifecycle management, and
 tokenizer routing. Text generation and other AI capabilities are intentionally
 not implemented yet. Without `LLAMA_CPP_LIB_DIR`, the native backend reports
 unavailable while the console remains usable for architecture validation.
+
+Phase 5 adds independent `generate`, `complete`, and `explain` requests with
+runtime-owned streaming, cancellation handles, generation events, and metrics.
+There is no chat history, prompt template, tool execution, or agent loop.
+
+The operation foundation now includes a read-only system-health flow, Linux
+`/proc` inspection, append-only file evidence, and an explicitly approved
+`create directory <path> --approve` operation with empty-directory rollback.
 
 ## Workspace
 
@@ -24,10 +32,10 @@ unavailable while the console remains usable for architecture validation.
 | `oid-console` | Keyboard-first interactive AI Console reference client |
 | `oid-common` | Shared models, errors, configuration, logging, and utilities |
 | `oid-intent-runtime` | Intent contracts and lifecycle state machine |
-| `oid-linux-skills` | Typed Linux operations and skill traits |
+| `oid-linux-skills` | Typed Linux operations, `/proc` health inspection, and approved directory skill |
 | `oid-policy-engine` | Permission, authorization, and approval framework |
 | `oid-verification-engine` | Post-operation validation, health checks, and rollback verification |
-| `oid-evidence-engine` | Evidence records, audit trail, and operation history |
+| `oid-evidence-engine` | In-memory and durable append-only evidence records and operation history |
 | `oid-plugin-sdk` | Plugin traits, registration, and discovery contracts |
 | `oid-model-runner` | Placeholder interfaces for future optimized model execution |
 | `oid-desktop-shell` | Terminal, Wayland, D-Bus, systemd, and event integration boundaries |
