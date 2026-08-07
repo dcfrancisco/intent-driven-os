@@ -44,5 +44,11 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0042 | Help and Completion Integration | Discoverable help and completion for loaded capabilities |
 | WP-0043 | Durable Approval and Recovery | Append-only approval journal and recoverable execution state |
 | WP-0044 | Read-only Skill Expansion | Directory and file inspection through governed plans |
+| WP-0045 | Operation Coordinator | End-to-end governed lifecycle orchestration |
+| WP-0046 | Persistent Operation State Machine | Append-only operation state and recovery inspection |
+| WP-0047 | Native Command Execution Adapter | Explicitly approved native executable execution |
+| WP-0048 | Dynamic Capability Execution Adapter | Registered capability dispatch through skills |
+| WP-0049 | Evidence and Verification Correlation | Operation-linked plan, execution, and verification records |
+| WP-0050 | Recovery and Resume CLI Boundary | Recoverable operation API for terminal integration |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

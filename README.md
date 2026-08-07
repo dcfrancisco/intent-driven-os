@@ -28,6 +28,8 @@ register commands without shadowing native CLIs, and terminal input is
 classified as native, dynamic, or intent mode with help and completion metadata.
 It also adds durable approval lifecycle records with recovery inspection and
 read-only directory and file inspection skills.
+Milestone 5 adds `oid-operation-coordinator`, which composes those boundaries
+into a durable end-to-end lifecycle with native and dynamic execution adapters.
 
 ## Workspace
 

@@ -18,3 +18,17 @@ an AI model, llama.cpp, hardware probing, or Linux operations.
 Phase 3 runtime commands include `backend`, `backend list`, `backend status`,
 `models`, `model inspect <id>`, `hardware`, `runtime`, and `health`. All data
 comes through `RuntimeService`; the console never accesses adapters directly.
+## Governed operations
+
+The interactive console owns one persistent operation coordinator for the
+session. Mutating commands render a plan before execution, and explicit
+recovery controls are available through:
+
+```text
+operations recover
+operations approve <operation-id>
+operations rollback <operation-id>
+```
+
+Approval records, operation state, and evidence are stored in the OID console
+state directory under the system temporary directory.

@@ -136,6 +136,7 @@ pub fn run_system_health(events: &EventBus) -> Result<Vec<String>, OidError> {
 ///
 /// Returns an error when policy, validation, execution, verification, or evidence persistence fails.
 #[allow(clippy::too_many_lines)]
+#[allow(dead_code)]
 pub fn run_create_directory(
     events: &EventBus,
     path: &str,
@@ -303,6 +304,7 @@ fn append_evidence(
     })
 }
 
+#[allow(dead_code)]
 fn append_evidence_store<S: EvidenceStore>(
     store: &mut S,
     intent_id: &IntentId,

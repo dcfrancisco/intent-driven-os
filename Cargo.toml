@@ -15,6 +15,7 @@ members = [
     "crates/plugin-sdk",
     "crates/model-runner",
     "crates/desktop-shell",
+    "crates/operation-coordinator",
     "crates/docs",
 ]
 

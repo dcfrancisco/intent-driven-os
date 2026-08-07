@@ -140,6 +140,14 @@ This separation means native commands retain their existing semantics, dynamic
 commands are discoverable only while registered, and intent interpretation
 cannot bypass planning, approval, verification, rollback, or evidence.
 
+## Persistent operation coordination
+
+`oid-operation-coordinator` is the composition boundary for execution. It owns
+no skill-specific policy; instead it injects approval and evidence stores,
+resolves registered skills, appends lifecycle transitions, and emits correlated
+records for each stage. Recovery returns incomplete journal records for explicit
+user-directed handling rather than silently resuming system actions.
+
 ## Non-functional constraints
 
 Rust is the primary implementation language. The project targets async-friendly, testable components; forbids unsafe code unless a future, documented exception is accepted; favors minimal dependencies; and requires user-visible plans, rationale, changes, and undo information for system actions.

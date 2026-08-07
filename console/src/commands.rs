@@ -1,5 +1,7 @@
 //! Intent command boundary.
 
+use crate::operations::ConsoleOperations;
+
 use oid_runtime::{
     BackendHealth, GenerationMessage, GenerationOptions, GenerationRequest, ModelMetadata,
     RuntimeService,
@@ -72,16 +74,30 @@ impl<'a> HistoryView<'a> {
 /// Process the Phase 2 built-in command set.
 #[must_use]
 #[allow(clippy::too_many_lines)]
+#[allow(dead_code)]
 pub fn execute(
     input: &str,
     history: &HistoryView<'_>,
     runtime: &dyn RuntimeService,
 ) -> CommandResult {
+    let mut operations = ConsoleOperations::new();
+    execute_with_operations(input, history, runtime, &mut operations)
+}
+
+/// Process commands using the application's persistent operation coordinator.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn execute_with_operations(
+    input: &str,
+    history: &HistoryView<'_>,
+    runtime: &dyn RuntimeService,
+    operations: &mut ConsoleOperations,
+) -> CommandResult {
     let parsed = FoundationParser.parse(input.trim());
     let command = parsed.text.trim();
     if !matches!(
         command.split_whitespace().next(),
-        Some("generate" | "complete" | "explain")
+        Some("generate" | "complete" | "explain" | "operations")
     ) {
         runtime.execute_command(command);
     }
@@ -95,6 +111,9 @@ pub fn execute(
                 "  health   Show runtime health".to_owned(),
                 "  inspect system  Run the read-only intent foundation flow".to_owned(),
                 "  create directory <path> [--approve]  Create one approved directory".to_owned(),
+                "  operations recover  List interrupted operations".to_owned(),
+                "  operations approve <id>  Approve an operation explicitly".to_owned(),
+                "  operations rollback <id>  Roll back a completed operation".to_owned(),
                 "  backend  Show backend registrations".to_owned(),
                 "  backend info  Show active backend details".to_owned(),
                 "  models   List registered model metadata".to_owned(),
@@ -141,13 +160,33 @@ pub fn execute(
                 arguments
             };
             (
-                crate::foundation::run_create_directory(
-                    &runtime.event_bus(),
-                    path,
-                    approved,
-                    std::env::temp_dir().join("oid-evidence.log"),
-                )
-                .unwrap_or_else(|error| vec![format!("Directory flow failed: {error}")]),
+                operations
+                    .create_directory(path, approved)
+                    .unwrap_or_else(|error| vec![format!("Directory flow failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
+        "operations recover" => (
+            operations
+                .recover()
+                .unwrap_or_else(|error| vec![format!("Recovery failed: {error}")]),
+            CommandAction::Continue,
+        ),
+        _ if command.starts_with("operations approve ") => {
+            let id = command.trim_start_matches("operations approve ").trim();
+            (
+                operations
+                    .approve(id)
+                    .unwrap_or_else(|error| vec![format!("Approval failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
+        _ if command.starts_with("operations rollback ") => {
+            let id = command.trim_start_matches("operations rollback ").trim();
+            (
+                operations
+                    .rollback(id)
+                    .unwrap_or_else(|error| vec![format!("Rollback failed: {error}")]),
                 CommandAction::Continue,
             )
         }
@@ -444,6 +483,7 @@ fn backend_health_label(health: &BackendHealth) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{execute, CommandAction, HistoryView};
+    use crate::operations::ConsoleOperations;
     use oid_runtime::MockRuntime;
     use oid_shared::{EventBus, RuntimeConfig};
 
@@ -460,5 +500,20 @@ mod tests {
         let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
         let result = execute("exit", &HistoryView::new(&[]), &runtime);
         assert_eq!(result.action, CommandAction::Exit);
+    }
+
+    #[test]
+    fn operation_commands_use_the_session_coordinator() {
+        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let root = std::env::temp_dir().join(format!("oid-console-command-{}", std::process::id()));
+        let mut operations = ConsoleOperations::with_root(root.clone());
+        let result = super::execute_with_operations(
+            "operations recover",
+            &HistoryView::new(&[]),
+            &runtime,
+            &mut operations,
+        );
+        assert_eq!(result.output, vec!["No recoverable operations."]);
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

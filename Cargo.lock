@@ -14,6 +14,7 @@ dependencies = [
  "oid-evidence-engine",
  "oid-intent-runtime",
  "oid-linux-skills",
+ "oid-operation-coordinator",
  "oid-policy-engine",
  "oid-runtime",
  "oid-shared",
@@ -71,6 +72,17 @@ name = "oid-model-runner"
 version = "0.1.0"
 dependencies = [
  "oid-common",
+]
+
+[[package]]
+name = "oid-operation-coordinator"
+version = "0.1.0"
+dependencies = [
+ "oid-common",
+ "oid-evidence-engine",
+ "oid-linux-skills",
+ "oid-plugin-sdk",
+ "oid-policy-engine",
 ]
 
 [[package]]

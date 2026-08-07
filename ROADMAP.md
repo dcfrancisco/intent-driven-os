@@ -44,6 +44,19 @@ Completed work packages: WP-0043 and WP-0044.
 Milestone 4 is complete. The next milestone should integrate these boundaries
 into a persistent operation coordinator and terminal execution adapter.
 
+## Persistent operation coordination — complete
+
+- Compose planning, policy, approval, execution, verification, and evidence.
+- Persist operation lifecycle transitions in an append-only journal.
+- Add governed native command and dynamic capability adapters.
+- Correlate lifecycle evidence to the canonical operation ID.
+- Expose recoverable operations for a future explicit resume command.
+
+Completed work packages: WP-0045 through WP-0050.
+
+The next milestone should integrate the coordinator into the interactive console
+and add explicit rollback and resume commands with user-visible recovery plans.
+
 ## Additional safe Linux operations
 
 - Implement a small, allowlisted set of read-only skills first.

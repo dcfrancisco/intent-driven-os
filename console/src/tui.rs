@@ -8,6 +8,7 @@ use crate::{
     commands::{self, CommandAction, HistoryView},
     editor::{EditResult, LineEditor},
     history::History,
+    operations::ConsoleOperations,
     presence::PresenceIndicator,
     prompt::Prompt,
     renderer::Renderer,
@@ -22,6 +23,7 @@ pub struct Application {
     prompt: Prompt,
     history: History,
     presence: PresenceIndicator,
+    operations: ConsoleOperations,
 }
 
 impl Application {
@@ -42,6 +44,7 @@ impl Application {
             prompt: Prompt::default(),
             history: History::new(),
             presence,
+            operations: ConsoleOperations::new(),
         }
     }
 
@@ -59,10 +62,11 @@ impl Application {
             )? {
                 EditResult::Submitted(line) => {
                     self.history.push(line.clone());
-                    let result = commands::execute(
+                    let result = commands::execute_with_operations(
                         &line,
                         &HistoryView::new(self.history.entries()),
                         &self.runtime,
+                        &mut self.operations,
                     );
                     self.presence.refresh();
                     if result.action == CommandAction::Clear {
