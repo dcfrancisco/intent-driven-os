@@ -217,6 +217,216 @@ impl Skill for LinuxSystemHealthSkill {
     }
 }
 
+/// Read-only directory listing skill.
+#[derive(Clone, Debug)]
+pub struct DirectoryInspectionSkill {
+    descriptor: SkillDescriptor,
+}
+
+impl Default for DirectoryInspectionSkill {
+    fn default() -> Self {
+        Self {
+            descriptor: SkillDescriptor {
+                id: SkillId::new("inspect-directory").expect("static skill id is valid"),
+                description: "List entries in an existing directory".to_owned(),
+                mutates_system: false,
+            },
+        }
+    }
+}
+
+impl Skill for DirectoryInspectionSkill {
+    fn descriptor(&self) -> &SkillDescriptor {
+        &self.descriptor
+    }
+
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        let path = read_path(&request.arguments)?;
+        if !path.is_dir() {
+            return Err(OidError::InvalidInput(format!(
+                "not a directory: {}",
+                path.display()
+            )));
+        }
+        let plan = OperationPlan {
+            id: request.id.clone(),
+            intent: None,
+            skill: self.descriptor.id.clone(),
+            summary: format!("Inspect directory {}", path.display()),
+            rationale: "Read directory entries without changing system state".to_owned(),
+            risk: RiskLevel::None,
+            approval: ApprovalRequirement::None,
+            steps: vec![OperationStep {
+                order: 1,
+                description: format!("List entries in {}", path.display()),
+                action: ActionType::InspectDirectory {
+                    path: path.display().to_string(),
+                },
+                affects_system_state: false,
+            }],
+            verification: read_verification("directory listing is readable"),
+            rollback: None,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        ensure_skill(&approved_plan.plan, &self.descriptor.id)?;
+        let path = action_path(&approved_plan.plan, true)?;
+        let mut entries: Vec<_> = std::fs::read_dir(&path)
+            .map_err(|error| OidError::Execution(format!("read {}: {error}", path.display())))?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .map_err(|error| OidError::Execution(format!("read directory entry: {error}")))
+            })
+            .collect::<Result<_, _>>()?;
+        entries.sort();
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
+            summary: format!("{} entries: {}", entries.len(), entries.join(", ")),
+            changed: false,
+        })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(read_result(execution, "directory listing collected"))
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
+    }
+}
+
+/// Read-only file metadata inspection skill.
+#[derive(Clone, Debug)]
+pub struct FileInspectionSkill {
+    descriptor: SkillDescriptor,
+}
+
+impl Default for FileInspectionSkill {
+    fn default() -> Self {
+        Self {
+            descriptor: SkillDescriptor {
+                id: SkillId::new("inspect-file").expect("static skill id is valid"),
+                description: "Inspect metadata for an existing file".to_owned(),
+                mutates_system: false,
+            },
+        }
+    }
+}
+
+impl Skill for FileInspectionSkill {
+    fn descriptor(&self) -> &SkillDescriptor {
+        &self.descriptor
+    }
+
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        let path = read_path(&request.arguments)?;
+        if !path.is_file() {
+            return Err(OidError::InvalidInput(format!(
+                "not a file: {}",
+                path.display()
+            )));
+        }
+        let plan = OperationPlan {
+            id: request.id.clone(),
+            intent: None,
+            skill: self.descriptor.id.clone(),
+            summary: format!("Inspect file {}", path.display()),
+            rationale: "Read file metadata without changing system state".to_owned(),
+            risk: RiskLevel::None,
+            approval: ApprovalRequirement::None,
+            steps: vec![OperationStep {
+                order: 1,
+                description: format!("Read metadata for {}", path.display()),
+                action: ActionType::InspectFile {
+                    path: path.display().to_string(),
+                },
+                affects_system_state: false,
+            }],
+            verification: read_verification("file metadata is readable"),
+            rollback: None,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        ensure_skill(&approved_plan.plan, &self.descriptor.id)?;
+        let path = action_path(&approved_plan.plan, false)?;
+        let metadata = std::fs::metadata(&path).map_err(|error| {
+            OidError::Execution(format!("metadata {}: {error}", path.display()))
+        })?;
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
+            summary: format!(
+                "file={} bytes; readonly={}",
+                metadata.len(),
+                metadata.permissions().readonly()
+            ),
+            changed: false,
+        })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(read_result(execution, "file metadata collected"))
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
+    }
+}
+
+fn read_path(raw: &str) -> Result<PathBuf, OidError> {
+    let path = PathBuf::from(raw.trim());
+    if raw.trim().is_empty() {
+        return Err(OidError::InvalidInput(
+            "inspection path is required".to_owned(),
+        ));
+    }
+    Ok(path)
+}
+
+fn read_verification(description: &str) -> VerificationPlan {
+    VerificationPlan {
+        checks: vec![VerificationCheck {
+            description: description.to_owned(),
+            kind: "readable".to_owned(),
+        }],
+    }
+}
+
+fn read_result(execution: &ExecutionResult, summary: &str) -> VerificationResult {
+    VerificationResult {
+        operation_id: execution.operation_id.clone(),
+        passed: !execution.summary.is_empty(),
+        summary: summary.to_owned(),
+    }
+}
+
+fn ensure_skill(plan: &OperationPlan, skill: &SkillId) -> Result<(), OidError> {
+    if plan.skill == *skill {
+        Ok(())
+    } else {
+        Err(OidError::Unauthorized(
+            "plan belongs to another skill".to_owned(),
+        ))
+    }
+}
+
+fn action_path(plan: &OperationPlan, directory: bool) -> Result<PathBuf, OidError> {
+    plan.steps
+        .iter()
+        .find_map(|step| match (&step.action, directory) {
+            (ActionType::InspectDirectory { path }, true)
+            | (ActionType::InspectFile { path }, false) => Some(PathBuf::from(path)),
+            _ => None,
+        })
+        .ok_or_else(|| OidError::InvalidInput("inspection plan has no matching step".to_owned()))
+}
+
 fn read_proc_value(path: &str) -> Result<String, OidError> {
     std::fs::read_to_string(path)
         .map_err(|error| OidError::Execution(format!("read {path}: {error}")))?
@@ -450,7 +660,10 @@ pub const fn boundary_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateDirectorySkill, OperationRequest, Skill, SystemHealthSkill};
+    use super::{
+        CreateDirectorySkill, DirectoryInspectionSkill, FileInspectionSkill, OperationRequest,
+        Skill, SystemHealthSkill,
+    };
     use oid_common::{ApprovedOperationPlan, OperationId};
 
     #[test]
@@ -494,5 +707,41 @@ mod tests {
         assert!(result.changed);
         skill.rollback(&result).expect("empty directory rolls back");
         assert!(!std::path::Path::new(&path).exists());
+    }
+
+    #[test]
+    fn read_only_inspection_skills_produce_non_mutating_plans() {
+        let directory = std::env::temp_dir();
+        let directory_request = OperationRequest {
+            id: OperationId::new("operation-directory-inspect").expect("operation id"),
+            arguments: directory.display().to_string(),
+        };
+        let directory_skill = DirectoryInspectionSkill::default();
+        let directory_plan = directory_skill
+            .plan(&directory_request)
+            .expect("directory plan");
+        assert!(!directory_plan.steps[0].affects_system_state);
+        assert_eq!(
+            directory_plan.approval,
+            oid_common::ApprovalRequirement::None
+        );
+        let directory_result = directory_skill
+            .execute(&ApprovedOperationPlan::new(directory_plan, "test").expect("approved"))
+            .expect("directory inspection");
+        assert!(!directory_result.changed);
+
+        let file = std::env::temp_dir().join(format!("oid-inspection-{}", std::process::id()));
+        std::fs::write(&file, "inspection").expect("write fixture");
+        let file_request = OperationRequest {
+            id: OperationId::new("operation-file-inspect").expect("operation id"),
+            arguments: file.display().to_string(),
+        };
+        let file_skill = FileInspectionSkill::default();
+        let file_plan = file_skill.plan(&file_request).expect("file plan");
+        let file_result = file_skill
+            .execute(&ApprovedOperationPlan::new(file_plan, "test").expect("approved"))
+            .expect("file inspection");
+        assert!(!file_result.changed);
+        std::fs::remove_file(file).expect("cleanup fixture");
     }
 }

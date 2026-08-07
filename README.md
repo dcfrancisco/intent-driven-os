@@ -23,6 +23,11 @@ The operation foundation now includes a read-only system-health flow, Linux
 Milestone 3 makes the execution model canonical: every governed skill produces
 an inspectable `OperationPlan` before approval, execution, verification, and
 rollback.
+Milestone 4 adds capability governance and routing: loaded capabilities can
+register commands without shadowing native CLIs, and terminal input is
+classified as native, dynamic, or intent mode with help and completion metadata.
+It also adds durable approval lifecycle records with recovery inspection and
+read-only directory and file inspection skills.
 
 ## Workspace
 

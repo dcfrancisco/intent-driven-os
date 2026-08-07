@@ -25,11 +25,24 @@
 - Render inspectable plans in the terminal.
 - Migrate system-health and create-directory flows to the common lifecycle.
 
-## Safe Linux operations — next
+## Capability governance and routing — complete
 
-- Add an operation registry and allowlist instead of direct skill selection.
+- Register and unregister dynamic capabilities through a validated registry.
+- Protect native command names from silent dynamic shadowing.
+- Route prompts into native CLI, dynamic capability, or intent paths.
+- Expose loaded capability help and completion metadata.
+
+Completed work packages: WP-0039, WP-0040, WP-0041, and WP-0042.
+
+## Safe Linux operations — complete
+
 - Add durable approval records and crash recovery for interrupted operations.
 - Add more read-only skills before expanding mutating capabilities.
+
+Completed work packages: WP-0043 and WP-0044.
+
+Milestone 4 is complete. The next milestone should integrate these boundaries
+into a persistent operation coordinator and terminal execution adapter.
 
 ## Additional safe Linux operations
 

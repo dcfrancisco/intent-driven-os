@@ -6,6 +6,165 @@
 #![warn(missing_docs)]
 
 use oid_common::FoundationEvent;
+use oid_plugin_sdk::{CapabilityCommand, CapabilityRegistry};
+
+/// The execution path selected for one prompt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InputRoute {
+    /// Execute an existing operating-system command unchanged.
+    NativeCli {
+        /// Executable name.
+        command: String,
+        /// Arguments after the executable.
+        args: Vec<String>,
+    },
+    /// Execute a registered, governed capability.
+    DynamicCapability {
+        /// Registered capability command metadata.
+        command: CapabilityCommand,
+        /// Arguments after the capability command.
+        args: Vec<String>,
+    },
+    /// Pass the complete request to intent planning.
+    Intent {
+        /// Original user input.
+        request: String,
+    },
+}
+
+/// Routes terminal input while preserving native CLI compatibility.
+#[derive(Clone, Debug)]
+pub struct InputRouter {
+    registry: CapabilityRegistry,
+}
+
+impl InputRouter {
+    /// Construct a router over a capability registry.
+    #[must_use]
+    pub fn new(registry: CapabilityRegistry) -> Self {
+        Self { registry }
+    }
+
+    /// Classify input into native CLI, dynamic capability, or intent mode.
+    #[must_use]
+    pub fn route(&self, input: &str) -> InputRoute {
+        let request = input.trim();
+        let tokens = shell_words(request);
+        let Some(command) = tokens.first() else {
+            return InputRoute::Intent {
+                request: request.to_owned(),
+            };
+        };
+        if let Some(capability) = self.registry.find_command(command) {
+            return InputRoute::DynamicCapability {
+                command: capability,
+                args: tokens.into_iter().skip(1).collect(),
+            };
+        }
+        if is_native_command(command) {
+            return InputRoute::NativeCli {
+                command: command.clone(),
+                args: tokens.into_iter().skip(1).collect(),
+            };
+        }
+        InputRoute::Intent {
+            request: request.to_owned(),
+        }
+    }
+
+    /// Return the backing capability registry.
+    #[must_use]
+    pub const fn registry(&self) -> &CapabilityRegistry {
+        &self.registry
+    }
+
+    /// Provide help lines for all currently loaded dynamic commands.
+    #[must_use]
+    pub fn help_lines(&self) -> Vec<String> {
+        self.registry
+            .list()
+            .into_iter()
+            .flat_map(|capability| capability.descriptor.commands)
+            .map(|command| {
+                let aliases = if command.aliases.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (aliases: {})", command.aliases.join(", "))
+                };
+                format!("  {}{}  {}", command.name, aliases, command.description)
+            })
+            .collect()
+    }
+
+    /// Provide command-name completion candidates.
+    #[must_use]
+    pub fn complete(&self, prefix: &str) -> Vec<String> {
+        self.registry.complete(prefix)
+    }
+}
+
+fn shell_words(input: &str) -> Vec<String> {
+    input.split_whitespace().map(str::to_owned).collect()
+}
+
+fn is_native_command(command: &str) -> bool {
+    const COMMON_NATIVE_COMMANDS: &[&str] = &[
+        "awk",
+        "bash",
+        "cargo",
+        "cat",
+        "chmod",
+        "cp",
+        "curl",
+        "docker",
+        "find",
+        "git",
+        "grep",
+        "kill",
+        "ls",
+        "make",
+        "mkdir",
+        "mv",
+        "ps",
+        "pwd",
+        "rm",
+        "sed",
+        "ssh",
+        "systemctl",
+        "tar",
+        "touch",
+        "uname",
+        "whoami",
+    ];
+    COMMON_NATIVE_COMMANDS.contains(&command) || command_on_path(command)
+}
+
+fn command_on_path(command: &str) -> bool {
+    let candidate = std::path::Path::new(command);
+    if candidate.components().count() > 1 {
+        return candidate.is_file();
+    }
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|directory| directory.join(command))
+        .any(|path| {
+            if !path.is_file() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                path.metadata()
+                    .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false)
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        })
+}
 
 /// User-visible operation plan.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,4 +200,64 @@ pub trait ApprovalInput: Send + Sync {
 #[must_use]
 pub const fn boundary_name() -> &'static str {
     "desktop-shell"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InputRoute, InputRouter};
+    use oid_common::{PluginId, SkillId};
+    use oid_plugin_sdk::{CapabilityCommand, CapabilityDescriptor, CapabilityRegistry};
+
+    fn router() -> InputRouter {
+        let registry = CapabilityRegistry::new();
+        registry
+            .reserve_native(["git", "cargo"])
+            .expect("native commands");
+        registry
+            .register(CapabilityDescriptor {
+                id: SkillId::new("postgres").expect("skill id"),
+                plugin_id: PluginId::new("test-plugin").expect("plugin id"),
+                commands: vec![CapabilityCommand {
+                    name: "postgres".to_owned(),
+                    description: "Diagnose PostgreSQL".to_owned(),
+                    aliases: vec!["pg".to_owned()],
+                    skill_id: SkillId::new("postgres").expect("skill id"),
+                    mutates_system: false,
+                    completion: vec!["status".to_owned()],
+                }],
+            })
+            .expect("capability");
+        InputRouter::new(registry)
+    }
+
+    #[test]
+    fn routes_native_dynamic_and_intent_inputs() {
+        let router = router();
+        assert!(matches!(
+            router.route("git status"),
+            InputRoute::NativeCli { .. }
+        ));
+        assert!(matches!(
+            router.route("postgres status"),
+            InputRoute::DynamicCapability { .. }
+        ));
+        assert!(matches!(
+            router.route("fix postgres won't start"),
+            InputRoute::Intent { .. }
+        ));
+        assert!(matches!(
+            router.route("sh -c true"),
+            InputRoute::NativeCli { .. }
+        ));
+    }
+
+    #[test]
+    fn exposes_help_and_completion_for_loaded_capabilities() {
+        let router = router();
+        assert_eq!(router.complete("po"), vec!["postgres"]);
+        assert!(router
+            .help_lines()
+            .iter()
+            .any(|line| line.contains("postgres")));
+    }
 }

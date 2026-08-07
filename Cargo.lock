@@ -25,6 +25,7 @@ name = "oid-desktop-shell"
 version = "0.1.0"
 dependencies = [
  "oid-common",
+ "oid-plugin-sdk",
 ]
 
 [[package]]

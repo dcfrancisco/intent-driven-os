@@ -71,6 +71,16 @@ impl ApprovalRequirement {
 pub enum ActionType {
     /// Inspect system health without mutation.
     InspectSystemHealth,
+    /// Inspect directory entries without mutation.
+    InspectDirectory {
+        /// Directory target.
+        path: String,
+    },
+    /// Inspect file metadata without reading or changing file contents.
+    InspectFile {
+        /// File target.
+        path: String,
+    },
     /// Create one directory at a validated path.
     CreateDirectory {
         /// Directory target.
@@ -101,6 +111,8 @@ impl ActionType {
     pub fn label(&self) -> String {
         match self {
             Self::InspectSystemHealth => "inspect-system-health".to_owned(),
+            Self::InspectDirectory { path } => format!("inspect-directory:{path}"),
+            Self::InspectFile { path } => format!("inspect-file:{path}"),
             Self::CreateDirectory { path } => format!("create-directory:{path}"),
             Self::RemoveDirectory { path } => format!("remove-directory:{path}"),
             Self::NativeCommand { command, .. } => format!("native-command:{command}"),

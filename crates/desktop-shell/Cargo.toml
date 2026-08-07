@@ -13,3 +13,4 @@ workspace = true
 
 [dependencies]
 oid-common = { path = "../common" }
+oid-plugin-sdk = { path = "../plugin-sdk" }

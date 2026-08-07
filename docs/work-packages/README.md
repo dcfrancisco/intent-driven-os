@@ -38,5 +38,11 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0036 | Generation Events | Observable generation lifecycle events |
 | WP-0037 | Dynamic CLI Capability Framework | Native, intent, and runtime-registered capability command routing |
 | WP-0038 | Operation Planning Framework | Canonical plan, approval, execution, verification, and rollback lifecycle |
+| WP-0039 | Operation Registry and Allowlist | Governed registration and native-command collision protection |
+| WP-0040 | Native/Dynamic/Intent Input Router | Deterministic three-path terminal input classification |
+| WP-0041 | Dynamic Capability Registration | Runtime capability lifecycle and discovery |
+| WP-0042 | Help and Completion Integration | Discoverable help and completion for loaded capabilities |
+| WP-0043 | Durable Approval and Recovery | Append-only approval journal and recoverable execution state |
+| WP-0044 | Read-only Skill Expansion | Directory and file inspection through governed plans |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

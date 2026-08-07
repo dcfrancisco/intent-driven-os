@@ -119,6 +119,27 @@ cannot be executed directly. The common crate stores an `IntentContext` snapshot
 to preserve clean dependency direction between the intent runtime and all
 operation providers.
 
+## Capability governance and input routing
+
+The plugin SDK contains a metadata-only `CapabilityRegistry`. A host reserves
+native command names before loading capability descriptors; registration rejects
+malformed metadata and command collisions. The desktop shell's `InputRouter`
+then selects one of three paths without executing anything:
+
+```mermaid
+flowchart TD
+    Input[Prompt input] --> Router[InputRouter]
+    Router --> Native[Native executable plus arguments]
+    Router --> Dynamic[Registered capability command]
+    Router --> Intent[Intent request]
+    Dynamic --> Plan[OperationPlan lifecycle]
+    Intent --> Plan
+```
+
+This separation means native commands retain their existing semantics, dynamic
+commands are discoverable only while registered, and intent interpretation
+cannot bypass planning, approval, verification, rollback, or evidence.
+
 ## Non-functional constraints
 
 Rust is the primary implementation language. The project targets async-friendly, testable components; forbids unsafe code unless a future, documented exception is accepted; favors minimal dependencies; and requires user-visible plans, rationale, changes, and undo information for system actions.
