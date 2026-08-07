@@ -57,6 +57,18 @@ Completed work packages: WP-0045 through WP-0050.
 The next milestone should integrate the coordinator into the interactive console
 and add explicit rollback and resume commands with user-visible recovery plans.
 
+## Linux operations and desktop adapter boundaries — complete
+
+- Add governed process-table and filesystem capacity inspection skills.
+- Add an injectable, read-only systemd health adapter.
+- Add an isolated read-only D-Bus transport contract for desktop adapters.
+- Keep platform operations behind plans, verification, evidence, and explicit policy.
+
+Completed work packages: WP-0051 through WP-0054.
+
+The next milestone should add persistent recovery/resume plans and concrete
+Wayland/D-Bus adapters behind these contracts.
+
 ## Additional safe Linux operations
 
 - Implement a small, allowlisted set of read-only skills first.

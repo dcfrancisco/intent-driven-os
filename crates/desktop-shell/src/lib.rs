@@ -8,6 +8,47 @@
 use oid_common::FoundationEvent;
 use oid_plugin_sdk::{CapabilityCommand, CapabilityRegistry};
 
+/// A validated D-Bus method call description.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DbusMethodCall {
+    /// Bus destination name.
+    pub destination: String,
+    /// Object path.
+    pub path: String,
+    /// Interface name.
+    pub interface: String,
+    /// Method name.
+    pub method: String,
+}
+
+impl DbusMethodCall {
+    /// Construct a D-Bus call descriptor.
+    #[must_use]
+    pub fn new(
+        destination: impl Into<String>,
+        path: impl Into<String>,
+        interface: impl Into<String>,
+        method: impl Into<String>,
+    ) -> Self {
+        Self {
+            destination: destination.into(),
+            path: path.into(),
+            interface: interface.into(),
+            method: method.into(),
+        }
+    }
+}
+
+/// Boundary for isolated D-Bus adapters.
+pub trait DbusTransport: Send + Sync {
+    /// Execute a read-only D-Bus method call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the transport cannot complete the call.
+    fn call_read_only(&self, call: &DbusMethodCall) -> Result<String, oid_common::OidError>;
+}
+
 /// The execution path selected for one prompt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputRoute {

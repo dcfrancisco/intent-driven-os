@@ -148,6 +148,15 @@ resolves registered skills, appends lifecycle transitions, and emits correlated
 records for each stage. Recovery returns incomplete journal records for explicit
 user-directed handling rather than silently resuming system actions.
 
+## Linux and desktop adapter boundaries
+
+Read-only Linux inspection skills now cover process counts, filesystem capacity,
+and systemd manager health. Systemd is accessed through an injectable adapter,
+so the skill remains testable without requiring a systemd host. Desktop D-Bus
+integration is represented by a transport contract in `oid-desktop-shell`; the
+concrete bus implementation and privileged methods remain outside this
+milestone.
+
 ## Non-functional constraints
 
 Rust is the primary implementation language. The project targets async-friendly, testable components; forbids unsafe code unless a future, documented exception is accepted; favors minimal dependencies; and requires user-visible plans, rationale, changes, and undo information for system actions.

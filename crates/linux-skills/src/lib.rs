@@ -217,6 +217,300 @@ impl Skill for LinuxSystemHealthSkill {
     }
 }
 
+/// Read-only process-table inspection skill.
+#[derive(Clone, Debug)]
+pub struct ProcessInspectionSkill {
+    descriptor: SkillDescriptor,
+}
+
+impl ProcessInspectionSkill {
+    /// Construct the process inspection skill.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the static skill identifier is changed to an invalid value.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            descriptor: SkillDescriptor {
+                id: SkillId::new("inspect-processes").expect("static skill id is valid"),
+                description: "Inspect the Linux process table".to_owned(),
+                mutates_system: false,
+            },
+        }
+    }
+}
+
+impl Default for ProcessInspectionSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Skill for ProcessInspectionSkill {
+    fn descriptor(&self) -> &SkillDescriptor {
+        &self.descriptor
+    }
+
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        let plan = read_only_plan(
+            request.id.clone(),
+            self.descriptor.id.clone(),
+            "Inspect processes",
+            "Read process metadata without changing system state",
+            ActionType::InspectProcesses,
+            "process table is readable",
+        );
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        ensure_skill(&approved_plan.plan, &self.descriptor.id)?;
+        let count = std::fs::read_dir("/proc")
+            .map_err(|error| OidError::Execution(format!("read /proc: {error}")))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().parse::<u32>().is_ok())
+            .count();
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
+            summary: format!("{count} process entries discovered"),
+            changed: false,
+        })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(read_result(execution, "process table collected"))
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
+    }
+}
+
+/// Read-only filesystem capacity inspection skill.
+#[derive(Clone, Debug)]
+pub struct FilesystemInspectionSkill {
+    descriptor: SkillDescriptor,
+}
+
+impl FilesystemInspectionSkill {
+    /// Construct the filesystem inspection skill.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the static skill identifier is changed to an invalid value.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            descriptor: SkillDescriptor {
+                id: SkillId::new("inspect-filesystem").expect("static skill id is valid"),
+                description: "Inspect filesystem capacity for a path".to_owned(),
+                mutates_system: false,
+            },
+        }
+    }
+}
+
+impl Default for FilesystemInspectionSkill {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Skill for FilesystemInspectionSkill {
+    fn descriptor(&self) -> &SkillDescriptor {
+        &self.descriptor
+    }
+
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        let path = read_path(&request.arguments)?;
+        if !path.exists() {
+            return Err(OidError::InvalidInput(format!(
+                "path does not exist: {}",
+                path.display()
+            )));
+        }
+        let plan = read_only_plan(
+            request.id.clone(),
+            self.descriptor.id.clone(),
+            &format!("Inspect filesystem {}", path.display()),
+            "Read filesystem capacity without changing system state",
+            ActionType::InspectFilesystem {
+                path: path.display().to_string(),
+            },
+            "filesystem capacity is readable",
+        );
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        ensure_skill(&approved_plan.plan, &self.descriptor.id)?;
+        let path = approved_plan
+            .plan
+            .steps
+            .iter()
+            .find_map(|step| match &step.action {
+                ActionType::InspectFilesystem { path } => Some(path),
+                _ => None,
+            })
+            .ok_or_else(|| OidError::InvalidInput("filesystem plan has no path".to_owned()))?;
+        let output = std::process::Command::new("df")
+            .args(["-P", path])
+            .output()
+            .map_err(|error| OidError::Execution(format!("run df: {error}")))?;
+        if !output.status.success() {
+            return Err(OidError::Execution(
+                "df did not complete successfully".to_owned(),
+            ));
+        }
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
+            summary: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+            changed: false,
+        })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(read_result(execution, "filesystem capacity collected"))
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
+    }
+}
+
+/// Read-only systemd health adapter boundary.
+pub trait SystemdHealthAdapter: Send + Sync {
+    /// Query the systemd manager state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the systemd manager cannot be queried.
+    fn manager_state(&self) -> Result<String, OidError>;
+}
+
+/// systemd adapter backed by the read-only `systemctl is-system-running` query.
+#[derive(Clone, Debug, Default)]
+pub struct CommandSystemdHealthAdapter;
+
+impl SystemdHealthAdapter for CommandSystemdHealthAdapter {
+    fn manager_state(&self) -> Result<String, OidError> {
+        if std::env::consts::OS != "linux" {
+            return Err(OidError::Execution(
+                "systemd requires a Linux host".to_owned(),
+            ));
+        }
+        let output = std::process::Command::new("systemctl")
+            .args(["is-system-running"])
+            .output()
+            .map_err(|error| OidError::Execution(format!("run systemctl: {error}")))?;
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if state.is_empty() {
+            return Err(OidError::Execution(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+        Ok(state)
+    }
+}
+
+/// Read-only systemd manager health skill.
+#[derive(Clone, Debug)]
+pub struct SystemdHealthSkill<A = CommandSystemdHealthAdapter> {
+    descriptor: SkillDescriptor,
+    adapter: A,
+}
+
+impl Default for SystemdHealthSkill<CommandSystemdHealthAdapter> {
+    fn default() -> Self {
+        Self::new(CommandSystemdHealthAdapter)
+    }
+}
+
+impl<A> SystemdHealthSkill<A> {
+    /// Construct a systemd skill with an injectable adapter.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the static skill identifier is changed to an invalid value.
+    #[must_use]
+    pub fn new(adapter: A) -> Self {
+        Self {
+            descriptor: SkillDescriptor {
+                id: SkillId::new("systemd-health").expect("static skill id is valid"),
+                description: "Inspect systemd manager health".to_owned(),
+                mutates_system: false,
+            },
+            adapter,
+        }
+    }
+}
+
+impl<A: SystemdHealthAdapter> Skill for SystemdHealthSkill<A> {
+    fn descriptor(&self) -> &SkillDescriptor {
+        &self.descriptor
+    }
+
+    fn plan(&self, request: &SkillRequest) -> Result<OperationPlan, OidError> {
+        let plan = read_only_plan(
+            request.id.clone(),
+            self.descriptor.id.clone(),
+            "Inspect systemd manager",
+            "Query systemd health without changing units or manager state",
+            ActionType::InspectSystemd,
+            "systemd manager state is readable",
+        );
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    fn execute(&self, approved_plan: &ApprovedOperationPlan) -> Result<ExecutionResult, OidError> {
+        ensure_skill(&approved_plan.plan, &self.descriptor.id)?;
+        Ok(ExecutionResult {
+            operation_id: approved_plan.plan.id.clone(),
+            summary: format!("systemd={}", self.adapter.manager_state()?),
+            changed: false,
+        })
+    }
+
+    fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
+        Ok(read_result(execution, "systemd health collected"))
+    }
+
+    fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
+        Self::no_rollback(execution)
+    }
+}
+
+fn read_only_plan(
+    id: OperationId,
+    skill: SkillId,
+    summary: &str,
+    rationale: &str,
+    action: ActionType,
+    verification: &str,
+) -> OperationPlan {
+    OperationPlan {
+        id,
+        intent: None,
+        skill,
+        summary: summary.to_owned(),
+        rationale: rationale.to_owned(),
+        risk: RiskLevel::None,
+        approval: ApprovalRequirement::None,
+        steps: vec![OperationStep {
+            order: 1,
+            description: summary.to_owned(),
+            action,
+            affects_system_state: false,
+        }],
+        verification: read_verification(verification),
+        rollback: None,
+    }
+}
+
 /// Read-only directory listing skill.
 #[derive(Clone, Debug)]
 pub struct DirectoryInspectionSkill {
@@ -661,8 +955,9 @@ pub const fn boundary_name() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateDirectorySkill, DirectoryInspectionSkill, FileInspectionSkill, OperationRequest,
-        Skill, SystemHealthSkill,
+        CreateDirectorySkill, DirectoryInspectionSkill, FileInspectionSkill,
+        FilesystemInspectionSkill, OperationRequest, ProcessInspectionSkill, Skill,
+        SystemHealthSkill, SystemdHealthAdapter, SystemdHealthSkill,
     };
     use oid_common::{ApprovedOperationPlan, OperationId};
 
@@ -743,5 +1038,53 @@ mod tests {
             .expect("file inspection");
         assert!(!file_result.changed);
         std::fs::remove_file(file).expect("cleanup fixture");
+    }
+
+    #[derive(Clone, Debug)]
+    struct FakeSystemd;
+
+    impl SystemdHealthAdapter for FakeSystemd {
+        fn manager_state(&self) -> Result<String, oid_common::OidError> {
+            Ok("running".to_owned())
+        }
+    }
+
+    #[test]
+    fn process_filesystem_and_systemd_skills_are_read_only() {
+        let process = ProcessInspectionSkill::default();
+        let process_plan = process
+            .plan(&OperationRequest {
+                id: OperationId::new("operation-processes").expect("operation id"),
+                arguments: String::new(),
+            })
+            .expect("process plan");
+        assert!(!process_plan.steps[0].affects_system_state);
+
+        let filesystem = FilesystemInspectionSkill::default();
+        let filesystem_plan = filesystem
+            .plan(&OperationRequest {
+                id: OperationId::new("operation-filesystem").expect("operation id"),
+                arguments: std::env::temp_dir().display().to_string(),
+            })
+            .expect("filesystem plan");
+        assert_eq!(
+            filesystem_plan.approval,
+            oid_common::ApprovalRequirement::None
+        );
+
+        let systemd = SystemdHealthSkill::new(FakeSystemd);
+        let approved = ApprovedOperationPlan::new(
+            systemd
+                .plan(&OperationRequest {
+                    id: OperationId::new("operation-systemd").expect("operation id"),
+                    arguments: String::new(),
+                })
+                .expect("systemd plan"),
+            "test",
+        )
+        .expect("approved read-only plan");
+        let result = systemd.execute(&approved).expect("fake systemd query");
+        assert!(!result.changed);
+        assert!(systemd.verify(&result).expect("verification").passed);
     }
 }

@@ -30,6 +30,8 @@ It also adds durable approval lifecycle records with recovery inspection and
 read-only directory and file inspection skills.
 Milestone 5 adds `oid-operation-coordinator`, which composes those boundaries
 into a durable end-to-end lifecycle with native and dynamic execution adapters.
+Milestone 6 adds read-only process, filesystem, and systemd inspection skills,
+plus an isolated D-Bus transport contract for future desktop adapters.
 
 ## Workspace
 

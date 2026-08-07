@@ -50,5 +50,9 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0048 | Dynamic Capability Execution Adapter | Registered capability dispatch through skills |
 | WP-0049 | Evidence and Verification Correlation | Operation-linked plan, execution, and verification records |
 | WP-0050 | Recovery and Resume CLI Boundary | Recoverable operation API for terminal integration |
+| WP-0051 | Process Inspection Skill | Governed Linux process-table inspection |
+| WP-0052 | Filesystem Inspection Skill | Governed filesystem capacity inspection |
+| WP-0053 | Systemd Health Adapter | Read-only systemd manager health boundary |
+| WP-0054 | D-Bus Desktop Boundary | Isolated read-only D-Bus transport contract |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

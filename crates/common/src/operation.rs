@@ -81,6 +81,15 @@ pub enum ActionType {
         /// File target.
         path: String,
     },
+    /// Inspect the Linux process table without mutation.
+    InspectProcesses,
+    /// Inspect filesystem capacity without mutation.
+    InspectFilesystem {
+        /// Filesystem path to inspect.
+        path: String,
+    },
+    /// Inspect systemd health without mutation.
+    InspectSystemd,
     /// Create one directory at a validated path.
     CreateDirectory {
         /// Directory target.
@@ -113,6 +122,9 @@ impl ActionType {
             Self::InspectSystemHealth => "inspect-system-health".to_owned(),
             Self::InspectDirectory { path } => format!("inspect-directory:{path}"),
             Self::InspectFile { path } => format!("inspect-file:{path}"),
+            Self::InspectProcesses => "inspect-processes".to_owned(),
+            Self::InspectFilesystem { path } => format!("inspect-filesystem:{path}"),
+            Self::InspectSystemd => "inspect-systemd".to_owned(),
             Self::CreateDirectory { path } => format!("create-directory:{path}"),
             Self::RemoveDirectory { path } => format!("remove-directory:{path}"),
             Self::NativeCommand { command, .. } => format!("native-command:{command}"),
