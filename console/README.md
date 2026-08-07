@@ -32,3 +32,6 @@ operations rollback <operation-id>
 
 Approval records, operation state, and evidence are stored in the OID console
 state directory under the system temporary directory.
+
+Ordinary input is now executed through the configured shell. OID controls use
+the `:` namespace, for example `:help`, `:status`, and `:intent <description>`.

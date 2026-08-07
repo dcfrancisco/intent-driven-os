@@ -2,7 +2,7 @@
 
 ## Status
 
-Backlog — upcoming Milestone 7, high priority.
+Complete — Milestone 7.
 
 ## Product correction
 
@@ -63,3 +63,10 @@ environment, working directory, standard streams, and exit status.
 
 No model integration, chatbot behavior, or automatic intent interpretation is
 part of this work package.
+
+## Implementation notes
+
+The default status mode is compact. Set `OID_STATUS_MODE=full` or
+`OID_STATUS_MODE=hidden` to change automatic status rendering. The shell
+executor inherits standard streams for interactive commands and exposes a
+captured-output path for tests and non-interactive clients.

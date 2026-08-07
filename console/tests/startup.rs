@@ -11,6 +11,6 @@ fn console_binary_starts_with_runtime_prompt() {
     let stdout = String::from_utf8(output.stdout).expect("startup output is UTF-8");
     assert!(stdout.contains("AI CONSOLE"));
     assert!(stdout.contains("✓ Runtime initialized"));
-    assert!(stdout.contains("Runtime: Healthy"));
-    assert!(stdout.contains("int>"));
+    assert!(stdout.contains("[OID Healthy | model none]"));
+    assert!(stdout.contains("$ "));
 }

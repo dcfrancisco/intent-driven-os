@@ -95,43 +95,18 @@ pub fn execute_with_operations(
 ) -> CommandResult {
     let parsed = FoundationParser.parse(input.trim());
     let command = parsed.text.trim();
-    if !matches!(
-        command.split_whitespace().next(),
-        Some("generate" | "complete" | "explain" | "operations")
-    ) {
-        runtime.execute_command(command);
-    }
     let (output, action) = match command {
         "help" => (
             vec![
                 "Commands:".to_owned(),
-                "  help     Show this help".to_owned(),
-                "  status   Show runtime status".to_owned(),
-                "  runtime  Show runtime service details".to_owned(),
-                "  health   Show runtime health".to_owned(),
-                "  inspect system  Run the read-only intent foundation flow".to_owned(),
-                "  create directory <path> [--approve]  Create one approved directory".to_owned(),
-                "  operations recover  List interrupted operations".to_owned(),
-                "  operations approve <id>  Approve an operation explicitly".to_owned(),
-                "  operations rollback <id>  Roll back a completed operation".to_owned(),
-                "  backend  Show backend registrations".to_owned(),
-                "  backend info  Show active backend details".to_owned(),
-                "  models   List registered model metadata".to_owned(),
-                "  model inspect <id>  Inspect model metadata".to_owned(),
-                "  model load <id>  Load a GGUF model".to_owned(),
-                "  model unload <id>  Unload a model".to_owned(),
-                "  model status  Show model lifecycle state".to_owned(),
-                "  tokenize <text>  Count tokens in text".to_owned(),
-                "  count <path>  Count file tokens".to_owned(),
-                "  generate <prompt>  Generate independent text".to_owned(),
-                "  complete <path>  Complete a file prompt".to_owned(),
-                "  explain <text>  Generate an explanation".to_owned(),
-                "  hardware Show discovered hardware".to_owned(),
-                "  history  Show command history".to_owned(),
-                "  clear    Clear the console".to_owned(),
-                "  version  Show version".to_owned(),
-                "  about    About AI Console".to_owned(),
-                "  exit     Shut down the console".to_owned(),
+                "OID commands:".to_owned(),
+                "  :help     Show this help".to_owned(),
+                "  :status   Show runtime status".to_owned(),
+                "  :runtime  Show runtime service details".to_owned(),
+                "  :models   List registered model metadata".to_owned(),
+                "  :intent <description>  Record an intent".to_owned(),
+                "  :operations recover|approve|rollback  Manage operations".to_owned(),
+                "  :quit     Shut down the console".to_owned(),
             ],
             CommandAction::Continue,
         ),
@@ -146,6 +121,13 @@ pub fn execute_with_operations(
                 CommandAction::Continue,
             )
         }
+        _ if command.starts_with("intent ") => (
+            vec![format!(
+                "Intent recorded: {}",
+                command.trim_start_matches("intent ").trim()
+            )],
+            CommandAction::Continue,
+        ),
         "inspect system" => (
             crate::foundation::run_system_health(&runtime.event_bus())
                 .unwrap_or_else(|error| vec![format!("Foundation flow failed: {error}")]),
@@ -274,7 +256,7 @@ pub fn execute_with_operations(
         "exit" | "quit" => (vec!["Goodbye.".to_owned()], CommandAction::Exit),
         "" => (Vec::new(), CommandAction::Continue),
         _ => (
-            vec![format!("Unknown command: {command}. Type help.")],
+            vec![format!("Unknown OID command: {command}. Type :help.")],
             CommandAction::Continue,
         ),
     };

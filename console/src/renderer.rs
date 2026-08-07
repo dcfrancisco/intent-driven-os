@@ -32,8 +32,8 @@ impl Renderer {
     }
 
     /// Render the permanent status line.
-    pub fn render_status(runtime: &dyn RuntimeService, _status_bar: &StatusBar) {
-        StatusBar::render(runtime);
+    pub fn render_status(runtime: &dyn RuntimeService, status_bar: &StatusBar) {
+        status_bar.render(runtime);
     }
 
     /// Render command output without adding UI state of its own.

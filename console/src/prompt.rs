@@ -19,6 +19,13 @@ impl Default for Prompt {
 }
 
 impl Prompt {
+    /// Update the prompt marker to reflect the current shell directory.
+    pub fn set_directory(&mut self, directory: &std::path::Path) {
+        let user = std::env::var("USER").unwrap_or_else(|_| "user".to_owned());
+        let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "oid".to_owned());
+        self.marker = format!("{user}@{host}:{}$", directory.display());
+    }
+
     /// Render a line and place the terminal cursor at the logical edit position.
     pub fn render_line<W: Write>(
         &self,

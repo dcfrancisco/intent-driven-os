@@ -8,10 +8,12 @@ use crate::{
     commands::{self, CommandAction, HistoryView},
     editor::{EditResult, LineEditor},
     history::History,
+    input_router::{InputRoute, InputRouter},
     operations::ConsoleOperations,
     presence::PresenceIndicator,
     prompt::Prompt,
     renderer::Renderer,
+    shell::ShellCommandController,
     status_bar::StatusBar,
 };
 
@@ -24,6 +26,8 @@ pub struct Application {
     history: History,
     presence: PresenceIndicator,
     operations: ConsoleOperations,
+    router: InputRouter,
+    shell: ShellCommandController,
 }
 
 impl Application {
@@ -40,11 +44,24 @@ impl Application {
         Self {
             runtime,
             bus,
-            status_bar: StatusBar,
+            status_bar: StatusBar {
+                mode: StatusBar::mode(
+                    &std::env::var("OID_STATUS_MODE").unwrap_or_else(|_| "compact".to_owned()),
+                ),
+            },
             prompt: Prompt::default(),
             history: History::new(),
             presence,
             operations: ConsoleOperations::new(),
+            router: InputRouter,
+            shell: ShellCommandController::new().unwrap_or_else(|_| ShellCommandController {
+                executor: crate::shell::ShellExecutor::from_path(std::path::PathBuf::from(
+                    "/bin/sh",
+                )),
+                directory: crate::shell::WorkingDirectoryManager::from_path(
+                    std::env::current_dir().expect("current directory is available"),
+                ),
+            }),
         }
     }
 
@@ -54,6 +71,7 @@ impl Application {
         self.presence.refresh();
         Renderer::render_status(&self.runtime, &self.status_bar);
         loop {
+            self.prompt.set_directory(self.shell.directory.current());
             match LineEditor::read_command(
                 &self.prompt,
                 &mut self.history,
@@ -62,12 +80,18 @@ impl Application {
             )? {
                 EditResult::Submitted(line) => {
                     self.history.push(line.clone());
-                    let result = commands::execute_with_operations(
-                        &line,
-                        &HistoryView::new(self.history.entries()),
-                        &self.runtime,
-                        &mut self.operations,
-                    );
+                    let result = match self.router.route(&line) {
+                        InputRoute::Oid(command) => commands::execute_with_operations(
+                            &command,
+                            &HistoryView::new(self.history.entries()),
+                            &self.runtime,
+                            &mut self.operations,
+                        ),
+                        InputRoute::Shell(command) => commands::CommandResult {
+                            output: self.shell.execute(&command),
+                            action: CommandAction::Continue,
+                        },
+                    };
                     self.presence.refresh();
                     if result.action == CommandAction::Clear {
                         Renderer::clear()?;

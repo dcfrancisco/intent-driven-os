@@ -3,14 +3,54 @@
 use oid_runtime::RuntimeService;
 use std::process::Command;
 
-/// Status bar renderer using mock runtime data and local wall-clock time.
+/// Runtime status display mode.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StatusDisplayMode {
+    /// Show a one-line health summary.
+    #[default]
+    Compact,
+    /// Show all runtime fields.
+    Full,
+    /// Do not render status automatically.
+    Hidden,
+}
+
+/// Status bar renderer using runtime data and local wall-clock time.
 #[derive(Clone, Debug, Default)]
-pub struct StatusBar;
+pub struct StatusBar {
+    /// Configured display mode.
+    pub mode: StatusDisplayMode,
+}
 
 impl StatusBar {
+    /// Parse a configured display mode.
+    #[must_use]
+    pub fn mode(value: &str) -> StatusDisplayMode {
+        match value {
+            "full" => StatusDisplayMode::Full,
+            "hidden" => StatusDisplayMode::Hidden,
+            _ => StatusDisplayMode::Compact,
+        }
+    }
+
     /// Render the current status snapshot.
-    pub fn render(runtime: &dyn RuntimeService) {
-        println!("{}", Self::line(runtime, &local_time()));
+    pub fn render(&self, runtime: &dyn RuntimeService) {
+        match self.mode {
+            StatusDisplayMode::Compact => println!("{}", Self::compact_line(runtime)),
+            StatusDisplayMode::Full => println!("{}", Self::line(runtime, &local_time())),
+            StatusDisplayMode::Hidden => {}
+        }
+    }
+
+    /// Format the default compact status line.
+    #[must_use]
+    pub fn compact_line(runtime: &dyn RuntimeService) -> String {
+        let snapshot = runtime.snapshot();
+        format!(
+            "[OID {} | model {}]",
+            snapshot.health,
+            snapshot.loaded_model.as_deref().unwrap_or("none")
+        )
     }
 
     /// Format a status bar line from a snapshot and supplied time.
@@ -60,5 +100,15 @@ mod tests {
         assert!(line.contains("Loaded model: None"));
         assert!(line.contains("Uptime: "));
         assert!(line.contains("Time: 12:34:56"));
+    }
+
+    #[test]
+    fn supports_configurable_display_modes() {
+        assert_eq!(
+            StatusBar::mode("compact"),
+            super::StatusDisplayMode::Compact
+        );
+        assert_eq!(StatusBar::mode("full"), super::StatusDisplayMode::Full);
+        assert_eq!(StatusBar::mode("hidden"), super::StatusDisplayMode::Hidden);
     }
 }

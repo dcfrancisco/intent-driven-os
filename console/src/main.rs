@@ -7,10 +7,12 @@ mod commands;
 mod editor;
 mod foundation;
 mod history;
+mod input_router;
 mod operations;
 mod presence;
 mod prompt;
 mod renderer;
+mod shell;
 mod status_bar;
 mod tui;
 
