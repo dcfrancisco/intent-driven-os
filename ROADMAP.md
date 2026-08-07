@@ -69,6 +69,20 @@ Completed work packages: WP-0051 through WP-0054.
 The next milestone should add persistent recovery/resume plans and concrete
 Wayland/D-Bus adapters behind these contracts.
 
+## Terminal identity and shell passthrough — upcoming
+
+The current console still behaves primarily as a closed command REPL. This is
+the next product-critical correction: OID Console must remain a real Linux
+terminal, with ordinary input sent to the configured shell and OID controls
+explicitly namespaced behind `:`.
+
+Planned work package: WP-0055.
+
+The milestone will introduce shell passthrough, persistent `cd`, child-process
+interrupt handling, shell-compatible quoting/pipelines/redirection, explicit
+OID command routing, and compact/full/hidden prompt status modes. It will not
+add model integration.
+
 ## Additional safe Linux operations
 
 - Implement a small, allowlisted set of read-only skills first.

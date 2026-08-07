@@ -33,6 +33,10 @@ into a durable end-to-end lifecycle with native and dynamic execution adapters.
 Milestone 6 adds read-only process, filesystem, and systemd inspection skills,
 plus an isolated D-Bus transport contract for future desktop adapters.
 
+Upcoming Milestone 7 corrects the console interaction model: OID Console will
+remain a real Linux shell, while OID-specific controls use an explicit `:`
+prefix. See [WP-0055](docs/work-packages/WP-0055-terminal-identity-and-shell-passthrough.md).
+
 ## Workspace
 
 | Crate | Responsibility |

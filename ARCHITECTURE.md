@@ -157,6 +157,24 @@ integration is represented by a transport contract in `oid-desktop-shell`; the
 concrete bus implementation and privileged methods remain outside this
 milestone.
 
+## Terminal identity gap and upcoming correction
+
+The current reference console command table is still a transitional REPL
+surface. WP-0055 changes the boundary so the terminal remains primary:
+
+```mermaid
+flowchart LR
+    Input[Terminal input] --> Prefix{Begins with ':'?}
+    Prefix -->|yes| OID[OID command handler]
+    Prefix -->|no| Shell[Configured Linux shell]
+    Shell --> State[Persistent working directory and exit status]
+    OID --> Governed[Intent and governed operation paths]
+```
+
+This is a product and routing correction, not an AI feature. Native shell
+commands must remain native shell commands; OID behavior is explicit and
+namespaced.
+
 ## Non-functional constraints
 
 Rust is the primary implementation language. The project targets async-friendly, testable components; forbids unsafe code unless a future, documented exception is accepted; favors minimal dependencies; and requires user-visible plans, rationale, changes, and undo information for system actions.
