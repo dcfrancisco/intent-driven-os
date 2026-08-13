@@ -1,103 +1,81 @@
 # Roadmap
 
-## Foundation — complete
+This roadmap is frozen around one product proof: a user can express, approve,
+execute, verify, inspect, and safely recover one governed operation from the
+OID terminal. That proof is complete in `v0.1.0-alpha.1`. New architecture and
+additional skills remain backlog work while the desktop foundation stabilizes.
 
-- Establish the Rust workspace and crate boundaries.
-- Document architecture, contribution, security, and governance expectations.
-- Define the first architectural decision.
-- Keep AI behavior unimplemented while operation contracts mature.
-- Define shared identifiers, errors, and cross-context events.
-- Define intent lifecycle transitions and invariants.
-- Define policy, skill, verification, evidence, plugin, model, and shell traits.
+## Completed foundations
 
-## First implementation slice — complete
+- Rust workspace and bounded crate architecture.
+- Runtime/console separation and explicit `:`-prefixed OID commands.
+- Canonical operation plans with policy, approval, execution, verification,
+  rollback, and append-only evidence boundaries.
+- Durable approval, operation, and evidence journals.
+- Native/dynamic/intent routing contracts.
+- Read-only process, filesystem, and systemd inspection boundaries.
+- Shell passthrough and persistent console working directory.
 
-- Add deterministic in-memory policy, evidence, and verification test doubles.
-- Implement the Linux `/proc` health adapter and portable fallback.
-- Connect the intent lifecycle to the existing runtime event bus.
-- Add durable append-only file evidence storage.
-- Add the first explicitly approved, rollback-capable directory operation.
+See the ADR index and work-package index for the historical design record.
 
-## Operation Planning Framework — complete
+## Current milestone: End-to-End Governed Operation UX
 
-- Define canonical operation plans, steps, risk, approval, verification, and rollback models.
-- Require approved plans for skill execution.
-- Render inspectable plans in the terminal.
-- Migrate system-health and create-directory flows to the common lifecycle.
+Status: complete — tagged `v0.1.0-alpha.1`.
 
-## Capability governance and routing — complete
+### Golden path
 
-- Register and unregister dynamic capabilities through a validated registry.
-- Protect native command names from silent dynamic shadowing.
-- Route prompts into native CLI, dynamic capability, or intent paths.
-- Expose loaded capability help and completion metadata.
+```text
+:intent create a directory /tmp/oid-demo
+  -> deterministic intent parser
+  -> inspectable OperationPlan
+  -> explicit user approval
+  -> execution
+  -> verification
+  -> durable evidence
+  -> :operations inspect <id>
+```
 
-Completed work packages: WP-0039, WP-0040, WP-0041, and WP-0042.
+### Definition of done
 
-## Safe Linux operations — complete
+- The complete path works from one terminal session.
+- Every lifecycle transition survives process restart.
+- The journal and evidence store reconstruct the operation history.
+- Resume and rollback cannot bypass approval or policy.
+- Integration tests deliberately interrupt execution at important lifecycle
+  boundaries and validate safe recovery.
 
-- Add durable approval records and crash recovery for interrupted operations.
-- Add more read-only skills before expanding mutating capabilities.
+The milestone does not require an LLM. `:intent` uses a deterministic adapter
+for the supported directory intent while the runtime and model remain absent.
 
-Completed work packages: WP-0043 and WP-0044.
+## Next milestone: Desktop Foundation Stabilization
 
-Milestone 4 is complete. The next milestone should integrate these boundaries
-into a persistent operation coordinator and terminal execution adapter.
+No new product capabilities are in scope. Focus on terminal reliability,
+runtime lifecycle, durable-state corruption handling, concurrent operations,
+signals and process cleanup, configuration validation, Linux installation and
+startup, diagnostics, and recovery edge cases.
 
-## Persistent operation coordination — complete
+Milestone gate:
 
-- Compose planning, policy, approval, execution, verification, and evidence.
-- Persist operation lifecycle transitions in an append-only journal.
-- Add governed native command and dynamic capability adapters.
-- Correlate lifecycle evidence to the canonical operation ID.
-- Expose recoverable operations for a future explicit resume command.
+- No new skills, model training, dynamic CLI, phone, voice, plugin expansion,
+  or richer desktop UI.
+- Yes to reliability, recovery, tests, packaging, installation, diagnostics,
+  and documentation.
+- Validate on an actual Linux environment with interruption, restart,
+  intentional corruption, long-running sessions, and ordinary shell use.
 
-Completed work packages: WP-0045 through WP-0050.
+## Release sequence after stabilization
 
-The next milestone should integrate the coordinator into the interactive console
-and add explicit rollback and resume commands with user-visible recovery plans.
+- `v0.1.0-alpha.1` — End-to-End Governed Operation Foundation.
+- `v0.2` — Stable terminal and recovery hardening.
+- `v0.3` — Concrete Linux desktop integration.
+- `v0.4` — Local intelligence runtime.
+- `v0.5+` — Expanded skills, dynamic CLI, and richer intent interpretation.
 
-## Linux operations and desktop adapter boundaries — complete
+Phone pairing, voice, the Linux Operations Model, generated CLIs, historical
+runtimes, and broad skill expansion remain explicitly deferred.
 
-- Add governed process-table and filesystem capacity inspection skills.
-- Add an injectable, read-only systemd health adapter.
-- Add an isolated read-only D-Bus transport contract for desktop adapters.
-- Keep platform operations behind plans, verification, evidence, and explicit policy.
+## Separate runtime track
 
-Completed work packages: WP-0051 through WP-0054.
-
-The next milestone should add persistent recovery/resume plans and concrete
-Wayland/D-Bus adapters behind these contracts.
-
-## Terminal identity and shell passthrough — complete
-
-The current console still behaves primarily as a closed command REPL. This is
-the next product-critical correction: OID Console must remain a real Linux
-terminal, with ordinary input sent to the configured shell and OID controls
-explicitly namespaced behind `:`.
-
-Completed work package: WP-0055.
-
-The milestone introduces shell passthrough, persistent `cd`, shell-compatible
-quoting/pipelines/redirection, explicit OID command routing, and
-compact/full/hidden prompt status modes. It does not add model integration.
-
-## Additional safe Linux operations
-
-- Implement a small, allowlisted set of read-only skills first.
-- Add explicit authorization and approval decisions.
-- Add postcondition checks, rollback contracts, and append-only evidence records.
-- Integrate systemd and D-Bus through isolated Linux adapters.
-
-## Desktop integration
-
-- Build terminal event interfaces and a Wayland-first shell adapter.
-- Surface plans, approvals, progress, results, and undo paths.
-- Add crash recovery and evidence inspection.
-
-## Intelligence and ecosystem
-
-- Add model-runner interfaces only after operation contracts are stable.
-- Evaluate local model execution and the Linux Operations Model.
-- Introduce plugin discovery and capability isolation.
-- Explore Open Intelligence Platform (OIP) integration.
+The model/runtime sequencing remains documented in
+[`runtime/ROADMAP.md`](runtime/ROADMAP.md) and [`runtime/BACKLOG.md`](runtime/BACKLOG.md).
+It is not a dependency of the current governed-operation milestone.

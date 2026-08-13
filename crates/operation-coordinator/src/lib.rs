@@ -327,7 +327,7 @@ where
             (skill.plan(request)?, skill.descriptor().mutates_system)
         };
         self.transition(&plan.id, OperationStatus::Planned, &plan.summary)?;
-        self.record(&plan, "plan", &plan.summary)?;
+        self.record(&plan, "plan", &plan.to_json()?)?;
         let decision = self
             .policy
             .evaluate(&oid_policy_engine::AuthorizationRequest {
@@ -366,6 +366,7 @@ where
             self.approvals.consume(&plan.id)?;
         }
         self.transition(&plan.id, OperationStatus::Approved, "approval complete")?;
+        self.record(&plan, "approval", "user approval recorded")?;
         self.transition(
             &plan.id,
             OperationStatus::Executing,
@@ -462,6 +463,43 @@ where
         }
     }
 
+    /// Roll back an operation reconstructed after a process restart.
+    ///
+    /// The caller must provide the skill and execution record recovered from
+    /// durable evidence; no in-memory execution state is trusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the skill is unavailable, rollback fails, or the
+    /// lifecycle/evidence journal cannot be updated.
+    pub fn rollback_recovered(
+        &mut self,
+        operation_id: &OperationId,
+        skill_id: &str,
+        execution: &ExecutionResult,
+    ) -> Result<oid_common::RollbackResult, OidError> {
+        let result = self
+            .skills
+            .get(skill_id)
+            .ok_or_else(|| OidError::NotFound(format!("skill: {skill_id}")))?
+            .rollback(execution);
+        match result {
+            Ok(result) => {
+                self.transition(operation_id, OperationStatus::RolledBack, &result.summary)?;
+                self.record_operation_event(operation_id, "rollback", &result.summary)?;
+                Ok(result)
+            }
+            Err(error) => {
+                self.transition(
+                    operation_id,
+                    OperationStatus::RollbackFailed,
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
+    }
+
     /// Run a dynamic command through its registered skill.
     ///
     /// # Errors
@@ -488,6 +526,31 @@ where
     /// Returns an error when the operation journal is unreadable.
     pub fn recoverable(&self) -> Result<Vec<OperationRecord>, OidError> {
         self.journal.recoverable()
+    }
+
+    /// Return the latest durable state for one operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operation journal is unreadable.
+    pub fn latest(&self, operation_id: &OperationId) -> Result<Option<OperationRecord>, OidError> {
+        Ok(self
+            .journal
+            .latest()?
+            .into_iter()
+            .find(|record| &record.operation_id == operation_id))
+    }
+
+    /// Return the append-only evidence history for one operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the evidence store is unreadable.
+    pub fn evidence_history(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Vec<EvidenceRecord>, OidError> {
+        self.evidence.history(operation_id)
     }
 
     fn transition(
