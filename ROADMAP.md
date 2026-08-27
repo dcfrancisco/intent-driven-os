@@ -49,10 +49,30 @@ for the supported directory intent while the runtime and model remain absent.
 
 ## Next milestone: Desktop Foundation Stabilization
 
-No new product capabilities are in scope. Focus on terminal reliability,
-runtime lifecycle, durable-state corruption handling, concurrent operations,
-signals and process cleanup, configuration validation, Linux installation and
-startup, diagnostics, and recovery edge cases.
+Goal: prove that OID can be trusted as an everyday terminal/runtime without
+losing state, corrupting operations, or interfering with normal Linux behavior.
+
+No new product capabilities are in scope. Work is organized into six gates:
+
+1. **WP-0056 — Process and signal reliability** — Ctrl+C, Ctrl+D, SIGTERM/SIGHUP,
+   child-process cleanup, interrupted governed operations, abnormal termination,
+   and clean shutdown.
+2. **State and corruption resilience** — truncated evidence, malformed state,
+   duplicate IDs, partial writes, unavailable storage, incompatible versions,
+   and safe startup when recovery data is damaged.
+3. **Recovery torture tests** — terminate OID before approval, during execution,
+   after execution and before verification, during evidence persistence, and
+   during rollback; restart after each case and prove deterministic recovery.
+4. **Native terminal compatibility** — preserve shell exit codes, pipelines,
+   redirection, environment variables, `cd`, background processes, interactive
+   programs, `ssh`, `git`, `cargo`, editors, resize, Unicode, and large output.
+   OID must not make ordinary CLI behavior worse.
+5. **Packaging and installation** — reproducible release binary,
+   install/uninstall paths, configuration and state directories, permissions,
+   upgrades, version reporting, and eventually `.deb`/`.rpm` packages.
+6. **Real Linux validation** — Ubuntu-first smoke testing outside the test
+   harness, including long-running use, deliberate termination, reboot,
+   repeated governed operations, and recovery.
 
 Milestone gate:
 
@@ -62,6 +82,17 @@ Milestone gate:
   and documentation.
 - Validate on an actual Linux environment with interruption, restart,
   intentional corruption, long-running sessions, and ordinary shell use.
+
+## `v0.1.0-alpha.2` release gate
+
+The next tag is allowed only when all of these pass:
+
+- Workspace tests, strict Clippy, and diff checks.
+- Restart/recovery, corruption, signal, and native-shell compatibility suites.
+- Clean-machine installation and uninstall with no unexpected system changes.
+- Real Linux smoke testing with no model installed and no network connection:
+  OID starts, the native terminal works, deterministic governed operations work,
+  recovery works, and evidence works.
 
 ## Release sequence after stabilization
 

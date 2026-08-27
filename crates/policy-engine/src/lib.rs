@@ -242,6 +242,7 @@ impl FileApprovalStore {
             record.status.as_str(),
             encode(&record.note)
         )
+        .and_then(|()| file.sync_data())
         .map_err(|error| OidError::Evidence(format!("append {}: {error}", self.path.display())))
     }
 

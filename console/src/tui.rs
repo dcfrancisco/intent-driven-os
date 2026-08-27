@@ -50,7 +50,7 @@ impl Application {
                 ),
             },
             prompt: Prompt::default(),
-            history: History::new(),
+            history: History::load_default(),
             presence,
             operations: ConsoleOperations::new(),
             router: InputRouter,
@@ -61,6 +61,7 @@ impl Application {
                 directory: crate::shell::WorkingDirectoryManager::from_path(
                     std::env::current_dir().expect("current directory is available"),
                 ),
+                signals: crate::signals::SignalController::test(),
             }),
         }
     }
@@ -77,6 +78,7 @@ impl Application {
                 &mut self.history,
                 &self.runtime,
                 &mut self.presence,
+                &self.shell.signals,
             )? {
                 EditResult::Submitted(line) => {
                     self.history.push(line.clone());
@@ -92,13 +94,14 @@ impl Application {
                             action: CommandAction::Continue,
                         },
                     };
+                    let shutdown_requested = self.shell.signals.is_shutdown_requested();
                     self.presence.refresh();
                     if result.action == CommandAction::Clear {
                         Renderer::clear()?;
                     }
                     Renderer::render_output(&result.output);
                     Renderer::render_status(&self.runtime, &self.status_bar);
-                    if result.action == CommandAction::Exit {
+                    if result.action == CommandAction::Exit || shutdown_requested {
                         self.runtime.stop();
                         self.presence.refresh();
                         Renderer::render_shutdown();

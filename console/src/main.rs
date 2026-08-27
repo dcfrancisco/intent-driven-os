@@ -13,6 +13,7 @@ mod presence;
 mod prompt;
 mod renderer;
 mod shell;
+mod signals;
 mod status_bar;
 mod tui;
 

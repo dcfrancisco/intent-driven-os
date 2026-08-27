@@ -1,5 +1,6 @@
 //! Keyboard-first terminal line editor.
 
+use crate::signals::SignalController;
 use crate::{history::History, presence::PresenceIndicator, prompt::Prompt};
 use oid_runtime::RuntimeService;
 use std::io::{self, Read, Write};
@@ -104,35 +105,81 @@ impl LineEditor {
         history: &mut History,
         runtime: &dyn RuntimeService,
         presence: &mut PresenceIndicator,
+        signals: &SignalController,
     ) -> io::Result<EditResult> {
-        let mut stdin = io::stdin().lock();
-        let mut stdout = io::stdout().lock();
         let terminal_mode = TerminalMode::enter();
         if terminal_mode.is_raw() {
-            Self::read_raw(&mut stdin, &mut stdout, prompt, history, runtime, presence)
+            let mut stdin = io::stdin().lock();
+            let mut stdout = io::stdout().lock();
+            Self::read_raw(
+                &mut stdin,
+                &mut stdout,
+                prompt,
+                history,
+                runtime,
+                presence,
+                signals,
+            )
         } else {
             drop(terminal_mode);
+            let mut stdout = io::stdout().lock();
             write!(stdout, "{} ", prompt.marker)?;
             stdout.flush()?;
-            Self::read_line(&mut stdin, &mut stdout)
+            Self::read_line_interruptible(signals, &mut stdout)
         }
     }
 
-    fn read_line<R: Read, W: Write>(input: &mut R, output: &mut W) -> io::Result<EditResult> {
-        let mut line = String::new();
-        let mut byte = [0_u8; 1];
-        while input.read(&mut byte)? == 1 {
-            if byte[0] == b'\n' || byte[0] == b'\r' {
-                writeln!(output)?;
-                return Ok(EditResult::Submitted(line));
+    fn read_line_interruptible<W: Write>(
+        signals: &SignalController,
+        output: &mut W,
+    ) -> io::Result<EditResult> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("oid-line-reader".to_owned())
+            .spawn(move || {
+                let mut input = io::stdin().lock();
+                let mut line = String::new();
+                let mut byte = [0_u8; 1];
+                let result = loop {
+                    let read = match input.read(&mut byte) {
+                        Ok(read) => read,
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(error) => break Err(error),
+                    };
+                    if read != 1 {
+                        break Ok(if line.is_empty() {
+                            EditResult::Eof
+                        } else {
+                            EditResult::Submitted(line)
+                        });
+                    }
+                    if byte[0] == b'\n' || byte[0] == b'\r' {
+                        break Ok(EditResult::Submitted(line));
+                    }
+                    line.push(byte[0] as char);
+                };
+                let _ = sender.send(result);
+            })
+            .map_err(|error| io::Error::other(format!("line reader: {error}")))?;
+
+        loop {
+            if signals.is_shutdown_requested() {
+                return Ok(EditResult::Eof);
             }
-            line.push(byte[0] as char);
+            match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
+                Ok(result) => {
+                    let result = result?;
+                    if matches!(result, EditResult::Submitted(_)) {
+                        writeln!(output)?;
+                    }
+                    return Ok(result);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(io::Error::other("line reader disconnected"));
+                }
+            }
         }
-        Ok(if line.is_empty() {
-            EditResult::Eof
-        } else {
-            EditResult::Submitted(line)
-        })
     }
 
     fn read_raw<R: Read, W: Write>(
@@ -142,13 +189,22 @@ impl LineEditor {
         history: &mut History,
         runtime: &dyn RuntimeService,
         presence: &mut PresenceIndicator,
+        signals: &SignalController,
     ) -> io::Result<EditResult> {
         let mut buffer = LineBuffer::new();
         let mut editing = false;
         prompt.render_line(output, &buffer, presence)?;
         loop {
+            if signals.is_shutdown_requested() {
+                return Ok(EditResult::Eof);
+            }
             let mut byte = [0_u8; 1];
-            if input.read(&mut byte)? == 0 {
+            let read = match input.read(&mut byte) {
+                Ok(read) => read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            if read == 0 {
                 return Ok(EditResult::Eof);
             }
             match byte[0] {

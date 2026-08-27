@@ -332,8 +332,7 @@ impl BackendManager {
     pub fn is_enabled(&self, id: &str) -> bool {
         self.state
             .lock()
-            .map(|state| state.enabled.contains(id))
-            .unwrap_or(false)
+            .is_ok_and(|state| state.enabled.contains(id))
     }
 
     /// Select an enabled backend as active.

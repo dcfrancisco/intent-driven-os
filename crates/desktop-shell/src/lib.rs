@@ -197,8 +197,7 @@ fn command_on_path(command: &str) -> bool {
             {
                 use std::os::unix::fs::PermissionsExt;
                 path.metadata()
-                    .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
-                    .unwrap_or(false)
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
             }
             #[cfg(not(unix))]
             {

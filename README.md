@@ -61,6 +61,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for boundaries and dependency direction, 
 
 See [docs/adr/README.md](docs/adr/README.md) for the architecture decisions and [docs/work-packages/README.md](docs/work-packages/README.md) for the initial work package plan.
 
+Linux validation is documented in [docs/validation/linux.md](docs/validation/linux.md).
+Run `./scripts/validate-linux.sh` for the reproducible Ubuntu Docker checks;
+Docker results do not replace real Linux host validation.
+
 ## Build and test
 
 ```bash

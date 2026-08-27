@@ -18,6 +18,7 @@ oid-policy-engine = { path = "../crates/policy-engine" }
 oid-verification-engine = { path = "../crates/verification-engine" }
 oid-evidence-engine = { path = "../crates/evidence-engine" }
 oid-operation-coordinator = { path = "../crates/operation-coordinator" }
+signal-hook = "0.3"
 
 [lints]
 workspace = true

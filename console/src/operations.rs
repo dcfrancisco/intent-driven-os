@@ -23,7 +23,9 @@ impl ConsoleOperations {
     /// Create a coordinator using the user's temporary OID state directory.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_root(std::env::temp_dir().join("oid-console"))
+        let root = std::env::var_os("OID_STATE_DIR")
+            .map_or_else(|| std::env::temp_dir().join("oid-console"), PathBuf::from);
+        Self::with_root(root)
     }
 
     /// Create a coordinator rooted at an explicit directory.
@@ -119,6 +121,7 @@ impl ConsoleOperations {
             .coordinator
             .latest(&id)?
             .ok_or_else(|| OidError::NotFound(format!("operation: {id}")))?;
+        let record = self.coordinator.recovery_record(&id)?.unwrap_or(record);
         let path = self
             .pending(&id)?
             .ok_or_else(|| OidError::NotFound(format!("operation input: {id}")))?;
@@ -211,7 +214,9 @@ impl ConsoleOperations {
             .append(true)
             .open(&self.pending_path)
             .map_err(|error| OidError::Evidence(error.to_string()))?;
-        writeln!(file, "{id}\t{path}").map_err(|error| OidError::Evidence(error.to_string()))
+        writeln!(file, "{id}\t{path}")
+            .and_then(|()| file.sync_data())
+            .map_err(|error| OidError::Evidence(error.to_string()))
     }
 
     fn pending(&self, id: &OperationId) -> Result<Option<String>, OidError> {

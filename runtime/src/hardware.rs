@@ -80,9 +80,7 @@ impl HardwareProvider for UnavailableHardware {
 }
 
 fn detect_snapshot() -> HardwareSnapshot {
-    let logical_cores = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1);
+    let logical_cores = std::thread::available_parallelism().map_or(1, usize::from);
     let (cpu, physical_cores) =
         linux_cpu_details().unwrap_or_else(|| ("unknown CPU".to_owned(), None));
     let (installed_ram_bytes, available_ram_bytes) = linux_memory_details();
