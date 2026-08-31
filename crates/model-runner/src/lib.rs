@@ -111,8 +111,55 @@ pub struct GenerationRequest {
     pub max_tokens: u32,
     /// Sampling temperature.
     pub temperature: f32,
+    /// Nucleus sampling probability in the exclusive range `(0, 1]`.
+    pub top_p: f32,
+    /// Top-K sampling limit.
+    pub top_k: i32,
+    /// Requested context size in tokens.
+    pub context_size: u32,
     /// Optional deterministic seed.
     pub seed: Option<u32>,
+}
+
+impl GenerationRequest {
+    /// Validate generation controls before passing them to a backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRequest` when a control is outside the supported range.
+    pub fn validate(&self) -> Result<(), ModelRunnerError> {
+        if self.prompt.trim().is_empty() {
+            return Err(ModelRunnerError::InvalidRequest(
+                "prompt is empty".to_owned(),
+            ));
+        }
+        if self.max_tokens == 0 {
+            return Err(ModelRunnerError::InvalidRequest(
+                "max tokens must be greater than zero".to_owned(),
+            ));
+        }
+        if !self.temperature.is_finite() || self.temperature < 0.0 {
+            return Err(ModelRunnerError::InvalidRequest(
+                "temperature must be finite and non-negative".to_owned(),
+            ));
+        }
+        if !self.top_p.is_finite() || self.top_p <= 0.0 || self.top_p > 1.0 {
+            return Err(ModelRunnerError::InvalidRequest(
+                "top_p must be greater than zero and at most one".to_owned(),
+            ));
+        }
+        if self.top_k <= 0 {
+            return Err(ModelRunnerError::InvalidRequest(
+                "top_k must be greater than zero".to_owned(),
+            ));
+        }
+        if self.context_size == 0 {
+            return Err(ModelRunnerError::InvalidRequest(
+                "context size must be greater than zero".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// A token or terminal generation event.
@@ -286,6 +333,12 @@ impl GenerationStream {
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
+
+    /// Return a clone of the cancellation token for request registries.
+    #[must_use]
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
 }
 
 /// Stable model-runtime contract implemented by inference adapters.
@@ -302,6 +355,12 @@ pub trait ModelRunner: Send + Sync {
     ///
     /// Returns a typed model or backend lifecycle error.
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, ModelRunnerError>;
+    /// Tokenize text with the currently loaded model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed model or backend error when tokenization cannot run.
+    fn tokenize(&self, text: &str) -> Result<u64, ModelRunnerError>;
     /// Inspect lifecycle and resource information.
     ///
     /// # Errors

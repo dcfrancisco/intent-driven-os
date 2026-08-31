@@ -40,3 +40,61 @@ fn stream_can_cancel_without_backend_types() {
         .expect("terminal event arrives");
     assert!(matches!(stream.recv(), Ok(GenerationEvent::Cancelled(_))));
 }
+
+#[test]
+fn generation_request_rejects_invalid_controls() {
+    use oid_model_runner::{GenerationRequest, ModelRunnerError};
+
+    let request = GenerationRequest {
+        prompt: "hello".to_owned(),
+        max_tokens: 0,
+        temperature: 0.8,
+        top_p: 0.95,
+        top_k: 40,
+        context_size: 4096,
+        seed: None,
+    };
+    assert_eq!(
+        request.validate(),
+        Err(ModelRunnerError::InvalidRequest(
+            "max tokens must be greater than zero".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn generation_request_accepts_default_controls() {
+    use oid_model_runner::GenerationRequest;
+
+    let request = GenerationRequest {
+        prompt: "hello".to_owned(),
+        max_tokens: 128,
+        temperature: 0.8,
+        top_p: 0.95,
+        top_k: 40,
+        context_size: 4096,
+        seed: Some(7),
+    };
+    assert!(request.validate().is_ok());
+}
+
+#[test]
+fn generation_request_rejects_empty_prompts() {
+    use oid_model_runner::{GenerationRequest, ModelRunnerError};
+
+    let request = GenerationRequest {
+        prompt: "  ".to_owned(),
+        max_tokens: 1,
+        temperature: 0.0,
+        top_p: 1.0,
+        top_k: 1,
+        context_size: 1,
+        seed: None,
+    };
+    assert_eq!(
+        request.validate(),
+        Err(ModelRunnerError::InvalidRequest(
+            "prompt is empty".to_owned()
+        ))
+    );
+}

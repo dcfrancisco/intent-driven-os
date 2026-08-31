@@ -26,6 +26,8 @@ struct Loaded {
 pub struct LlamaCppModelRunner {
     initialized: AtomicBool,
     model: Arc<Mutex<Option<Loaded>>>,
+    state: Arc<Mutex<ModelState>>,
+    generating: Arc<AtomicBool>,
 }
 
 impl Default for LlamaCppModelRunner {
@@ -33,6 +35,8 @@ impl Default for LlamaCppModelRunner {
         Self {
             initialized: AtomicBool::new(false),
             model: Arc::new(Mutex::new(None)),
+            state: Arc::new(Mutex::new(ModelState::Unloaded)),
+            generating: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -76,20 +80,40 @@ impl ModelRunner for LlamaCppModelRunner {
                 "one active model is supported".to_owned(),
             ));
         }
+        *self
+            .state
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("state lock poisoned".to_owned()))? =
+            ModelState::Loading;
         if !self.initialized.swap(true, Ordering::SeqCst) {
             native::initialize().map_err(|error| {
                 self.initialized.store(false, Ordering::SeqCst);
+                if let Ok(mut state) = self.state.lock() {
+                    *state = ModelState::Failed;
+                }
                 ModelRunnerError::BackendFailure(error)
             })?;
         }
         let started = Instant::now();
-        let model =
-            native::load_model(request.path.as_str()).map_err(ModelRunnerError::BackendFailure)?;
+        let model = match native::load_model(request.path.as_str()) {
+            Ok(model) => model,
+            Err(error) => {
+                self.initialized.store(false, Ordering::SeqCst);
+                native::shutdown();
+                if let Ok(mut state) = self.state.lock() {
+                    *state = ModelState::Failed;
+                }
+                return Err(ModelRunnerError::BackendFailure(error));
+            }
+        };
         let memory_bytes = model.memory_bytes();
         *slot = Some(Loaded {
             id: request.model_id.clone(),
             model,
         });
+        if let Ok(mut state) = self.state.lock() {
+            *state = ModelState::Ready;
+        }
         Ok(LoadedModel {
             model_id: request.model_id,
             backend: "llama.cpp".to_owned(),
@@ -101,14 +125,29 @@ impl ModelRunner for LlamaCppModelRunner {
 
     #[allow(clippy::cast_precision_loss)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, ModelRunnerError> {
+        request.validate()?;
+        if self.generating.swap(true, Ordering::SeqCst) {
+            return Err(ModelRunnerError::ModelBusy(
+                "a generation is already active".to_owned(),
+            ));
+        }
         let model = self.model.clone();
-        model
+        if let Err(error) = model
             .lock()
             .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?
             .as_ref()
-            .ok_or(ModelRunnerError::ModelNotLoaded)?;
+            .ok_or(ModelRunnerError::ModelNotLoaded)
+        {
+            self.generating.store(false, Ordering::SeqCst);
+            return Err(error);
+        }
+        if let Ok(mut state) = self.state.lock() {
+            *state = ModelState::Generating;
+        }
         let cancellation = CancellationToken::default();
         let worker_cancellation = cancellation.clone();
+        let lifecycle_state = self.state.clone();
+        let generating = self.generating.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let started = Instant::now();
@@ -132,11 +171,11 @@ impl ModelRunner for LlamaCppModelRunner {
                 };
                 let native_stats = loaded.model.generate_stream(
                     &request.prompt,
-                    4096,
+                    request.context_size,
                     request.max_tokens,
                     request.temperature,
-                    0.95,
-                    40,
+                    request.top_p,
+                    request.top_k,
                     request.seed.unwrap_or(0),
                     &mut callback,
                     worker_cancellation.as_atomic(),
@@ -176,6 +215,10 @@ impl ModelRunner for LlamaCppModelRunner {
                     )));
                 }
             }
+            generating.store(false, Ordering::SeqCst);
+            if let Ok(mut lifecycle) = lifecycle_state.lock() {
+                *lifecycle = ModelState::Ready;
+            }
         });
         Ok(GenerationStream::new(receiver, cancellation))
     }
@@ -185,20 +228,42 @@ impl ModelRunner for LlamaCppModelRunner {
             .model
             .lock()
             .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?;
+        let state = *self
+            .state
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("state lock poisoned".to_owned()))?;
         Ok(slot.as_ref().map_or_else(
             || ModelRuntimeStats {
-                state: ModelState::Unloaded,
+                state,
                 ..Default::default()
             },
             |loaded| ModelRuntimeStats {
                 loaded_model: Some(loaded.id.clone()),
                 memory_bytes: Some(loaded.model.memory_bytes()),
-                state: ModelState::Ready,
+                state,
             },
         ))
     }
 
+    fn tokenize(&self, text: &str) -> Result<u64, ModelRunnerError> {
+        let slot = self
+            .model
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?;
+        let loaded = slot.as_ref().ok_or(ModelRunnerError::ModelNotLoaded)?;
+        loaded
+            .model
+            .tokenize(text)
+            .map(|tokens| tokens.len() as u64)
+            .map_err(ModelRunnerError::BackendFailure)
+    }
+
     fn unload(&self) -> Result<(), ModelRunnerError> {
+        if self.generating.load(Ordering::SeqCst) {
+            return Err(ModelRunnerError::ModelBusy(
+                "cannot unload while generation is active".to_owned(),
+            ));
+        }
         let mut slot = self
             .model
             .lock()
@@ -206,8 +271,14 @@ impl ModelRunner for LlamaCppModelRunner {
         if slot.take().is_none() {
             return Err(ModelRunnerError::ModelNotLoaded);
         }
+        if let Ok(mut state) = self.state.lock() {
+            *state = ModelState::Unloading;
+        }
         self.initialized.store(false, Ordering::SeqCst);
         native::shutdown();
+        if let Ok(mut state) = self.state.lock() {
+            *state = ModelState::Unloaded;
+        }
         Ok(())
     }
 }

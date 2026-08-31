@@ -4,16 +4,21 @@ use crate::backends::{Backend, BackendDescriptor, BackendHealth, GenerationReque
 use crate::generation::GenerationStatistics;
 use crate::models::ModelMetadata;
 use oid_llama_cpp_adapter::LlamaCppModelRunner;
-use oid_model_runner::{GenerationEvent, LoadModelRequest, ModelId, ModelPath, ModelRunner};
+use oid_model_runner::{
+    CancellationToken, GenerationEvent, LoadModelRequest, ModelId, ModelPath, ModelRunner,
+};
 use oid_shared::RuntimeError;
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Runtime compatibility adapter backed by OID's real model runner contract.
 #[derive(Debug, Clone)]
 pub struct LlamaCppAdapter {
     runner: Arc<LlamaCppModelRunner>,
+    cancellations: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl Default for LlamaCppAdapter {
@@ -28,6 +33,7 @@ impl LlamaCppAdapter {
     pub fn new() -> Self {
         Self {
             runner: Arc::new(LlamaCppModelRunner::new()),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -35,6 +41,12 @@ impl LlamaCppAdapter {
     #[must_use]
     pub const fn native_available() -> bool {
         LlamaCppModelRunner::native_available()
+    }
+
+    fn forget_cancellation(&self, request_id: &str) {
+        if let Ok(mut values) = self.cancellations.lock() {
+            values.remove(request_id);
+        }
     }
 }
 
@@ -99,9 +111,29 @@ impl Backend for LlamaCppAdapter {
 
     fn generate_stream(
         &self,
-        _request: &GenerationRequest,
+        request: &GenerationRequest,
     ) -> Result<Vec<crate::backends::StreamChunk>, RuntimeError> {
-        Err(RuntimeError::NotImplemented("buffered generation"))
+        let mut chunks = Vec::new();
+        let cancellation = AtomicBool::new(false);
+        let statistics = self.generate_streaming(
+            request,
+            &mut |text| {
+                chunks.push(crate::backends::StreamChunk {
+                    request_id: request.request_id.clone(),
+                    text: text.to_owned(),
+                    done: false,
+                });
+                true
+            },
+            &cancellation,
+        )?;
+        chunks.push(crate::backends::StreamChunk {
+            request_id: request.request_id.clone(),
+            text: String::new(),
+            done: true,
+        });
+        let _ = statistics;
+        Ok(chunks)
     }
 
     fn generate_streaming(
@@ -114,12 +146,33 @@ impl Backend for LlamaCppAdapter {
             prompt: request.input.clone(),
             max_tokens: request.options.max_tokens,
             temperature: request.options.temperature,
+            top_p: request.options.top_p,
+            top_k: request.options.top_k,
+            context_size: request.options.context_size,
             seed: Some(request.options.seed),
         };
         let stream = self
             .runner
             .generate(stream_request)
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
+        let request_cancellation = stream.cancellation_token();
+        let Ok(mut cancellations) = self.cancellations.lock() else {
+            stream.cancel();
+            return Err(RuntimeError::ModelLifecycle(
+                "cancellation registry poisoned".to_owned(),
+            ));
+        };
+        match cancellations.entry(request.request_id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(request_cancellation);
+            }
+            Entry::Occupied(_) => {
+                stream.cancel();
+                return Err(RuntimeError::ModelLifecycle(
+                    "duplicate active generation request id".to_owned(),
+                ));
+            }
+        }
         let started = Instant::now();
         loop {
             if cancellation.load(Ordering::SeqCst) {
@@ -132,6 +185,7 @@ impl Backend for LlamaCppAdapter {
                     }
                 }
                 Ok(GenerationEvent::Completed(stats)) => {
+                    self.forget_cancellation(&request.request_id);
                     let prompt_tokens = stats.prompt_tokens.unwrap_or_default();
                     return Ok(GenerationStatistics {
                         prompt_tokens,
@@ -143,24 +197,35 @@ impl Backend for LlamaCppAdapter {
                     });
                 }
                 Ok(GenerationEvent::Cancelled(_)) => {
+                    self.forget_cancellation(&request.request_id);
                     return Err(RuntimeError::ModelLifecycle(
                         "generation cancelled".to_owned(),
-                    ))
+                    ));
                 }
                 Ok(GenerationEvent::Error(error)) => {
-                    return Err(RuntimeError::NativeBackend(error.to_string()))
+                    self.forget_cancellation(&request.request_id);
+                    return Err(RuntimeError::NativeBackend(error.to_string()));
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    self.forget_cancellation(&request.request_id);
                     return Err(RuntimeError::ModelLifecycle(
                         "generation stream closed".to_owned(),
-                    ))
+                    ));
                 }
             }
         }
     }
 
-    fn cancel_generation(&self, _request_id: &str) -> Result<(), RuntimeError> {
+    fn cancel_generation(&self, request_id: &str) -> Result<(), RuntimeError> {
+        if let Some(token) = self
+            .cancellations
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("cancellation registry poisoned".to_owned()))?
+            .get(request_id)
+        {
+            token.cancel();
+        }
         Ok(())
     }
     fn embeddings(
@@ -175,9 +240,16 @@ impl Backend for LlamaCppAdapter {
             reason: "not implemented".to_owned(),
         }
     }
-    fn tokenize(&self, _text: &str) -> Result<usize, RuntimeError> {
-        Err(RuntimeError::NotImplemented(
-            "tokenization until a model is loaded",
-        ))
+    fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
+        self.runner
+            .tokenize(text)
+            .and_then(|count| {
+                usize::try_from(count).map_err(|_| {
+                    oid_model_runner::ModelRunnerError::ResourceExhausted(
+                        "token count exceeds platform limit".to_owned(),
+                    )
+                })
+            })
+            .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
     }
 }
