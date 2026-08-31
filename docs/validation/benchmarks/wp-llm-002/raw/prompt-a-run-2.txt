@@ -1,0 +1,33 @@
+
+
+Loading model... 
+
+▄▄ ▄▄
+██ ██
+██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄
+██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██
+██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀
+                                    ██    ██
+                                    ▀▀    ▀▀
+
+build      : b1-1844325
+model      : /home/danny/Models/llama3.2-1b.gguf
+ftype      : Q8_0
+modalities : text
+
+available commands:
+  /exit or Ctrl+C     stop or exit
+  /regen              regenerate the last response
+  /clear              clear the chat history
+  /read <file>        add a text file
+  /glob <pattern>     add text files using globbing pattern
+
+
+
+> Reply with exactly: OID inference works.
+OID inference is a powerful technique used in network protocols, such as IPsec, to generate and validate IP addresses at the Network Layer (IPv4 or IPv6). It allows for efficient and secure IP address allocation and validation, enabling network administrators to manage and troubleshoot their networks.
+
+[ Prompt: 12.3 t/s | Generation: 3.9 t/s ]
+
+
+Exiting...

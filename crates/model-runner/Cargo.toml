@@ -1,6 +1,6 @@
 [package]
 name = "oid-model-runner"
-description = "Placeholder model-runner interfaces for OID; no AI implementation."
+description = "Backend-neutral model inference contract for OID."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,3 @@ repository.workspace = true
 
 [lints]
 workspace = true
-
-[dependencies]
-oid-common = { path = "../common" }

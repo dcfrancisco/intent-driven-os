@@ -99,7 +99,7 @@ struct SamplerChainParams {
 
 #[cfg(native_llama_cpp)]
 mod ffi {
-    use super::{c_char, c_void, ModelParams};
+    use super::{c_char, c_void, Batch, ContextParams, ModelParams, SamplerChainParams};
 
     #[allow(improper_ctypes)]
     extern "C" {
@@ -332,11 +332,30 @@ impl NativeModel {
                 }
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
+            let samplers = unsafe {
+                [
+                    ffi::llama_sampler_init_top_k(top_k),
+                    ffi::llama_sampler_init_top_p(top_p, 1),
+                    ffi::llama_sampler_init_temp(temperature),
+                    ffi::llama_sampler_init_dist(seed),
+                ]
+            };
+            if samplers.iter().any(|sampler| sampler.is_null()) {
+                unsafe {
+                    for sampler in samplers {
+                        if !sampler.is_null() {
+                            ffi::llama_sampler_free(sampler);
+                        }
+                    }
+                    ffi::llama_sampler_free(sampler);
+                    ffi::llama_free(context);
+                }
+                return Err("llama.cpp could not create a sampler".to_owned());
+            }
             unsafe {
-                ffi::llama_sampler_chain_add(sampler, ffi::llama_sampler_init_top_k(top_k));
-                ffi::llama_sampler_chain_add(sampler, ffi::llama_sampler_init_top_p(top_p, 1));
-                ffi::llama_sampler_chain_add(sampler, ffi::llama_sampler_init_temp(temperature));
-                ffi::llama_sampler_chain_add(sampler, ffi::llama_sampler_init_dist(seed));
+                for sampler_part in samplers {
+                    ffi::llama_sampler_chain_add(sampler, sampler_part);
+                }
             }
             let decode_result = unsafe {
                 ffi::llama_decode(

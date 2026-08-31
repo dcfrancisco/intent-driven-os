@@ -104,8 +104,9 @@ pub fn execute_with_operations(
                 "  :status   Show runtime status".to_owned(),
                 "  :runtime  Show runtime service details".to_owned(),
                 "  :models   List registered model metadata".to_owned(),
-                "  :intent <description>  Record an intent".to_owned(),
-                "  :operations recover|approve|rollback  Manage operations".to_owned(),
+                "  :intent create a directory <path>  Plan a governed operation".to_owned(),
+                "  :operations recover|inspect|approve|resume|rollback  Manage operations"
+                    .to_owned(),
                 "  :quit     Shut down the console".to_owned(),
             ],
             CommandAction::Continue,
@@ -121,13 +122,23 @@ pub fn execute_with_operations(
                 CommandAction::Continue,
             )
         }
-        _ if command.starts_with("intent ") => (
-            vec![format!(
-                "Intent recorded: {}",
-                command.trim_start_matches("intent ").trim()
-            )],
-            CommandAction::Continue,
-        ),
+        _ if command.starts_with("intent create a directory ") => {
+            let raw = command
+                .trim_start_matches("intent create a directory ")
+                .trim();
+            let approved = raw.ends_with(" --approve");
+            let path = if approved {
+                raw.trim_end_matches(" --approve").trim()
+            } else {
+                raw
+            };
+            (
+                operations
+                    .intent_create_directory(path, approved)
+                    .unwrap_or_else(|error| vec![format!("Intent failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
         "inspect system" => (
             crate::foundation::run_system_health(&runtime.event_bus())
                 .unwrap_or_else(|error| vec![format!("Foundation flow failed: {error}")]),
@@ -154,12 +165,30 @@ pub fn execute_with_operations(
                 .unwrap_or_else(|error| vec![format!("Recovery failed: {error}")]),
             CommandAction::Continue,
         ),
+        _ if command.starts_with("operations inspect ") => {
+            let id = command.trim_start_matches("operations inspect ").trim();
+            (
+                operations
+                    .inspect(id)
+                    .unwrap_or_else(|error| vec![format!("Inspection failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
         _ if command.starts_with("operations approve ") => {
             let id = command.trim_start_matches("operations approve ").trim();
             (
                 operations
                     .approve(id)
                     .unwrap_or_else(|error| vec![format!("Approval failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
+        _ if command.starts_with("operations resume ") => {
+            let id = command.trim_start_matches("operations resume ").trim();
+            (
+                operations
+                    .resume(id)
+                    .unwrap_or_else(|error| vec![format!("Resume failed: {error}")]),
                 CommandAction::Continue,
             )
         }

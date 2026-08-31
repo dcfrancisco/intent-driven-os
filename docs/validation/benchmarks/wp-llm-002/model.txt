@@ -1,0 +1,2 @@
+74701a8c35f6c8d9a4b91f3f3497643001d63e0c7a84e085bed452548fa88d45  /home/danny/Models/llama3.2-1b.gguf
+path=/home/danny/Models/llama3.2-1b.gguf/home/danny/Models/llama3.2-1b.ggufsize=1321082688/home/danny/Models/llama3.2-1b.ggufmtime=2026-08-28 04:42:48.911969321 +0800

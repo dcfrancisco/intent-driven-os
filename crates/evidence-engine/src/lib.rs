@@ -121,6 +121,7 @@ impl EvidenceStore for FileEvidenceStore {
             encode(&record.category),
             encode(&record.details)
         )
+        .and_then(|()| file.sync_data())
         .map_err(|error| OidError::Evidence(format!("append {}: {error}", self.path.display())))
     }
 

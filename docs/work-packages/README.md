@@ -55,5 +55,6 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0053 | Systemd Health Adapter | Read-only systemd manager health boundary |
 | WP-0054 | D-Bus Desktop Boundary | Isolated read-only D-Bus transport contract |
 | WP-0055 | Terminal Identity and Shell Passthrough | Real Linux shell with explicit `:`-prefixed OID commands |
+| WP-0056 | Process and Signal Reliability | Reliable interruption, shutdown, child cleanup, and recovery |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

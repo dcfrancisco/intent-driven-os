@@ -32,6 +32,10 @@ pub enum OperationStatus {
     Executing,
     /// Skill execution completed.
     Executed,
+    /// Restart recovery classified an execution as interrupted before it completed.
+    ExecutionInterrupted,
+    /// Restart recovery classified execution as complete but verification as absent.
+    ExecutionUnverified,
     /// Verification completed successfully.
     Verified,
     /// A lifecycle stage failed.
@@ -42,6 +46,18 @@ pub enum OperationStatus {
     RollbackFailed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestStage {
+    Planned,
+    AwaitingApproval,
+    Approved,
+    Executing,
+    ExecutedBeforeEvidence,
+    ExecutedAfterEvidence,
+    Verifying,
+    Verified,
+}
+
 impl OperationStatus {
     fn as_str(self) -> &'static str {
         match self {
@@ -50,6 +66,8 @@ impl OperationStatus {
             Self::Approved => "approved",
             Self::Executing => "executing",
             Self::Executed => "executed",
+            Self::ExecutionInterrupted => "execution-interrupted",
+            Self::ExecutionUnverified => "execution-unverified",
             Self::Verified => "verified",
             Self::Failed => "failed",
             Self::RolledBack => "rolled-back",
@@ -64,6 +82,8 @@ impl OperationStatus {
             "approved" => Ok(Self::Approved),
             "executing" => Ok(Self::Executing),
             "executed" => Ok(Self::Executed),
+            "execution-interrupted" => Ok(Self::ExecutionInterrupted),
+            "execution-unverified" => Ok(Self::ExecutionUnverified),
             "verified" => Ok(Self::Verified),
             "failed" => Ok(Self::Failed),
             "rolled-back" => Ok(Self::RolledBack),
@@ -125,6 +145,7 @@ impl OperationJournal {
             record.status.as_str(),
             encode(&record.detail)
         )
+        .and_then(|()| file.sync_data())
         .map_err(|error| OidError::Evidence(format!("append {}: {error}", self.path.display())))
     }
 
@@ -186,7 +207,17 @@ impl OperationJournal {
                         | OperationStatus::Failed
                         | OperationStatus::RolledBack
                         | OperationStatus::RollbackFailed
+                        | OperationStatus::ExecutionInterrupted
+                        | OperationStatus::ExecutionUnverified
                 )
+            })
+            .map(|mut record| {
+                record.status = match record.status {
+                    OperationStatus::Executing => OperationStatus::ExecutionInterrupted,
+                    OperationStatus::Executed => OperationStatus::ExecutionUnverified,
+                    status => status,
+                };
+                record
             })
             .collect())
     }
@@ -319,6 +350,19 @@ where
         request: &SkillRequest,
         approve: bool,
     ) -> Result<ExecutionResult, OidError> {
+        self.run_with_hook(skill_id, request, approve, &mut |_| {})
+    }
+
+    fn run_with_hook<F>(
+        &mut self,
+        skill_id: &str,
+        request: &SkillRequest,
+        approve: bool,
+        hook: &mut F,
+    ) -> Result<ExecutionResult, OidError>
+    where
+        F: FnMut(TestStage),
+    {
         let (plan, mutates_system) = {
             let skill = self
                 .skills
@@ -327,7 +371,8 @@ where
             (skill.plan(request)?, skill.descriptor().mutates_system)
         };
         self.transition(&plan.id, OperationStatus::Planned, &plan.summary)?;
-        self.record(&plan, "plan", &plan.summary)?;
+        self.record(&plan, "plan", &plan.to_json()?)?;
+        hook(TestStage::Planned);
         let decision = self
             .policy
             .evaluate(&oid_policy_engine::AuthorizationRequest {
@@ -351,6 +396,7 @@ where
                 OperationStatus::AwaitingApproval,
                 "approval required",
             )?;
+            hook(TestStage::AwaitingApproval);
             if !approve && !already_approved {
                 return Err(OidError::ApprovalRequired(plan.id.to_string()));
             }
@@ -366,11 +412,14 @@ where
             self.approvals.consume(&plan.id)?;
         }
         self.transition(&plan.id, OperationStatus::Approved, "approval complete")?;
+        self.record(&plan, "approval", "user approval recorded")?;
+        hook(TestStage::Approved);
         self.transition(
             &plan.id,
             OperationStatus::Executing,
             "skill execution started",
         )?;
+        hook(TestStage::Executing);
         let result = match self
             .skills
             .get(skill_id)
@@ -384,18 +433,22 @@ where
             }
         };
         self.transition(&plan.id, OperationStatus::Executed, &result.summary)?;
+        hook(TestStage::ExecutedBeforeEvidence);
         self.record(&plan, "execution", &result.summary)?;
+        hook(TestStage::ExecutedAfterEvidence);
         let verification = self
             .skills
             .get(skill_id)
             .ok_or_else(|| OidError::NotFound(format!("skill: {skill_id}")))?
             .verify(&result)?;
+        hook(TestStage::Verifying);
         self.record(&plan, "verification", &verification.summary)?;
         if !verification.passed {
             self.transition(&plan.id, OperationStatus::Failed, &verification.summary)?;
             return Err(OidError::Verification(verification.summary));
         }
         self.transition(&plan.id, OperationStatus::Verified, &verification.summary)?;
+        hook(TestStage::Verified);
         self.completed
             .insert(plan.id.clone(), (skill_id.to_owned(), result.clone()));
         Ok(result)
@@ -462,6 +515,43 @@ where
         }
     }
 
+    /// Roll back an operation reconstructed after a process restart.
+    ///
+    /// The caller must provide the skill and execution record recovered from
+    /// durable evidence; no in-memory execution state is trusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the skill is unavailable, rollback fails, or the
+    /// lifecycle/evidence journal cannot be updated.
+    pub fn rollback_recovered(
+        &mut self,
+        operation_id: &OperationId,
+        skill_id: &str,
+        execution: &ExecutionResult,
+    ) -> Result<oid_common::RollbackResult, OidError> {
+        let result = self
+            .skills
+            .get(skill_id)
+            .ok_or_else(|| OidError::NotFound(format!("skill: {skill_id}")))?
+            .rollback(execution);
+        match result {
+            Ok(result) => {
+                self.transition(operation_id, OperationStatus::RolledBack, &result.summary)?;
+                self.record_operation_event(operation_id, "rollback", &result.summary)?;
+                Ok(result)
+            }
+            Err(error) => {
+                self.transition(
+                    operation_id,
+                    OperationStatus::RollbackFailed,
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
+    }
+
     /// Run a dynamic command through its registered skill.
     ///
     /// # Errors
@@ -488,6 +578,46 @@ where
     /// Returns an error when the operation journal is unreadable.
     pub fn recoverable(&self) -> Result<Vec<OperationRecord>, OidError> {
         self.journal.recoverable()
+    }
+
+    /// Return the latest durable state for one operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operation journal is unreadable.
+    pub fn latest(&self, operation_id: &OperationId) -> Result<Option<OperationRecord>, OidError> {
+        Ok(self
+            .journal
+            .latest()?
+            .into_iter()
+            .find(|record| &record.operation_id == operation_id))
+    }
+
+    /// Return the latest state classified for restart recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the operation journal is unreadable.
+    pub fn recovery_record(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Option<OperationRecord>, OidError> {
+        Ok(self
+            .recoverable()?
+            .into_iter()
+            .find(|record| &record.operation_id == operation_id))
+    }
+
+    /// Return the append-only evidence history for one operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the evidence store is unreadable.
+    pub fn evidence_history(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<Vec<EvidenceRecord>, OidError> {
+        self.evidence.history(operation_id)
     }
 
     fn transition(
@@ -683,7 +813,7 @@ pub const fn boundary_name() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{OperationCoordinator, OperationJournal};
+    use super::{OperationCoordinator, OperationJournal, OperationStatus, TestStage};
     use oid_common::OperationId;
     use oid_evidence_engine::InMemoryEvidenceStore;
     use oid_linux_skills::{SkillRequest, SystemHealthSkill};
@@ -709,6 +839,154 @@ mod tests {
             .expect("run");
         assert!(!result.changed);
         assert!(coordinator.recoverable().expect("recovery").is_empty());
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn restart_classifies_unfinished_execution_without_fabricating_success() {
+        let path = std::env::temp_dir().join(format!(
+            "oid-recovery-classification-{}",
+            std::process::id()
+        ));
+        let journal = OperationJournal::new(&path);
+        let operation_id = OperationId::new("operation-interrupted").expect("id");
+        journal
+            .append(&super::OperationRecord {
+                operation_id: operation_id.clone(),
+                status: super::OperationStatus::Executing,
+                detail: "skill execution started".to_owned(),
+            })
+            .expect("executing state persists");
+        let mut recovered = journal.recoverable().expect("recover");
+        assert_eq!(
+            recovered.pop().expect("record").status,
+            super::OperationStatus::ExecutionInterrupted
+        );
+
+        journal
+            .append(&super::OperationRecord {
+                operation_id,
+                status: super::OperationStatus::Executed,
+                detail: "created directory /tmp/example".to_owned(),
+            })
+            .expect("executed state persists");
+        let recovered = journal.recoverable().expect("recover");
+        assert_eq!(
+            recovered[0].status,
+            super::OperationStatus::ExecutionUnverified
+        );
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn interruption_during_execution_is_recoverable_without_success() {
+        let path =
+            std::env::temp_dir().join(format!("oid-interrupted-execution-{}", std::process::id()));
+        let mut coordinator = OperationCoordinator::new(
+            InMemoryApprovalStore::default(),
+            InMemoryEvidenceStore::default(),
+            OperationJournal::new(&path),
+        );
+        coordinator
+            .register_skill(Box::new(SystemHealthSkill::default()))
+            .expect("register");
+        let request = SkillRequest {
+            id: OperationId::new("operation-execution-interrupted").expect("id"),
+            arguments: String::new(),
+        };
+        let mut hook = |stage| {
+            assert!(
+                stage != TestStage::Executing,
+                "simulated SIGKILL during execution"
+            );
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.run_with_hook("system-health", &request, false, &mut hook)
+        }));
+        let record = coordinator
+            .recoverable()
+            .expect("recover")
+            .pop()
+            .expect("record");
+        assert_eq!(record.status, OperationStatus::ExecutionInterrupted);
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn interruption_after_execution_before_verification_is_unverified() {
+        let path =
+            std::env::temp_dir().join(format!("oid-unverified-execution-{}", std::process::id()));
+        let mut coordinator = OperationCoordinator::new(
+            InMemoryApprovalStore::default(),
+            InMemoryEvidenceStore::default(),
+            OperationJournal::new(&path),
+        );
+        coordinator
+            .register_skill(Box::new(SystemHealthSkill::default()))
+            .expect("register");
+        let request = SkillRequest {
+            id: OperationId::new("operation-unverified-execution").expect("id"),
+            arguments: String::new(),
+        };
+        let mut hook = |stage| {
+            assert!(
+                stage != TestStage::ExecutedBeforeEvidence,
+                "simulated termination before verification"
+            );
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.run_with_hook("system-health", &request, false, &mut hook)
+        }));
+        let record = coordinator
+            .recoverable()
+            .expect("recover")
+            .pop()
+            .expect("record");
+        assert_eq!(record.status, OperationStatus::ExecutionUnverified);
+        assert!(coordinator
+            .evidence_history(&request.id)
+            .expect("evidence")
+            .iter()
+            .all(|record| record.category != "execution"));
+        std::fs::remove_file(path).expect("cleanup");
+    }
+
+    #[test]
+    fn interruption_after_execution_evidence_preserves_the_evidence_chain() {
+        let path =
+            std::env::temp_dir().join(format!("oid-evidence-interrupted-{}", std::process::id()));
+        let mut coordinator = OperationCoordinator::new(
+            InMemoryApprovalStore::default(),
+            InMemoryEvidenceStore::default(),
+            OperationJournal::new(&path),
+        );
+        coordinator
+            .register_skill(Box::new(SystemHealthSkill::default()))
+            .expect("register");
+        let request = SkillRequest {
+            id: OperationId::new("operation-evidence-interrupted").expect("id"),
+            arguments: String::new(),
+        };
+        let mut hook = |stage| {
+            assert!(
+                stage != TestStage::ExecutedAfterEvidence,
+                "simulated termination during evidence boundary"
+            );
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            coordinator.run_with_hook("system-health", &request, false, &mut hook)
+        }));
+        let record = coordinator
+            .recoverable()
+            .expect("recover")
+            .pop()
+            .expect("record");
+        assert_eq!(record.status, OperationStatus::ExecutionUnverified);
+        assert!(coordinator
+            .evidence_history(&request.id)
+            .expect("evidence")
+            .iter()
+            .any(|record| record.category == "execution"));
         std::fs::remove_file(path).expect("cleanup");
     }
 }

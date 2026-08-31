@@ -4,6 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
+use crate::signals::SignalController;
+
 /// Tracks the console's current and previous working directories.
 #[derive(Clone, Debug)]
 pub struct WorkingDirectoryManager {
@@ -118,15 +120,29 @@ impl ShellExecutor {
     }
 
     /// Execute with inherited standard input/output/error.
+    #[allow(dead_code)]
     pub fn execute(&self, command: &str, directory: &Path) -> io::Result<ExitStatus> {
-        Command::new(&self.shell)
-            .arg("-c")
-            .arg(command)
-            .current_dir(directory)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
+        self.execute_with_signals(command, directory, &SignalController::test())
+    }
+
+    /// Execute while supervising signals and cleaning up the child process.
+    pub fn execute_with_signals(
+        &self,
+        command: &str,
+        directory: &Path,
+        signals: &SignalController,
+    ) -> io::Result<ExitStatus> {
+        let grouped = process_groups_available();
+        let mut child = self.spawn(command, directory, grouped)?;
+        loop {
+            if signals.take_interrupt() || signals.take_shutdown() {
+                terminate_child(&mut child, grouped)?;
+            }
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     /// Execute with captured output for tests and non-interactive clients.
@@ -143,6 +159,55 @@ impl ShellExecutor {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
     }
+
+    fn spawn(
+        &self,
+        command: &str,
+        directory: &Path,
+        grouped: bool,
+    ) -> io::Result<std::process::Child> {
+        #[cfg(unix)]
+        {
+            // A new session gives the supervisor a process-group boundary.
+            // The trap restores default dispositions inherited from OID before
+            // the configured shell starts, so SIGINT remains child-directed.
+            let wrapper = ["/usr/bin/setsid", "/bin/setsid"]
+                .iter()
+                .find(|path| std::path::Path::new(path).is_file());
+            let mut process = if let (true, Some(wrapper)) = (grouped, wrapper) {
+                let mut process = Command::new(wrapper);
+                process.args(["/bin/sh", "-c"]);
+                process
+            } else {
+                let mut process = Command::new("/bin/sh");
+                process.args(["-c"]);
+                process
+            };
+            process
+                .args([
+                    "trap - INT TERM HUP; exec \"$1\" -c \"$2\"",
+                    "oid-child-wrapper",
+                    self.shell.to_string_lossy().as_ref(),
+                    command,
+                ])
+                .current_dir(directory)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new(&self.shell)
+                .arg("-c")
+                .arg(command)
+                .current_dir(directory)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+        }
+    }
 }
 
 /// Execute `cd` internally or delegate ordinary commands to the shell.
@@ -152,6 +217,8 @@ pub struct ShellCommandController {
     pub executor: ShellExecutor,
     /// Persistent directory manager.
     pub directory: WorkingDirectoryManager,
+    /// Process-signal controller shared with the application.
+    pub signals: SignalController,
 }
 
 impl ShellCommandController {
@@ -160,6 +227,7 @@ impl ShellCommandController {
         Ok(Self {
             executor: ShellExecutor::new()?,
             directory: WorkingDirectoryManager::new()?,
+            signals: SignalController::new()?,
         })
     }
 
@@ -179,22 +247,55 @@ impl ShellCommandController {
                 Err(error) => vec![format!("cd: {error}")],
             };
         }
-        match self.executor.execute(trimmed, self.directory.current()) {
+        match self
+            .executor
+            .execute_with_signals(trimmed, self.directory.current(), &self.signals)
+        {
             Ok(status) if status.success() => Vec::new(),
             Ok(status) => vec![format!(
                 "[exit status: {}]",
                 status
                     .code()
-                    .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+                    .map_or_else(|| "signal termination".to_owned(), |code| code.to_string())
             )],
             Err(error) => vec![format!("shell: {error}")],
         }
     }
 }
 
+fn terminate_child(child: &mut std::process::Child, grouped: bool) -> io::Result<()> {
+    #[cfg(unix)]
+    if grouped {
+        let pid = child.id();
+        {
+            let _ = Command::new("kill")
+                .args(["-TERM", "--", &format!("-{pid}")])
+                .status();
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(100);
+    while std::time::Instant::now() < deadline {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    let _ = child.wait()?;
+    Ok(())
+}
+
+fn process_groups_available() -> bool {
+    cfg!(unix)
+        && ["/usr/bin/setsid", "/bin/setsid"]
+            .iter()
+            .any(|path| std::path::Path::new(path).is_file())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ShellExecutor, WorkingDirectoryManager};
+    use super::{ShellCommandController, ShellExecutor, WorkingDirectoryManager};
+    use crate::signals::ProcessSignal;
     use std::path::PathBuf;
 
     #[test]
@@ -223,5 +324,33 @@ mod tests {
             std::fs::canonicalize(root).expect("canonical root")
         );
         std::fs::remove_dir_all(child).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_child_returns_signal_status_and_leaves_parent_usable() {
+        let directory = std::env::temp_dir();
+        let executor = ShellExecutor::from_path(PathBuf::from("/bin/sh"));
+        let signals = crate::signals::SignalController::test();
+        let injected = signals.clone();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            injected.inject(ProcessSignal::Interrupt);
+        });
+        let status = executor
+            .execute_with_signals(
+                "trap '' TERM INT; while :; do :; done",
+                &directory,
+                &signals,
+            )
+            .expect("child status");
+        thread.join().expect("signal injector");
+        assert!(status.code().is_none());
+        let mut controller = ShellCommandController {
+            executor,
+            directory: WorkingDirectoryManager::from_path(directory),
+            signals,
+        };
+        assert!(controller.execute("true").is_empty());
     }
 }

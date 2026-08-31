@@ -1,8 +1,18 @@
 # Rust build artifacts
-/target/
+target/
+*.profraw
+*.profdata
+
+# Test and coverage output
+coverage/
+*.lcov
+
+# Generated logs and local runtime output
+*.log
 
 # Local editor and operating-system files
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp
@@ -12,4 +22,3 @@
 .env
 .env.*
 !.env.example
-

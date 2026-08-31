@@ -825,12 +825,7 @@ impl Skill for CreateDirectorySkill {
     }
 
     fn verify(&self, execution: &ExecutionResult) -> Result<VerificationResult, OidError> {
-        let path = self
-            .created
-            .lock()
-            .map_err(|_| OidError::Execution("directory skill lock poisoned".to_owned()))?
-            .clone()
-            .ok_or_else(|| OidError::NotFound("created directory".to_owned()))?;
+        let path = execution_directory_path(execution)?;
         Ok(VerificationResult {
             operation_id: execution.operation_id.clone(),
             passed: path.is_dir(),
@@ -843,15 +838,7 @@ impl Skill for CreateDirectorySkill {
     }
 
     fn rollback(&self, execution: &ExecutionResult) -> Result<RollbackResult, OidError> {
-        let _ = execution;
-        let created = self
-            .created
-            .lock()
-            .map_err(|_| OidError::Execution("directory skill lock poisoned".to_owned()))?;
-        let Some(path) = created.clone() else {
-            return Err(OidError::NotFound("created directory".to_owned()));
-        };
-        drop(created);
+        let path = execution_directory_path(execution)?;
         if !path.is_dir() {
             return Err(OidError::NotFound("created directory".to_owned()));
         }
@@ -864,6 +851,14 @@ impl Skill for CreateDirectorySkill {
             changed: true,
         })
     }
+}
+
+fn execution_directory_path(execution: &ExecutionResult) -> Result<PathBuf, OidError> {
+    execution
+        .summary
+        .strip_prefix("created directory ")
+        .map(PathBuf::from)
+        .ok_or_else(|| OidError::InvalidInput("execution does not identify a directory".to_owned()))
 }
 
 fn health_plan(

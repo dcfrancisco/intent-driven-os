@@ -1,0 +1,14 @@
+engine,state,prompt,run,load_s,ttft_s,prompt_eval_s,generation_s,tokens,tok_s,total_s,rss_kib,source
+llama.cpp,cold,A,1,,,,4.2,128,18.94,1505996,raw/prompt-a-run-1
+llama.cpp,cold,A,2,,,,3.9,128,19.86,1506192,raw/prompt-a-run-2
+llama.cpp,cold,A,3,,,,3.9,128,20.12,1505852,raw/prompt-a-run-3
+llama.cpp,cold,A,4,,,,3.9,128,19.94,1505856,raw/prompt-a-run-4
+llama.cpp,cold,A,5,,,,3.9,128,19.94,1505768,raw/prompt-a-run-5
+OID,cold,A,1,,,,5.3,128,25.27,1484848,oid/prompt-a-run-1
+OID,cold,A,2,,,,5.2,128,25.35,1484768,oid/prompt-a-run-2
+OID,cold,A,3,,,,5.1,128,26.03,1484896,oid/prompt-a-run-3
+OID,cold,A,4,,,,5.3,128,25.23,1484796,oid/prompt-a-run-4
+OID,cold,A,5,,,,5.2,128,25.37,1484852,oid/prompt-a-run-5
+Ollama,cold,A,1,0.806,unavailable,0.877,105.353,128,1.22,298.804,1137468,ollama/prompt-a-cold-1.json
+Ollama,warm,A,2,9.685,unavailable,16.248,105.001,128,1.22,130.938,1137468,ollama/prompt-a-warm-2.json
+Ollama,warm,A,3,0.797,unavailable,0.843,105.132,128,1.22,106.780,1137468,ollama/prompt-a-warm-3.json

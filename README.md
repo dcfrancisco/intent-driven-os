@@ -8,10 +8,11 @@ The runtime has no UI. It manages model lifecycle, hardware resources, backend a
 
 This repository contains the Phase 5 Rust workspace and interactive console
 reference client. The runtime now has a backend-neutral native llama.cpp
-integration boundary, GGUF discovery, model lifecycle management, and
-tokenizer routing. Text generation and other AI capabilities are intentionally
-not implemented yet. Without `LLAMA_CPP_LIB_DIR`, the native backend reports
-unavailable while the console remains usable for architecture validation.
+integration boundary, GGUF discovery, model lifecycle management, tokenizer
+routing, and streamed text generation with cancellation and metrics. The
+native backend requires `LLAMA_CPP_LIB_DIR` at build time; without it, the
+backend reports unavailable while the console remains usable for architecture
+validation.
 
 Phase 5 adds independent `generate`, `complete`, and `explain` requests with
 runtime-owned streaming, cancellation handles, generation events, and metrics.
@@ -53,13 +54,17 @@ Linux shell, while OID-specific controls use an explicit `:` prefix. See
 | `oid-verification-engine` | Post-operation validation, health checks, and rollback verification |
 | `oid-evidence-engine` | In-memory and durable append-only evidence records and operation history |
 | `oid-plugin-sdk` | Plugin traits, registration, and discovery contracts |
-| `oid-model-runner` | Placeholder interfaces for future optimized model execution |
+| `oid-model-runner` | Backend-neutral model loading, tokenization, and generation contract |
 | `oid-desktop-shell` | Terminal, Wayland, D-Bus, systemd, and event integration boundaries |
 | `oid-docs` | Documentation anchor crate |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for boundaries and dependency direction, [ROADMAP.md](ROADMAP.md) for sequencing, and [docs/adr/README.md](docs/adr/README.md) for the architecture decision record sequence.
 
 See [docs/adr/README.md](docs/adr/README.md) for the architecture decisions and [docs/work-packages/README.md](docs/work-packages/README.md) for the initial work package plan.
+
+Linux validation is documented in [docs/validation/linux.md](docs/validation/linux.md).
+Run `./scripts/validate-linux.sh` for the reproducible Ubuntu Docker checks;
+Docker results do not replace real Linux host validation.
 
 ## Build and test
 
