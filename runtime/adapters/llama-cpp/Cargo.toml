@@ -1,6 +1,6 @@
 [package]
 name = "oid-llama-cpp-adapter"
-description = "Contract-only llama.cpp backend adapter skeleton for the Intelligent Runtime."
+description = "llama.cpp implementation of OID's backend-neutral model runner contract."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,8 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
-oid-runtime = { path = "../.." }
-oid-shared = { path = "../../../shared" }
+oid-model-runner = { path = "../../../crates/model-runner" }
+oid-llama-cpp-sys = { path = "sys" }
 
 [lints]
 workspace = true
-

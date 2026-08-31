@@ -76,8 +76,8 @@ dependencies = [
 name = "oid-llama-cpp-adapter"
 version = "0.1.0"
 dependencies = [
- "oid-runtime",
- "oid-shared",
+ "oid-llama-cpp-sys",
+ "oid-model-runner",
 ]
 
 [[package]]
@@ -87,9 +87,6 @@ version = "0.1.0"
 [[package]]
 name = "oid-model-runner"
 version = "0.1.0"
-dependencies = [
- "oid-common",
-]
 
 [[package]]
 name = "oid-operation-coordinator"
@@ -120,7 +117,8 @@ dependencies = [
 name = "oid-runtime"
 version = "0.1.0"
 dependencies = [
- "oid-llama-cpp-sys",
+ "oid-llama-cpp-adapter",
+ "oid-model-runner",
  "oid-shared",
 ]
 

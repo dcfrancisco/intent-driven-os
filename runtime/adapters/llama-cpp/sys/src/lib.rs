@@ -99,7 +99,7 @@ struct SamplerChainParams {
 
 #[cfg(native_llama_cpp)]
 mod ffi {
-    use super::{c_char, c_void, ModelParams};
+    use super::{c_char, c_void, Batch, ContextParams, ModelParams, SamplerChainParams};
 
     #[allow(improper_ctypes)]
     extern "C" {

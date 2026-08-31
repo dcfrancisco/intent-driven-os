@@ -1,0 +1,165 @@
+=================================================
+ AI CONSOLE
+ Intelligent Runtime v0.1
+=================================================
+
+Initializing...
+
+✓ Configuration loaded
+✓ Event bus started
+✓ Runtime initialized
+✓ Console ready
+
+No models installed.
+
+Type
+help
+to begin.
+
+[OID Healthy | model none]
+~/codes/poc-projects/intent-driven-os$ 
+ID              : llama3.2-1b
+[OID Healthy | model none]
+~/codes/poc-projects/intent-driven-os$ 
+Model loaded: llama3.2-1b
+[OID Healthy | model llama3.2-1b]
+~/codes/poc-projects/intent-driven-os$ 
+Generating...
+ĠHere
+'s
+Ġthe
+Ġcorresponding
+Ġresponse
+:Ċ
+``
+`Ċ
+<
+response
+><
+version
+>
+1
+.
+1
+</
+version
+><
+revision
+>
+1
+.
+1
+</
+revision
+><
+description
+>
+Version
+Ġ
+1
+.
+1
+</
+description
+><
+object
+Version
+>
+1
+.
+1
+</
+object
+Version
+><
+revision
+History
+><
+revision
+History
+>
+Ġrevision
+Ġ
+Ġ
+1
+.
+1
+Ġ</
+revision
+History
+></
+revision
+History
+><
+object
+Description
+>
+Class
+ĠC
+</
+object
+Description
+><
+object
+Syntax
+>
+text
+</
+object
+Syntax
+><
+object
+Language
+>
+english
+</
+object
+Language
+><
+author
+>
+Joe
+ĠSmith
+</
+author
+><
+author
+Email
+>j
+oe
+.sm
+ith
+@example
+.com
+</
+author
+Email
+><
+copyright
+>(
+c
+)
+Ġ
+199
+9
+</
+copyright
+><
+version
+History
+><
+version
+History
+>
+Ġrevision
+Ġ
+Generated 128 tokens at 5.3 tokens/sec
+Prompt tokens: 8 | Context: 136 | Latency: 24345 ms
+[OID Healthy | model llama3.2-1b]
+~/codes/poc-projects/intent-driven-os$ 
+Model unloaded: llama3.2-1b
+[OID Healthy | model none]
+~/codes/poc-projects/intent-driven-os$ 
+Goodbye.
+[OID Healthy | model none]
+Runtime stopped.
