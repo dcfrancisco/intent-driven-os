@@ -14,5 +14,13 @@ The runtime bridge translates the existing service API to the model-runner
 contract. No llama.cpp types cross the model-runner boundary.
 
 Native linking is opt-in. Set `LLAMA_CPP_LIB_DIR` to a directory containing
-`libllama` when building live inference. Without it, normal workspace builds
-remain portable and the adapter reports `BackendUnavailable`.
+`libllama` when building live inference. The local Marina default is
+`$HOME/.marina/models` (for the current machine:
+`/Users/dannyfrancisco/.marina/models`):
+
+```sh
+export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/models}"
+```
+
+Without this configuration, normal workspace builds remain portable and the
+adapter reports `BackendUnavailable`.

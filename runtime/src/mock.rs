@@ -12,7 +12,7 @@ use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 /// Fake runtime service used until a real model backend is integrated.
 #[derive(Clone, Debug)]
@@ -188,6 +188,7 @@ impl RuntimeService for MockRuntime {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
         if self
             .loaded
@@ -209,8 +210,9 @@ impl RuntimeService for MockRuntime {
         let cancel_for_worker = cancellation.clone();
         let bus = self.bus.clone();
         let backends = self.backends.clone();
+        let active_generation = self.active_generation.clone();
         thread::spawn(move || {
-            let started = SystemTime::now();
+            let started = Instant::now();
             bus.publish(&RuntimeEvent::GenerationStarted(request.request_id.clone()));
             let backend_request = crate::backends::GenerationRequest {
                 request_id: request.request_id.clone(),
@@ -219,6 +221,7 @@ impl RuntimeService for MockRuntime {
                 options: request.options.clone(),
             };
             let mut generated = String::new();
+            let mut generated_tokens = 0_u64;
             let mut first = true;
             let result = backends.generate_streaming(
                 &backend_request,
@@ -231,6 +234,7 @@ impl RuntimeService for MockRuntime {
                         first = false;
                     }
                     generated.push_str(token);
+                    generated_tokens += 1;
                     let _ = sender.send(GenerationMessage::Token(token.to_owned()));
                     bus.publish(&RuntimeEvent::TokenGenerated(request.request_id.clone()));
                     true
@@ -242,9 +246,34 @@ impl RuntimeService for MockRuntime {
                     .as_ref()
                     .is_err_and(|error| error.to_string().contains("cancelled"))
             {
+                let latency_ms = started.elapsed().as_millis();
+                let statistics = GenerationStatistics {
+                    generated_tokens,
+                    tokens_per_second: if latency_ms == 0 {
+                        generated_tokens as f64
+                    } else {
+                        generated_tokens as f64 / (latency_ms as f64 / 1000.0)
+                    },
+                    latency_ms,
+                    inference_time_ms: latency_ms,
+                    ..GenerationStatistics::default()
+                };
+                let _ = sender.send(GenerationMessage::Cancelled(GenerationResult {
+                    request_id: request.request_id.clone(),
+                    text: generated,
+                    statistics,
+                }));
                 bus.publish(&RuntimeEvent::GenerationCancelled(
                     request.request_id.clone(),
                 ));
+                if let Ok(mut active) = active_generation.lock() {
+                    if active
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                    {
+                        *active = None;
+                    }
+                }
                 return;
             }
             let statistics = match result {
@@ -253,13 +282,18 @@ impl RuntimeService for MockRuntime {
                     let message = error.to_string();
                     let _ = sender.send(GenerationMessage::Failed(error));
                     bus.publish(&RuntimeEvent::GenerationFailed(message));
+                    if let Ok(mut active) = active_generation.lock() {
+                        if active
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                        {
+                            *active = None;
+                        }
+                    }
                     return;
                 }
             };
-            let latency_ms = started
-                .elapsed()
-                .map(|elapsed| elapsed.as_millis())
-                .unwrap_or_default();
+            let latency_ms = started.elapsed().as_millis();
             let statistics = GenerationStatistics {
                 prompt_tokens: statistics.prompt_tokens,
                 generated_tokens: statistics.generated_tokens,
@@ -279,6 +313,14 @@ impl RuntimeService for MockRuntime {
             };
             let _ = sender.send(GenerationMessage::Completed(result));
             bus.publish(&RuntimeEvent::GenerationCompleted(request.request_id));
+            if let Ok(mut active) = active_generation.lock() {
+                if active
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                {
+                    *active = None;
+                }
+            }
         });
         Ok(GenerationStream::new(receiver, cancellation))
     }

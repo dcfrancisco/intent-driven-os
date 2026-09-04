@@ -173,6 +173,7 @@ impl Backend for LlamaCppAdapter {
                 ));
             }
         }
+        drop(cancellations);
         let started = Instant::now();
         loop {
             if cancellation.load(Ordering::SeqCst) {

@@ -10,9 +10,47 @@ This repository contains the Phase 5 Rust workspace and interactive console
 reference client. The runtime now has a backend-neutral native llama.cpp
 integration boundary, GGUF discovery, model lifecycle management, tokenizer
 routing, and streamed text generation with cancellation and metrics. The
-native backend requires `LLAMA_CPP_LIB_DIR` at build time; without it, the
-backend reports unavailable while the console remains usable for architecture
-validation.
+native backend uses `LLAMA_CPP_LIB_DIR` at build time. For the local Marina
+installation, set it to `/Users/dannyfrancisco/.marina/models`; the portable
+default form is `$HOME/.marina/models`:
+
+```sh
+export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/models}"
+```
+
+The directory must contain the native `libllama` library. If it is not set or
+does not contain a usable library, the backend reports unavailable while the
+console remains usable for architecture validation.
+
+## Local model bring-up on macOS x86_64
+
+Build the pinned, CPU-only native dependency with:
+
+```bash
+./scripts/setup-llama-macos.sh
+```
+
+The acceptance model used locally is `qwen2.5-0.5b-instruct-q4_k_m.gguf`.
+Place it in `models/` (the directory is intentionally ignored by Git). For
+the exact model used in the acceptance run:
+
+```bash
+curl -L --fail -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+```
+
+Then run OID from the repository root with:
+
+```bash
+LLAMA_CPP_LIB_DIR=/tmp/oid-llama-cpu-build/bin \
+DYLD_LIBRARY_PATH=/tmp/oid-llama-cpu-build/bin \
+cargo run -p oid-console --bin oid-console
+```
+
+At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
+`:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
+short smoke test; the default is 128 tokens. Ctrl+C during generation cancels
+the active request and leaves the console available for another command.
 
 Phase 5 adds independent `generate`, `complete`, and `explain` requests with
 runtime-owned streaming, cancellation handles, generation events, and metrics.

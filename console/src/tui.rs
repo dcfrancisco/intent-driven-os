@@ -83,11 +83,12 @@ impl Application {
                 EditResult::Submitted(line) => {
                     self.history.push(line.clone());
                     let result = match self.router.route(&line) {
-                        InputRoute::Oid(command) => commands::execute_with_operations(
+                        InputRoute::Oid(command) => commands::execute_with_operations_and_signals(
                             &command,
                             &HistoryView::new(self.history.entries()),
                             &self.runtime,
                             &mut self.operations,
+                            Some(&self.shell.signals),
                         ),
                         InputRoute::Shell(command) => commands::CommandResult {
                             output: self.shell.execute(&command),
