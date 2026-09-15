@@ -119,6 +119,8 @@ pub fn execute_with_operations_and_signals(
                 "  :status   Show runtime status".to_owned(),
                 "  :runtime  Show runtime service details".to_owned(),
                 "  :models   List registered model metadata".to_owned(),
+                "  :audio [status|1x|2x|3x|mute|unmute|toggle-mute]  Control system audio"
+                    .to_owned(),
                 "  :intent create a directory <path>  Plan a governed operation".to_owned(),
                 "  :operations recover|inspect|approve|resume|rollback  Manage operations"
                     .to_owned(),
@@ -127,6 +129,13 @@ pub fn execute_with_operations_and_signals(
             CommandAction::Continue,
         ),
         "status" | "runtime" => (runtime_lines(runtime), CommandAction::Continue),
+        _ if command == "audio"
+            || command.starts_with("audio ")
+            || command == "aidio"
+            || command.starts_with("aidio ") =>
+        {
+            (crate::audio::execute(command), CommandAction::Continue)
+        }
         "health" => {
             let snapshot = runtime.snapshot();
             (
@@ -568,12 +577,12 @@ fn backend_health_label(health: &BackendHealth) -> &'static str {
 mod tests {
     use super::{execute, CommandAction, HistoryView};
     use crate::operations::ConsoleOperations;
-    use oid_runtime::MockRuntime;
+    use oid_runtime::MarinaRuntime;
     use oid_shared::{EventBus, RuntimeConfig};
 
     #[test]
     fn built_in_commands_return_mock_information() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let result = execute("status", &HistoryView::new(&[]), &runtime);
         assert_eq!(result.action, CommandAction::Continue);
         assert!(result.output.iter().any(|line| line.contains("Healthy")));
@@ -581,14 +590,14 @@ mod tests {
 
     #[test]
     fn exit_is_explicit() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let result = execute("exit", &HistoryView::new(&[]), &runtime);
         assert_eq!(result.action, CommandAction::Exit);
     }
 
     #[test]
     fn operation_commands_use_the_session_coordinator() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let root = std::env::temp_dir().join(format!("oid-console-command-{}", std::process::id()));
         let mut operations = ConsoleOperations::with_root(root.clone());
         let result = super::execute_with_operations(

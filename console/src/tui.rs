@@ -1,6 +1,6 @@
 //! Text user interface lifecycle.
 
-use oid_runtime::{config, logging, MockRuntime, RuntimeService};
+use oid_runtime::{config, logging, MarinaRuntime, Runtime, RuntimeService};
 use oid_shared::{EventBus, RuntimeEvent};
 use std::io;
 
@@ -19,7 +19,7 @@ use crate::{
 
 /// Console application state.
 pub struct Application {
-    runtime: MockRuntime,
+    runtime: MarinaRuntime,
     bus: EventBus,
     status_bar: StatusBar,
     prompt: Prompt,
@@ -31,7 +31,7 @@ pub struct Application {
 }
 
 impl Application {
-    /// Create the console, event bus, and mock runtime.
+    /// Create the console and its in-process Marina runtime client.
     #[must_use]
     pub fn start() -> Self {
         let configuration = config::load().expect("default runtime configuration is valid");
@@ -40,7 +40,8 @@ impl Application {
         bus.publish(&RuntimeEvent::ConfigurationLoaded);
         let _logger = logging::initialize();
         bus.publish(&RuntimeEvent::LoggingInitialized);
-        let runtime = MockRuntime::start(configuration, bus.clone());
+        let runtime = Runtime::start_with_bus(configuration, bus.clone())
+            .expect("Marina production runtime configuration is valid");
         Self {
             runtime,
             bus,

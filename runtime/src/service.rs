@@ -1,4 +1,4 @@
-//! Deterministic mock runtime for the interactive console.
+//! Marina's production runtime service and composition root.
 
 use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
@@ -14,9 +14,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-/// Fake runtime service used until a real model backend is integrated.
+/// Production runtime service used by the console and future clients.
 #[derive(Clone, Debug)]
-pub struct MockRuntime {
+pub struct MarinaRuntime {
     config: RuntimeConfig,
     bus: EventBus,
     backends: BackendManager,
@@ -27,8 +27,8 @@ pub struct MockRuntime {
     active_generation: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
-impl MockRuntime {
-    /// Start a mock runtime and publish its startup event.
+impl MarinaRuntime {
+    /// Start Marina's production runtime and publish its startup event.
     #[must_use]
     pub fn start(config: RuntimeConfig, bus: EventBus) -> Self {
         let backends = BackendManager::new(bus.clone());
@@ -60,7 +60,7 @@ impl MockRuntime {
     }
 }
 
-impl RuntimeApi for MockRuntime {
+impl RuntimeApi for MarinaRuntime {
     fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
             state: LifecycleState::Ready,
@@ -69,7 +69,7 @@ impl RuntimeApi for MockRuntime {
     }
 }
 
-impl RuntimeService for MockRuntime {
+impl RuntimeService for MarinaRuntime {
     fn status(&self) -> RuntimeStatus {
         <Self as RuntimeApi>::status(self)
     }
@@ -366,30 +366,30 @@ impl RuntimeService for MockRuntime {
     }
 }
 
-/// Construct a mock runtime from configuration, preserving the startup error contract.
+/// Construct Marina's production runtime from validated configuration.
 ///
 /// # Errors
 ///
 /// Returns an invalid-configuration error when required configuration values
 /// are empty.
-pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MockRuntime, RuntimeError> {
+pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, RuntimeError> {
     config
         .validate()
         .map_err(RuntimeError::InvalidConfiguration)?;
-    Ok(MockRuntime::start(config, bus))
+    Ok(MarinaRuntime::start(config, bus))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::MockRuntime;
+    use super::MarinaRuntime;
     use crate::RuntimeService;
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
     #[test]
-    fn mock_runtime_is_deterministic_and_publishes_events() {
+    fn marina_runtime_is_deterministic_and_publishes_events() {
         let bus = EventBus::new();
         let receiver = bus.subscribe();
-        let runtime = MockRuntime::start(RuntimeConfig::default(), bus);
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), bus);
         assert_eq!(runtime.snapshot().backend, "None");
         assert_eq!(runtime.snapshot().models, 0);
         let _ = runtime.execute_command("status");

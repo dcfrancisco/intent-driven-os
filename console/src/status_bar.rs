@@ -86,12 +86,12 @@ fn local_time() -> String {
 #[cfg(test)]
 mod tests {
     use super::StatusBar;
-    use oid_runtime::MockRuntime;
+    use oid_runtime::MarinaRuntime;
     use oid_shared::{EventBus, RuntimeConfig};
 
     #[test]
     fn renders_deterministic_placeholder_information() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let line = StatusBar::line(&runtime, "12:34:56");
         assert!(line.contains("Runtime: Healthy"));
         assert!(line.contains("Active backend: None"));

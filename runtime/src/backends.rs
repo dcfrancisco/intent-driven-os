@@ -454,7 +454,7 @@ impl BackendManager {
     }
 }
 
-/// Deterministic backend used by the mock runtime.
+/// Deterministic backend used by contract-isolation tests.
 #[derive(Clone, Debug, Default)]
 pub struct MockBackend;
 

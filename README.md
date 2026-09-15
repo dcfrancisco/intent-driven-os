@@ -47,6 +47,22 @@ DYLD_LIBRARY_PATH=/tmp/oid-llama-cpu-build/bin \
 cargo run -p oid-console --bin oid-console
 ```
 
+## Marina daemon and client
+
+The persistent local runtime can be started independently of clients:
+
+```bash
+cargo run -p oid-console --bin marina
+cargo run -p oid-console --bin marinactl -- status
+cargo run -p oid-console --bin marinactl -- model list
+```
+
+Marina owns the `Runtime::start` composition root and keeps model state in the
+daemon process. `marinactl` communicates over the Unix socket at
+`$HOME/.marina/marina.sock` (override with `MARINA_SOCKET`). Closing the client
+does not stop Marina or unload its model. The initial protocol is intentionally
+local and is not a network API.
+
 At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
 `:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
 short smoke test; the default is 128 tokens. Ctrl+C during generation cancels
@@ -81,10 +97,10 @@ Linux shell, while OID-specific controls use an explicit `:` prefix. See
 | Crate | Responsibility |
 | --- | --- |
 | `oid-shared` | Runtime/console types, errors, configuration, and events |
-| `oid-runtime` | Intelligent Runtime lifecycle, service interfaces, and mock runtime |
+| `oid-runtime` | Marina production runtime lifecycle, service interfaces, and backend composition |
 | `oid-llama-cpp-adapter` | Public package boundary for the native llama.cpp adapter |
 | `oid-llama-cpp-sys` | Direct, opt-in official llama.cpp C API link boundary |
-| `oid-console` | Keyboard-first interactive AI Console reference client |
+| `oid-console` | Keyboard-first interactive Marina console reference client |
 | `oid-common` | Shared models, errors, configuration, logging, and utilities |
 | `oid-intent-runtime` | Intent contracts and lifecycle state machine |
 | `oid-linux-skills` | Typed Linux operations, `/proc` health inspection, and approved directory skill |

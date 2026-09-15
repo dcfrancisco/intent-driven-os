@@ -12,7 +12,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            name: "Intelligent Runtime".to_owned(),
+            name: "Marina".to_owned(),
             version: "v0.1".to_owned(),
         }
     }
