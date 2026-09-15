@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod audio;
 mod commands;
 mod editor;
 mod foundation;

@@ -84,6 +84,8 @@ pub enum GenerationMessage {
     Token(String),
     /// Final result and measurements.
     Completed(GenerationResult),
+    /// Generation was cancelled after returning any partial output.
+    Cancelled(GenerationResult),
     /// Generation failed.
     Failed(RuntimeError),
 }
@@ -113,6 +115,18 @@ impl GenerationStream {
     /// Returns an error when the producer has closed the stream.
     pub fn recv(&self) -> Result<GenerationMessage, mpsc::RecvError> {
         self.receiver.recv()
+    }
+
+    /// Receive the next stream item with a bounded wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns a timeout or channel-disconnect error.
+    pub fn recv_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<GenerationMessage, mpsc::RecvTimeoutError> {
+        self.receiver.recv_timeout(timeout)
     }
 
     /// Attempt to receive without blocking.

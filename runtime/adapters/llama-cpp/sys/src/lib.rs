@@ -12,6 +12,8 @@ use std::ffi::c_void;
 #[cfg(native_llama_cpp)]
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::AtomicBool;
+#[cfg(native_llama_cpp)]
+use std::sync::atomic::Ordering;
 
 #[cfg(native_llama_cpp)]
 #[repr(C)]
@@ -22,6 +24,7 @@ struct ModelParams {
     n_gpu_layers: i32,
     split_mode: i32,
     load_mode: i32,
+    tensor_read_lazy: i32,
     main_gpu: i32,
     tensor_split: *const f32,
     progress_callback: Option<unsafe extern "C" fn(f32, *mut c_void) -> bool>,
@@ -45,6 +48,7 @@ struct ContextParams {
     n_seq_max: u32,
     n_rs_seq: u32,
     n_outputs_max: u32,
+    n_outputs_max_per_seq: u32,
     n_threads: i32,
     n_threads_batch: i32,
     ctx_type: i32,
@@ -95,6 +99,14 @@ struct Batch {
 #[derive(Clone, Copy)]
 struct SamplerChainParams {
     no_perf: bool,
+}
+
+#[cfg(native_llama_cpp)]
+unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
+    if data.is_null() {
+        return false;
+    }
+    (*data.cast::<AtomicBool>()).load(Ordering::SeqCst)
 }
 
 #[cfg(native_llama_cpp)]
@@ -314,12 +326,14 @@ impl NativeModel {
             if prompt_tokens.len() >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
-            let context_params = ContextParams {
+            let mut context_params = ContextParams {
                 n_ctx: context_size,
                 n_batch: context_size.min(512),
                 n_ubatch: context_size.min(512),
                 ..unsafe { ffi::llama_context_default_params() }
             };
+            context_params.abort_callback = Some(abort_callback);
+            context_params.abort_callback_data = std::ptr::from_ref(cancelled).cast_mut().cast();
             let context = unsafe { ffi::llama_init_from_model(self.pointer, context_params) };
             if context.is_null() {
                 return Err("llama.cpp could not create a context".to_owned());
@@ -372,6 +386,9 @@ impl NativeModel {
                     ffi::llama_sampler_free(sampler);
                     ffi::llama_free(context);
                 }
+                if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err("generation cancelled".to_owned());
+                }
                 return Err(format!("llama.cpp prompt decode failed: {decode_result}"));
             }
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
@@ -399,6 +416,9 @@ impl NativeModel {
                 unsafe {
                     ffi::llama_sampler_accept(sampler, token);
                 }
+                if generated >= u64::from(max_tokens) {
+                    break;
+                }
                 let mut next = [token];
                 let result = unsafe {
                     ffi::llama_decode(context, ffi::llama_batch_get_one(next.as_mut_ptr(), 1))
@@ -407,6 +427,9 @@ impl NativeModel {
                     unsafe {
                         ffi::llama_sampler_free(sampler);
                         ffi::llama_free(context);
+                    }
+                    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                        return Err("generation cancelled".to_owned());
                     }
                     return Err(format!("llama.cpp decode failed: {result}"));
                 }

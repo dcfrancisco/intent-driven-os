@@ -454,7 +454,7 @@ impl BackendManager {
     }
 }
 
-/// Deterministic backend used by the mock runtime.
+/// Deterministic backend used by contract-isolation tests.
 #[derive(Clone, Debug, Default)]
 pub struct MockBackend;
 
@@ -535,9 +535,111 @@ impl Backend for MockBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendManager, GenerationRequest, MockBackend};
+    use super::{
+        Backend, BackendDescriptor, BackendHealth, BackendManager, EmbeddingsRequest,
+        EmbeddingsResult, GenerationRequest, GenerationStatistics, LoadedModel, MockBackend,
+        StreamChunk, ToolSupport,
+    };
     use crate::generation::GenerationOptions;
+    use crate::models::{ModelMetadata, ModelStatus};
     use oid_shared::EventBus;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[derive(Clone, Debug, Default)]
+    struct ControllableBackend;
+
+    impl Backend for ControllableBackend {
+        fn descriptor(&self) -> BackendDescriptor {
+            BackendDescriptor {
+                id: "controllable".to_owned(),
+                name: "Controllable test backend".to_owned(),
+                version: "test".to_owned(),
+                library_version: None,
+            }
+        }
+
+        fn initialize(&self) -> Result<(), oid_shared::RuntimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), oid_shared::RuntimeError> {
+            Ok(())
+        }
+
+        fn health(&self) -> BackendHealth {
+            BackendHealth::Healthy
+        }
+
+        fn list_models(&self) -> Result<Vec<String>, oid_shared::RuntimeError> {
+            Ok(vec!["controlled".to_owned()])
+        }
+
+        fn load_model(
+            &self,
+            model: &ModelMetadata,
+        ) -> Result<LoadedModel, oid_shared::RuntimeError> {
+            Ok(LoadedModel {
+                model_id: model.id.clone(),
+                memory_bytes: 1,
+            })
+        }
+
+        fn unload_model(&self, _model_id: &str) -> Result<(), oid_shared::RuntimeError> {
+            Ok(())
+        }
+
+        fn generate_stream(
+            &self,
+            request: &GenerationRequest,
+        ) -> Result<Vec<StreamChunk>, oid_shared::RuntimeError> {
+            Ok(vec![StreamChunk {
+                request_id: request.request_id.clone(),
+                text: "unused".to_owned(),
+                done: false,
+            }])
+        }
+
+        fn generate_streaming(
+            &self,
+            _request: &GenerationRequest,
+            callback: &mut dyn FnMut(&str) -> bool,
+            cancellation: &AtomicBool,
+        ) -> Result<GenerationStatistics, oid_shared::RuntimeError> {
+            for _ in 0..100 {
+                if cancellation.load(Ordering::SeqCst) || !callback("token ") {
+                    return Err(oid_shared::RuntimeError::ModelLifecycle(
+                        "generation cancelled".to_owned(),
+                    ));
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(GenerationStatistics {
+                generated_tokens: 100,
+                ..GenerationStatistics::default()
+            })
+        }
+
+        fn cancel_generation(&self, _request_id: &str) -> Result<(), oid_shared::RuntimeError> {
+            Ok(())
+        }
+
+        fn embeddings(
+            &self,
+            _request: &EmbeddingsRequest,
+        ) -> Result<EmbeddingsResult, oid_shared::RuntimeError> {
+            Ok(EmbeddingsResult { values: Vec::new() })
+        }
+
+        fn tool_support(&self) -> ToolSupport {
+            ToolSupport {
+                supported: false,
+                reason: "test".to_owned(),
+            }
+        }
+    }
 
     #[test]
     fn manager_registers_enables_and_selects_backend() {
@@ -603,5 +705,84 @@ mod tests {
             .expect("stream");
         assert_eq!(statistics.generated_tokens, 1);
         assert!(output.contains("Mock generation"));
+    }
+
+    #[test]
+    fn controllable_generation_cancels_and_manager_recovers() {
+        let manager = BackendManager::new(EventBus::new());
+        manager
+            .register(Box::new(ControllableBackend))
+            .expect("register");
+        manager.enable("controllable").expect("enable");
+        let request = GenerationRequest {
+            request_id: "cancel-a".to_owned(),
+            model_id: "controlled".to_owned(),
+            input: "long request".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let worker_manager = manager.clone();
+        let worker_cancellation = cancellation.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            worker_manager.generate_streaming(
+                &request,
+                &mut |_| {
+                    let _ = sender.send(());
+                    true
+                },
+                &worker_cancellation,
+            )
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("token streamed");
+        cancellation.store(true, Ordering::SeqCst);
+        assert!(worker.join().expect("worker joined").is_err());
+
+        let second = GenerationRequest {
+            request_id: "request-b".to_owned(),
+            model_id: "controlled".to_owned(),
+            input: "recovery".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let mut tokens = 0;
+        manager
+            .generate_streaming(
+                &second,
+                &mut |_| {
+                    tokens += 1;
+                    true
+                },
+                &AtomicBool::new(false),
+            )
+            .expect("second inference succeeds");
+        assert_eq!(tokens, 100);
+    }
+
+    #[test]
+    fn controllable_backend_lifecycle_can_reload() {
+        let manager = BackendManager::new(EventBus::new());
+        manager
+            .register(Box::new(ControllableBackend))
+            .expect("register");
+        manager.enable("controllable").expect("enable");
+        let model = ModelMetadata {
+            id: "controlled".to_owned(),
+            name: "Controlled".to_owned(),
+            family: "test".to_owned(),
+            backend: "controllable".to_owned(),
+            quantization: "none".to_owned(),
+            context_window: 128,
+            memory_requirement_mb: 1,
+            capabilities: vec!["text".to_owned()],
+            status: ModelStatus::Registered,
+            checksum: None,
+            location: "controlled.gguf".to_owned(),
+        };
+        manager.load_model(&model).expect("load");
+        manager.unload_model("controlled").expect("unload");
+        manager.load_model(&model).expect("reload");
+        manager.unload_model("controlled").expect("second unload");
     }
 }

@@ -94,7 +94,7 @@ impl std::fmt::Debug for ModelRegistry {
 }
 
 impl ModelRegistry {
-    /// Create an in-memory registry for tests and the mock runtime.
+    /// Create an in-memory registry for tests and the in-process runtime.
     #[must_use]
     pub fn in_memory(bus: EventBus) -> Self {
         Self {

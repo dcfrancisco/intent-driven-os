@@ -10,9 +10,63 @@ This repository contains the Phase 5 Rust workspace and interactive console
 reference client. The runtime now has a backend-neutral native llama.cpp
 integration boundary, GGUF discovery, model lifecycle management, tokenizer
 routing, and streamed text generation with cancellation and metrics. The
-native backend requires `LLAMA_CPP_LIB_DIR` at build time; without it, the
-backend reports unavailable while the console remains usable for architecture
-validation.
+native backend uses `LLAMA_CPP_LIB_DIR` at build time. For the local Marina
+installation, set it to `/Users/dannyfrancisco/.marina/models`; the portable
+default form is `$HOME/.marina/models`:
+
+```sh
+export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/models}"
+```
+
+The directory must contain the native `libllama` library. If it is not set or
+does not contain a usable library, the backend reports unavailable while the
+console remains usable for architecture validation.
+
+## Local model bring-up on macOS x86_64
+
+Build the pinned, CPU-only native dependency with:
+
+```bash
+./scripts/setup-llama-macos.sh
+```
+
+The acceptance model used locally is `qwen2.5-0.5b-instruct-q4_k_m.gguf`.
+Place it in `models/` (the directory is intentionally ignored by Git). For
+the exact model used in the acceptance run:
+
+```bash
+curl -L --fail -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+```
+
+Then run OID from the repository root with:
+
+```bash
+LLAMA_CPP_LIB_DIR=/tmp/oid-llama-cpu-build/bin \
+DYLD_LIBRARY_PATH=/tmp/oid-llama-cpu-build/bin \
+cargo run -p oid-console --bin oid-console
+```
+
+## Marina daemon and client
+
+The persistent local runtime can be started independently of clients:
+
+```bash
+cargo run -p oid-console --bin marina
+cargo run -p oid-console --bin marinactl -- status
+cargo run -p oid-console --bin marinactl -- model list
+```
+
+Marina owns the `Runtime::start` composition root and keeps model state in the
+daemon process. `marinactl` communicates over the Unix socket at
+`$HOME/.marina/marina.sock` (override with `MARINA_SOCKET`). Closing the client
+does not stop Marina or unload its model. The initial protocol is intentionally
+local and is not a network API.
+
+At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
+`:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
+short smoke test; the default is 128 tokens. Ctrl+C during generation cancels
+the active request and leaves the console available for another command.
 
 Phase 5 adds independent `generate`, `complete`, and `explain` requests with
 runtime-owned streaming, cancellation handles, generation events, and metrics.
@@ -43,10 +97,10 @@ Linux shell, while OID-specific controls use an explicit `:` prefix. See
 | Crate | Responsibility |
 | --- | --- |
 | `oid-shared` | Runtime/console types, errors, configuration, and events |
-| `oid-runtime` | Intelligent Runtime lifecycle, service interfaces, and mock runtime |
+| `oid-runtime` | Marina production runtime lifecycle, service interfaces, and backend composition |
 | `oid-llama-cpp-adapter` | Public package boundary for the native llama.cpp adapter |
 | `oid-llama-cpp-sys` | Direct, opt-in official llama.cpp C API link boundary |
-| `oid-console` | Keyboard-first interactive AI Console reference client |
+| `oid-console` | Keyboard-first interactive Marina console reference client |
 | `oid-common` | Shared models, errors, configuration, logging, and utilities |
 | `oid-intent-runtime` | Intent contracts and lifecycle state machine |
 | `oid-linux-skills` | Typed Linux operations, `/proc` health inspection, and approved directory skill |

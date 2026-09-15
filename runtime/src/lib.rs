@@ -15,10 +15,10 @@ pub mod generation;
 pub mod hardware;
 pub mod lifecycle;
 pub mod logging;
-pub mod mock;
 pub mod models;
 pub mod native_llama;
 pub mod security;
+pub mod service;
 
 pub use api::{RuntimeApi, RuntimeService, RuntimeSnapshot};
 pub use backends::{
@@ -31,7 +31,7 @@ pub use generation::{
     GenerationStatistics, GenerationStream,
 };
 pub use hardware::{HardwareService, HardwareSnapshot};
-pub use mock::MockRuntime;
 pub use models::{ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
+pub use service::MarinaRuntime;

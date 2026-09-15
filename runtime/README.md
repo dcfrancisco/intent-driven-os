@@ -14,10 +14,11 @@ Phase 1 runtime crate boundaries:
 - `adapters/llama-cpp` — public package boundary for the native adapter
 - `adapters/llama-cpp/sys` — opt-in direct FFI/link boundary for libllama
 
-The Phase 2 console consumes `RuntimeService` and `MockRuntime`. The event bus
-publishes lifecycle and command events without requiring an inference backend.
-All backend, inference, Linux-operation, and real hardware behavior remains
-future work.
+The console consumes `RuntimeService` from `MarinaRuntime`. `Runtime::start` is
+the single production composition root; it validates configuration and creates
+the service with the backend manager, model registry, hardware service, and
+event bus. Test-only doubles remain available where individual contracts need
+deterministic isolation.
 
 ## Phase 5 services
 

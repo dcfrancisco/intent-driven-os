@@ -1,4 +1,4 @@
-//! Deterministic mock runtime for the interactive console.
+//! Marina's production runtime service and composition root.
 
 use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
@@ -12,11 +12,11 @@ use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
-/// Fake runtime service used until a real model backend is integrated.
+/// Production runtime service used by the console and future clients.
 #[derive(Clone, Debug)]
-pub struct MockRuntime {
+pub struct MarinaRuntime {
     config: RuntimeConfig,
     bus: EventBus,
     backends: BackendManager,
@@ -27,8 +27,8 @@ pub struct MockRuntime {
     active_generation: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
-impl MockRuntime {
-    /// Start a mock runtime and publish its startup event.
+impl MarinaRuntime {
+    /// Start Marina's production runtime and publish its startup event.
     #[must_use]
     pub fn start(config: RuntimeConfig, bus: EventBus) -> Self {
         let backends = BackendManager::new(bus.clone());
@@ -60,7 +60,7 @@ impl MockRuntime {
     }
 }
 
-impl RuntimeApi for MockRuntime {
+impl RuntimeApi for MarinaRuntime {
     fn status(&self) -> RuntimeStatus {
         RuntimeStatus {
             state: LifecycleState::Ready,
@@ -69,7 +69,7 @@ impl RuntimeApi for MockRuntime {
     }
 }
 
-impl RuntimeService for MockRuntime {
+impl RuntimeService for MarinaRuntime {
     fn status(&self) -> RuntimeStatus {
         <Self as RuntimeApi>::status(self)
     }
@@ -188,6 +188,7 @@ impl RuntimeService for MockRuntime {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
         if self
             .loaded
@@ -209,8 +210,9 @@ impl RuntimeService for MockRuntime {
         let cancel_for_worker = cancellation.clone();
         let bus = self.bus.clone();
         let backends = self.backends.clone();
+        let active_generation = self.active_generation.clone();
         thread::spawn(move || {
-            let started = SystemTime::now();
+            let started = Instant::now();
             bus.publish(&RuntimeEvent::GenerationStarted(request.request_id.clone()));
             let backend_request = crate::backends::GenerationRequest {
                 request_id: request.request_id.clone(),
@@ -219,6 +221,7 @@ impl RuntimeService for MockRuntime {
                 options: request.options.clone(),
             };
             let mut generated = String::new();
+            let mut generated_tokens = 0_u64;
             let mut first = true;
             let result = backends.generate_streaming(
                 &backend_request,
@@ -231,6 +234,7 @@ impl RuntimeService for MockRuntime {
                         first = false;
                     }
                     generated.push_str(token);
+                    generated_tokens += 1;
                     let _ = sender.send(GenerationMessage::Token(token.to_owned()));
                     bus.publish(&RuntimeEvent::TokenGenerated(request.request_id.clone()));
                     true
@@ -242,9 +246,34 @@ impl RuntimeService for MockRuntime {
                     .as_ref()
                     .is_err_and(|error| error.to_string().contains("cancelled"))
             {
+                let latency_ms = started.elapsed().as_millis();
+                let statistics = GenerationStatistics {
+                    generated_tokens,
+                    tokens_per_second: if latency_ms == 0 {
+                        generated_tokens as f64
+                    } else {
+                        generated_tokens as f64 / (latency_ms as f64 / 1000.0)
+                    },
+                    latency_ms,
+                    inference_time_ms: latency_ms,
+                    ..GenerationStatistics::default()
+                };
+                let _ = sender.send(GenerationMessage::Cancelled(GenerationResult {
+                    request_id: request.request_id.clone(),
+                    text: generated,
+                    statistics,
+                }));
                 bus.publish(&RuntimeEvent::GenerationCancelled(
                     request.request_id.clone(),
                 ));
+                if let Ok(mut active) = active_generation.lock() {
+                    if active
+                        .as_ref()
+                        .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                    {
+                        *active = None;
+                    }
+                }
                 return;
             }
             let statistics = match result {
@@ -253,13 +282,18 @@ impl RuntimeService for MockRuntime {
                     let message = error.to_string();
                     let _ = sender.send(GenerationMessage::Failed(error));
                     bus.publish(&RuntimeEvent::GenerationFailed(message));
+                    if let Ok(mut active) = active_generation.lock() {
+                        if active
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                        {
+                            *active = None;
+                        }
+                    }
                     return;
                 }
             };
-            let latency_ms = started
-                .elapsed()
-                .map(|elapsed| elapsed.as_millis())
-                .unwrap_or_default();
+            let latency_ms = started.elapsed().as_millis();
             let statistics = GenerationStatistics {
                 prompt_tokens: statistics.prompt_tokens,
                 generated_tokens: statistics.generated_tokens,
@@ -279,6 +313,14 @@ impl RuntimeService for MockRuntime {
             };
             let _ = sender.send(GenerationMessage::Completed(result));
             bus.publish(&RuntimeEvent::GenerationCompleted(request.request_id));
+            if let Ok(mut active) = active_generation.lock() {
+                if active
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                {
+                    *active = None;
+                }
+            }
         });
         Ok(GenerationStream::new(receiver, cancellation))
     }
@@ -324,30 +366,30 @@ impl RuntimeService for MockRuntime {
     }
 }
 
-/// Construct a mock runtime from configuration, preserving the startup error contract.
+/// Construct Marina's production runtime from validated configuration.
 ///
 /// # Errors
 ///
 /// Returns an invalid-configuration error when required configuration values
 /// are empty.
-pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MockRuntime, RuntimeError> {
+pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, RuntimeError> {
     config
         .validate()
         .map_err(RuntimeError::InvalidConfiguration)?;
-    Ok(MockRuntime::start(config, bus))
+    Ok(MarinaRuntime::start(config, bus))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::MockRuntime;
+    use super::MarinaRuntime;
     use crate::RuntimeService;
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
     #[test]
-    fn mock_runtime_is_deterministic_and_publishes_events() {
+    fn marina_runtime_is_deterministic_and_publishes_events() {
         let bus = EventBus::new();
         let receiver = bus.subscribe();
-        let runtime = MockRuntime::start(RuntimeConfig::default(), bus);
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), bus);
         assert_eq!(runtime.snapshot().backend, "None");
         assert_eq!(runtime.snapshot().models, 0);
         let _ = runtime.execute_command("status");

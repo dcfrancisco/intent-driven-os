@@ -1,6 +1,8 @@
 //! Intent command boundary.
 
 use crate::operations::ConsoleOperations;
+use crate::signals::SignalController;
+use std::io::Write;
 
 use oid_runtime::{
     BackendHealth, GenerationMessage, GenerationOptions, GenerationRequest, ModelMetadata,
@@ -93,6 +95,19 @@ pub fn execute_with_operations(
     runtime: &dyn RuntimeService,
     operations: &mut ConsoleOperations,
 ) -> CommandResult {
+    execute_with_operations_and_signals(input, history, runtime, operations, None)
+}
+
+/// Process commands while allowing active generation to observe Ctrl+C.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn execute_with_operations_and_signals(
+    input: &str,
+    history: &HistoryView<'_>,
+    runtime: &dyn RuntimeService,
+    operations: &mut ConsoleOperations,
+    signals: Option<&SignalController>,
+) -> CommandResult {
     let parsed = FoundationParser.parse(input.trim());
     let command = parsed.text.trim();
     let (output, action) = match command {
@@ -104,6 +119,8 @@ pub fn execute_with_operations(
                 "  :status   Show runtime status".to_owned(),
                 "  :runtime  Show runtime service details".to_owned(),
                 "  :models   List registered model metadata".to_owned(),
+                "  :audio [status|1x|2x|3x|mute|unmute|toggle-mute]  Control system audio"
+                    .to_owned(),
                 "  :intent create a directory <path>  Plan a governed operation".to_owned(),
                 "  :operations recover|inspect|approve|resume|rollback  Manage operations"
                     .to_owned(),
@@ -112,6 +129,13 @@ pub fn execute_with_operations(
             CommandAction::Continue,
         ),
         "status" | "runtime" => (runtime_lines(runtime), CommandAction::Continue),
+        _ if command == "audio"
+            || command.starts_with("audio ")
+            || command == "aidio"
+            || command.starts_with("aidio ") =>
+        {
+            (crate::audio::execute(command), CommandAction::Continue)
+        }
         "health" => {
             let snapshot = runtime.snapshot();
             (
@@ -255,11 +279,19 @@ pub fn execute_with_operations(
             )
         }
         _ if command.starts_with("generate ") || command.starts_with("explain ") => {
-            let prompt = command
+            let raw_prompt = command
                 .split_once(' ')
                 .map_or("", |(_, value)| value)
                 .trim_matches('"');
-            (generate_lines(runtime, prompt), CommandAction::Continue)
+            let (max_tokens, prompt) = raw_prompt
+                .strip_prefix("--max-tokens ")
+                .and_then(|value| value.split_once(' '))
+                .and_then(|(count, prompt)| count.parse().ok().map(|count| (Some(count), prompt)))
+                .unwrap_or((None, raw_prompt));
+            (
+                generate_lines_with_interrupt(runtime, prompt, signals, max_tokens),
+                CommandAction::Continue,
+            )
         }
         _ if command.starts_with("complete ") => {
             let path = command.trim_start_matches("complete ").trim();
@@ -346,28 +378,65 @@ fn token_count_lines(runtime: &dyn RuntimeService, text: &str) -> Vec<String> {
     operation_result(runtime.tokenize(text), "Tokens")
 }
 
-fn generate_lines(runtime: &dyn RuntimeService, prompt: &str) -> Vec<String> {
-    generate_lines_result(runtime, prompt).unwrap_or_else(|error| vec![format!("Error: {error}")])
+fn generate_lines_with_interrupt(
+    runtime: &dyn RuntimeService,
+    prompt: &str,
+    signals: Option<&SignalController>,
+    max_tokens: Option<u32>,
+) -> Vec<String> {
+    generate_lines_result_with_interrupt(runtime, prompt, signals, max_tokens)
+        .unwrap_or_else(|error| vec![format!("Error: {error}")])
 }
 
 fn generate_lines_result(
     runtime: &dyn RuntimeService,
     prompt: &str,
 ) -> Result<Vec<String>, oid_runtime::RuntimeError> {
+    generate_lines_result_with_interrupt(runtime, prompt, None, None)
+}
+
+fn generate_lines_result_with_interrupt(
+    runtime: &dyn RuntimeService,
+    prompt: &str,
+    signals: Option<&SignalController>,
+    max_tokens: Option<u32>,
+) -> Result<Vec<String>, oid_runtime::RuntimeError> {
+    let mut options = GenerationOptions::default();
+    if let Ok(value) = std::env::var("OID_MAX_TOKENS") {
+        if let Ok(max_tokens) = value.parse() {
+            options.max_tokens = max_tokens;
+        }
+    }
+    if let Ok(value) = std::env::var("OID_CONTEXT_SIZE") {
+        if let Ok(context_size) = value.parse() {
+            options.context_size = context_size;
+        }
+    }
+    if let Some(max_tokens) = max_tokens {
+        options.max_tokens = max_tokens;
+    }
     let request = GenerationRequest {
         request_id: format!("console-{}", std::process::id()),
         model_id: runtime.snapshot().loaded_model.unwrap_or_default(),
         prompt: prompt.to_owned(),
-        options: GenerationOptions::default(),
+        options,
     };
     let stream = runtime.generate(request)?;
     let mut lines = vec!["Generating...".to_owned()];
     loop {
-        match stream.recv().map_err(|_| {
-            oid_runtime::RuntimeError::ModelLifecycle("generation stream closed".to_owned())
-        })? {
-            GenerationMessage::Token(token) => lines.push(token),
-            GenerationMessage::Completed(result) => {
+        if signals.is_some_and(SignalController::take_interrupt) {
+            runtime.cancel_generation();
+        }
+        match stream.recv_timeout(std::time::Duration::from_millis(25)) {
+            Ok(GenerationMessage::Token(token)) => {
+                if signals.is_some() {
+                    print!("{token}");
+                    let _ = std::io::stdout().flush();
+                } else {
+                    lines.push(token);
+                }
+            }
+            Ok(GenerationMessage::Completed(result)) => {
                 lines.push(format!(
                     "Generated {} tokens at {:.1} tokens/sec",
                     result.statistics.generated_tokens, result.statistics.tokens_per_second
@@ -380,7 +449,20 @@ fn generate_lines_result(
                 ));
                 break;
             }
-            GenerationMessage::Failed(error) => return Err(error),
+            Ok(GenerationMessage::Cancelled(result)) => {
+                lines.push(format!(
+                    "Generation cancelled after {} tokens",
+                    result.statistics.generated_tokens
+                ));
+                break;
+            }
+            Ok(GenerationMessage::Failed(error)) => return Err(error),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(oid_runtime::RuntimeError::ModelLifecycle(
+                    "generation stream closed".to_owned(),
+                ));
+            }
         }
     }
     Ok(lines)
@@ -495,12 +577,12 @@ fn backend_health_label(health: &BackendHealth) -> &'static str {
 mod tests {
     use super::{execute, CommandAction, HistoryView};
     use crate::operations::ConsoleOperations;
-    use oid_runtime::MockRuntime;
+    use oid_runtime::MarinaRuntime;
     use oid_shared::{EventBus, RuntimeConfig};
 
     #[test]
     fn built_in_commands_return_mock_information() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let result = execute("status", &HistoryView::new(&[]), &runtime);
         assert_eq!(result.action, CommandAction::Continue);
         assert!(result.output.iter().any(|line| line.contains("Healthy")));
@@ -508,14 +590,14 @@ mod tests {
 
     #[test]
     fn exit_is_explicit() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let result = execute("exit", &HistoryView::new(&[]), &runtime);
         assert_eq!(result.action, CommandAction::Exit);
     }
 
     #[test]
     fn operation_commands_use_the_session_coordinator() {
-        let runtime = MockRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let root = std::env::temp_dir().join(format!("oid-console-command-{}", std::process::id()));
         let mut operations = ConsoleOperations::with_root(root.clone());
         let result = super::execute_with_operations(
