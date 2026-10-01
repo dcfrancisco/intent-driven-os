@@ -16,7 +16,7 @@ flowchart LR
     Verify --> Evidence[evidence-engine]
     Evidence --> Shell
     Plugin[plugin-sdk] -. extensions .-> Intent
-    Model[model-runner\nplaceholder only] -. future assistance .-> Intent
+    Model[model-runner\nlocal GGUF + streaming] -. future assistant layer .-> Intent
     Common[common] -. shared contracts .-> Intent
     Common -. shared contracts .-> Skills
     Common -. shared contracts .-> Policy
@@ -61,7 +61,7 @@ remain outside this milestone.
 - `verification-engine` validates postconditions, health, and rollback outcomes.
 - `evidence-engine` records plans, approvals, execution results, verification, and history.
 - `plugin-sdk` defines extension contracts without coupling the core to plugin implementations.
-- `model-runner` is reserved for future optimized model interfaces and contains no AI implementation in this phase.
+- `model-runner` is the backend-neutral contract for the current local GGUF runner. Native llama.cpp implementation is isolated under `runtime/adapters/llama-cpp`; assistant sessions and tools remain a future governed layer.
 - `desktop-shell` integrates with terminal and desktop surfaces; Wayland, D-Bus, and systemd adapters will be isolated behind interfaces.
 
 ## Dependency rules

@@ -49,6 +49,28 @@ cargo run -p oid-console --bin oid-console
 
 ## Marina daemon and client
 
+The model runner can be installed without the interactive console:
+
+```bash
+./scripts/install-model-runner.sh
+marina
+marinactl status
+```
+
+For repository-local development, build the release binaries and link them to
+`./marina/bin`:
+
+```bash
+cargo build --release -p oid-console --bin marina --bin marinactl
+./scripts/link-model-runner.sh
+./marina/bin/marina
+./marina/bin/marinactl status
+```
+
+Use `--prefix "$HOME/.local"` to select an install prefix. The installer does
+not download models or require llama.cpp; configure `LLAMA_CPP_LIB_DIR` when a
+native backend is available.
+
 The persistent local runtime can be started independently of clients:
 
 ```bash
@@ -67,6 +89,22 @@ At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
 `:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
 short smoke test; the default is 128 tokens. Ctrl+C during generation cancels
 the active request and leaves the console available for another command.
+
+The standalone runner can import a local or remote GGUF artifact:
+
+```bash
+marinactl model pull /path/to/model.gguf
+marinactl model pull https://host.example/model.gguf model-id SHA256_HEX
+marinactl model list
+marinactl model load model-id
+marinactl generate model-id "Hello from Marina"
+```
+
+At startup Marina also discovers existing `.gguf` files recursively in the
+Marina store, `./models`, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
+`TRANSFORMERS_CACHE`, `XDG_CACHE_HOME`), ModelScope caches, and common Ollama
+cache roots. Discovery registers files in place; `model pull` is the explicit
+copy/download path into `$HOME/.marina/models`.
 
 Phase 5 adds independent `generate`, `complete`, and `explain` requests with
 runtime-owned streaming, cancellation handles, generation events, and metrics.

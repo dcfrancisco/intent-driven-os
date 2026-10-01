@@ -3,7 +3,7 @@
 use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
     hardware::{HardwareService, HardwareSnapshot},
-    models::{ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
+    models::{ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
     LlamaCppAdapter, RuntimeApi, RuntimeConfig, RuntimeError, RuntimeService, RuntimeSnapshot,
     RuntimeStatus,
@@ -36,8 +36,18 @@ impl MarinaRuntime {
         let _ = backends.register(Box::new(llama));
         let _ = backends.enable("llama.cpp");
         let hardware = HardwareService::detect(&bus);
-        let models = ModelRegistry::in_memory(bus.clone());
-        let discovery = ModelDiscovery::new(ModelDiscovery::default_directories());
+        let models = config
+            .registry_path
+            .as_ref()
+            .and_then(|path| ModelRegistry::open(path, bus.clone()).ok())
+            .unwrap_or_else(|| ModelRegistry::in_memory(bus.clone()));
+        let mut discovery_directories = ModelDiscovery::default_directories();
+        if let Some(directory) = config.model_directory.clone() {
+            if !discovery_directories.contains(&directory) {
+                discovery_directories.insert(0, directory);
+            }
+        }
+        let discovery = ModelDiscovery::new(discovery_directories);
         let _ = discovery.discover(&models, "llama.cpp");
         bus.publish(&RuntimeEvent::RuntimeStarted);
         bus.publish(&RuntimeEvent::HealthUpdated("Healthy".to_owned()));
@@ -129,6 +139,28 @@ impl RuntimeService for MarinaRuntime {
 
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata> {
         self.models.inspect(id)
+    }
+
+    fn model_pull(
+        &self,
+        source: &str,
+        model_id: Option<&str>,
+        checksum: Option<&str>,
+    ) -> Result<ModelMetadata, RuntimeError> {
+        let directory = self
+            .config
+            .model_directory
+            .clone()
+            .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .map(|home| home.join(".marina/models"))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("models"));
+        let model = ModelAcquirer::acquire(source, &directory, model_id, checksum)?;
+        self.models.register(model.clone())?;
+        Ok(model)
     }
 
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
@@ -396,5 +428,39 @@ mod tests {
         assert!(receiver
             .try_iter()
             .any(|event| matches!(event, RuntimeEvent::RuntimeStarted)));
+    }
+
+    #[test]
+    fn model_pull_imports_local_artifact_into_configured_store() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-model-pull-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let source = root.join("source.gguf");
+        let destination = root.join("models");
+        let registry = root.join("registry.db");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::write(&source, b"GGUF").expect("write source");
+        let config = RuntimeConfig {
+            model_directory: Some(destination.clone()),
+            registry_path: Some(registry),
+            ..RuntimeConfig::default()
+        };
+        let runtime = MarinaRuntime::start(config, EventBus::new());
+        let model = runtime
+            .model_pull(
+                source.to_str().expect("source path"),
+                Some("local-demo"),
+                None,
+            )
+            .expect("pull local model");
+        assert_eq!(model.id, "local-demo");
+        assert!(destination.join("source.gguf").is_file());
+        assert_eq!(runtime.model_list().len(), 1);
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 }

@@ -50,6 +50,13 @@ pub trait RuntimeService: Send + Sync {
     fn model_list(&self) -> Vec<ModelMetadata>;
     /// Inspect model metadata by identifier.
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata>;
+    /// Pull or import a local/remote GGUF artifact and register it.
+    fn model_pull(
+        &self,
+        source: &str,
+        model_id: Option<&str>,
+        checksum: Option<&str>,
+    ) -> Result<ModelMetadata, oid_shared::RuntimeError>;
     /// Load a registered model through the active backend.
     ///
     /// # Errors

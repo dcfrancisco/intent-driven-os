@@ -21,7 +21,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let command = args.next().ok_or("usage: marinactl status|model list|model load <id>|model unload <id>|generate <model> <prompt>")?;
+    let command = args.next().ok_or("usage: marinactl status|model list|model pull <source> [model_id] [sha256]|model load <id>|model unload <id>|generate <model> <prompt>")?;
     if command == "status" {
         return request("status");
     }
@@ -31,9 +31,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if command == "model" {
         let action = args
             .next()
-            .ok_or("usage: marinactl model list|load|unload")?;
+            .ok_or("usage: marinactl model list|pull <source> [model_id] [sha256]|load|unload")?;
         let request_line = match action.as_str() {
             "list" => "model_list".to_owned(),
+            "pull" => {
+                let source = args.next().ok_or("model source required")?;
+                let model_id = args.next();
+                let checksum = args.next();
+                if args.next().is_some() {
+                    return Err(
+                        "model pull accepts source, optional model id, and optional sha256".into(),
+                    );
+                }
+                let mut request = format!("model_pull\t{}", ipc::encode_field(&source));
+                if let Some(model_id) = model_id {
+                    request.push('\t');
+                    request.push_str(&ipc::encode_field(&model_id));
+                    if let Some(checksum) = checksum {
+                        request.push('\t');
+                        request.push_str(&ipc::encode_field(&checksum));
+                    }
+                } else if checksum.is_some() {
+                    return Err("sha256 requires a model id".into());
+                }
+                request
+            }
             "load" => format!("model_load\t{}", args.next().ok_or("model id required")?),
             "unload" => format!("model_unload\t{}", args.next().ok_or("model id required")?),
             _ => return Err("unknown model command".into()),
@@ -57,9 +79,31 @@ fn request(request: &str) -> Result<(), Box<dyn std::error::Error>> {
     for line in BufReader::new(stream).lines() {
         let line = line?;
         if let Some(error) = line.strip_prefix("ERROR\t") {
-            return Err(error.to_owned().into());
+            let mut fields = error.splitn(2, '\t');
+            let operation = fields.next().unwrap_or("request");
+            let message = fields
+                .next()
+                .map(ipc::decode_field)
+                .unwrap_or_else(|| operation.to_owned());
+            return Err(format!("{operation}: {message}").into());
         }
-        println!("{}", line.strip_prefix("OK\t").unwrap_or(&line));
+        if let Some(model_pull) = line.strip_prefix("OK\tmodel_pull\t") {
+            let fields: Vec<_> = model_pull.split('\t').collect();
+            if fields.len() >= 5 {
+                println!(
+                    "model_pull: id={} name={} status={} location={} sha256={}",
+                    ipc::decode_field(fields[0]),
+                    ipc::decode_field(fields[1]),
+                    fields[2],
+                    ipc::decode_field(fields[3]),
+                    ipc::decode_field(fields[4])
+                );
+            } else {
+                println!("{line}");
+            }
+        } else {
+            println!("{}", line.strip_prefix("OK\t").unwrap_or(&line));
+        }
         if line == "OK" || line == "OK cancelled" {
             break;
         }

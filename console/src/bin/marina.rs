@@ -76,6 +76,37 @@ fn handle(mut stream: UnixStream, runtime: &dyn RuntimeService) -> std::io::Resu
             }
             writeln!(stream, "END")?;
         }
+        "model_pull" if (2..=4).contains(&fields.len()) => {
+            let source = ipc::decode_field(fields[1]);
+            let model_id = fields
+                .get(2)
+                .filter(|value| !value.is_empty())
+                .map(|value| ipc::decode_field(value));
+            let checksum = fields
+                .get(3)
+                .filter(|value| !value.is_empty())
+                .map(|value| ipc::decode_field(value));
+            match runtime.model_pull(&source, model_id.as_deref(), checksum.as_deref()) {
+                Ok(model) => {
+                    writeln!(
+                        stream,
+                        "OK\tmodel_pull\t{}\t{}\t{:?}\t{}\t{}",
+                        ipc::encode_field(&model.id),
+                        ipc::encode_field(&model.name),
+                        model.status,
+                        ipc::encode_field(&model.location),
+                        ipc::encode_field(model.checksum.as_deref().unwrap_or_default())
+                    )?;
+                }
+                Err(error) => {
+                    writeln!(
+                        stream,
+                        "ERROR\tmodel_pull\t{}",
+                        ipc::encode_field(&error.to_string())
+                    )?;
+                }
+            }
+        }
         "model_load" if fields.len() == 2 => {
             respond_result(&mut stream, runtime.model_load(fields[1]))?;
         }

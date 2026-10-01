@@ -56,5 +56,13 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0054 | D-Bus Desktop Boundary | Isolated read-only D-Bus transport contract |
 | WP-0055 | Terminal Identity and Shell Passthrough | Real Linux shell with explicit `:`-prefixed OID commands |
 | WP-0056 | Process and Signal Reliability | Reliable interruption, shutdown, child cleanup, and recovery |
+| WP-0057 | Local Runner Contract Hardening | Versioned runner semantics, manifests, request identity, and failure taxonomy |
+| WP-0058 | Verified Model Cache and Admission | Trusted model artifacts with memory/context/resource admission |
+| WP-0059 | Runtime API and Stream Transport | Versioned Unix-socket model/run/health API with idempotency |
+| WP-0060 | Backend Capability and Router | Deterministic, explainable local-first backend selection |
+| WP-0061 | Compatibility Edges | Scoped Ollama and OpenAI-compatible translation with capability gaps |
+| WP-0062 | Runtime Recovery and Observability | Crash isolation, metrics, audit records, and deterministic recovery |
+| WP-0063 | Assistant Session and Tool Boundary | Governed sessions/tools after runner and router foundations are stable |
+| WP-0064 | Individual Model Runner Installer | Installable Marina service/client without the interactive console |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

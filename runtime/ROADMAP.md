@@ -1,6 +1,9 @@
 # Intelligent Runtime Roadmap
 
-This roadmap sequences the control plane from documented contracts to a usable local runtime. Milestones are capability boundaries, not promises of implementation in the current repository.
+This roadmap sequences the control plane from the current local runner to an
+Ollama-like service and OID-owned multi-backend router. Milestones are
+capability boundaries, not promises of implementation in the current
+repository. See `docs/PROJECT-OPERATING-BRIEF.md` and ADR-0011.
 
 ## v0.1 — Contracts and local foundation
 
@@ -16,6 +19,11 @@ Goal: establish a safe, observable local runtime boundary around one backend.
 - Establish structured audit events, health states, metrics, and tracing fields.
 
 Exit criteria: contracts are reviewed, lifecycle invariants are documented, and a backend-neutral request can be described end to end without implementation leakage.
+
+The existing local runner is beyond contract-only status: native GGUF loading,
+streaming, cancellation, and basic metrics have validation evidence. The next
+work is WP-0057 through WP-0063, in order: contract hardening, trust/admission,
+service transport, routing, compatibility, recovery, then assistant sessions.
 
 ## v0.2 — Resource and policy control
 
@@ -54,4 +62,3 @@ Goal: provide a stable, secure, and operable model resource service.
 - Define OIP integration contracts without coupling the runtime to OIP deployments.
 
 Exit criteria: production readiness review passes for security, reliability, observability, API compatibility, and documented backend support.
-

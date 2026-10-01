@@ -11,6 +11,8 @@ pub struct HardwareSnapshot {
     pub operating_system: String,
     /// Target architecture identifier.
     pub architecture: String,
+    /// Stable machine variant used by backend/model selection.
+    pub machine_variant: String,
     /// Human-readable CPU description.
     pub cpu: String,
     /// Number of logical CPU cores.
@@ -74,6 +76,7 @@ impl HardwareProvider for UnavailableHardware {
         HardwareSnapshot {
             operating_system: "unknown".to_owned(),
             architecture: "unknown".to_owned(),
+            machine_variant: "unknown".to_owned(),
             ..HardwareSnapshot::default()
         }
     }
@@ -84,18 +87,61 @@ fn detect_snapshot() -> HardwareSnapshot {
     let (cpu, physical_cores) =
         linux_cpu_details().unwrap_or_else(|| ("unknown CPU".to_owned(), None));
     let (installed_ram_bytes, available_ram_bytes) = linux_memory_details();
+    let simd_capabilities = simd_capabilities();
+    let machine_variant = machine_variant(&simd_capabilities);
     HardwareSnapshot {
         operating_system: std::env::consts::OS.to_owned(),
         architecture: std::env::consts::ARCH.to_owned(),
+        machine_variant,
         cpu,
         logical_cores,
         physical_cores: physical_cores.or(Some(logical_cores)),
         installed_ram_bytes,
         available_ram_bytes,
-        simd_capabilities: simd_capabilities(),
+        simd_capabilities,
         gpu: None,
         npu: None,
     }
+}
+
+fn machine_variant(simd: &[String]) -> String {
+    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+    let hardware_model = if std::env::consts::OS == "macos" {
+        command_output("sysctl", &["-n", "hw.model"])
+    } else if std::env::consts::OS == "linux" {
+        fs::read_to_string("/sys/devices/virtual/dmi/id/product_name")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    } else {
+        None
+    };
+    let accelerator = if std::env::consts::OS == "macos"
+        && (std::env::consts::ARCH == "aarch64" || std::env::consts::ARCH == "arm64")
+    {
+        "metal"
+    } else if simd.iter().any(|capability| capability == "avx2") {
+        "cpu-avx2"
+    } else if simd.iter().any(|capability| capability == "avx") {
+        "cpu-avx"
+    } else {
+        "cpu"
+    };
+    hardware_model.map_or_else(
+        || format!("{platform}-{accelerator}"),
+        |model| format!("{platform}-{accelerator}-{model}"),
+    )
+}
+
+fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
+    std::process::Command::new(program)
+        .args(arguments)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn linux_cpu_details() -> Option<(String, Option<usize>)> {
@@ -179,6 +225,7 @@ mod tests {
         let snapshot = service.snapshot();
         assert!(!snapshot.operating_system.is_empty());
         assert!(!snapshot.architecture.is_empty());
+        assert!(!snapshot.machine_variant.is_empty());
         assert!(snapshot.logical_cores > 0);
     }
 }

@@ -11,3 +11,6 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0007 — Hardware-Aware Runtime](0007-hardware-aware-runtime.md)
 - [ADR-0008 — Plugin Architecture](0008-plugin-architecture.md)
 - [ADR-0009 — Canonical Operation Planning Framework](0009-operation-planning-framework.md)
+- [ADR-0010 — OID-Owned Local Model Runner Boundary](0010-oid-model-runner-boundary.md)
+- [ADR-0011 — OID-Owned Local Runner and Multi-Backend Router Strategy](0011-local-runner-and-omnirouter-strategy.md)
+- [ADR-0012 — Individually Installable Model Runner](0012-individual-model-runner-installation.md)

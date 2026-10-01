@@ -31,7 +31,7 @@ pub use generation::{
     GenerationStatistics, GenerationStream,
 };
 pub use hardware::{HardwareService, HardwareSnapshot};
-pub use models::{ModelMetadata, ModelRegistry, ModelStatus};
+pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
 pub use service::MarinaRuntime;

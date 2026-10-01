@@ -2,6 +2,16 @@
 
 Items are intentionally written as design and implementation slices for future work. Nothing in this backlog is implemented by this documentation module.
 
+## Current execution sequence
+
+The repository now has a validated CPU-first local GGUF runner. Execute the
+remaining runtime work through the bounded packages in
+`docs/work-packages/README.md`: WP-0057 (contract hardening), WP-0058
+(verified cache/admission), WP-0059 (versioned service transport), WP-0060
+(capability router), WP-0061 (compatibility edges), WP-0062 (recovery and
+observability), and finally WP-0063 (assistant sessions/tools). This sequence
+keeps assistant behavior above, rather than inside, model backends.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

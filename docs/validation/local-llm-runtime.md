@@ -11,11 +11,13 @@ OID Console → Intelligent Runtime → ModelRunner → llama.cpp Adapter → GG
 
 ## WP-LLM-002 Status
 
-**PARTIAL** — Ubuntu live inference, raw llama.cpp comparison, Ollama API
-measurements, streaming, loading, completion, and unload were exercised. The
-live Ctrl+C path was not validated as graceful: a control character reached the
-PTY, but generation continued to completion and no cancellation event was
-observed. Contract-level cancellation tests pass. No WP-LLM-003 work has begun.
+**SUBSTANTIALLY VALIDATED** — Ubuntu live inference, raw llama.cpp comparison,
+Ollama API measurements, streaming, loading, completion, unload, cancellation,
+post-cancel inference, reload, and shutdown were exercised. Retained native
+acceptance evidence and its maturity assessment are in
+`docs/reviews/model-runner-reality-review.md`. Remaining gaps are persistent
+registry/cache state, request-scoped concurrency, service API versioning, and
+multi-backend routing; these are planned in WP-0057 through WP-0063.
 
 ## Hardware
 

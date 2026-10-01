@@ -17,8 +17,12 @@ OID Console → Intelligent Runtime → ModelRunner → llama.cpp adapter → GG
 ```
 
 The current slice supports one active local GGUF model and CPU-first execution.
-It does not train models, download models, or implement scheduling, tools,
-RAG, or distributed inference.
+It includes streamed text generation and cooperative cancellation, but does
+not yet provide verified artifact download/cache management, scheduling,
+multi-model residency, tools, RAG, chat/session state, or distributed
+inference. ADR-0011 extends this boundary into the product strategy: the OID
+API should feel Ollama-like for local users, while a future router selects
+among adapters without making Ollama a control-plane dependency.
 
 ## Rationale
 

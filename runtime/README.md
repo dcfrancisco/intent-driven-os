@@ -33,10 +33,16 @@ not configured, it remains registered and reports `Unavailable`; there is no
 silent mock fallback. Configured builds link directly to `libllama` and never
 launch `llama-cli`.
 
-Phase 4 adds recursive `.gguf` discovery, metadata-only registry population,
-one-model-at-a-time loading/unloading, backend-reported model memory, and
-native tokenizer routing. Text generation, streaming, chat, embeddings, and
-GGUF parsing remain outside this milestone.
+The runtime recursively discovers `.gguf` files from configured local model
+roots, including common Hugging Face/Python and Ollama cache directories.
+`ModelAcquirer` imports local paths, `file://` URLs, or explicit HTTP(S) URLs
+into the managed store with atomic writes and optional SHA-256 verification.
+The registry persists when Marina is started through `config::load()`.
+
+The current runner supports one-model-at-a-time loading/unloading,
+backend-reported model memory, native tokenizer routing, text generation,
+streaming, and cancellation. Chat, embeddings, and tool execution remain
+separate capabilities.
 
 Generation is represented by `GenerationRequest`, `GenerationOptions`,
 `GenerationStream`, `GenerationResult`, and `GenerationStatistics`. A runtime
