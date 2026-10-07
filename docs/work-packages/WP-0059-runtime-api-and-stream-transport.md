@@ -22,3 +22,11 @@ disconnect behavior, and protocol version negotiation.
 ## Dependencies
 
 WP-RUNTIME-002, WP-0057; ADR-0004, ADR-0006, ADR-0011.
+
+## Implementation status (2026-10-07)
+
+Implemented for the local first slice: `marina` and `marinactl` communicate over
+the user-scoped Unix socket on Unix and loopback TCP on Windows, with model
+list/pull/load/unload, streaming generation, stable request IDs, and
+request-scoped cancellation. Protocol version negotiation, framed transport,
+named pipes, and crash/restart semantics remain open hardening work.

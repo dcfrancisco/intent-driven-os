@@ -605,8 +605,12 @@ impl ModelDiscovery {
                 directories.push(directory);
             }
         };
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = std::env::var_os("MARINA_HOME")
+            .or_else(|| std::env::var_os("HOME"))
+            .or_else(|| std::env::var_os("USERPROFILE"))
+        {
             let home = PathBuf::from(home);
+            add_directory(home.join(".marina/models"));
             add_directory(home.join(".local/share/intelligent-runtime/models"));
             add_directory(home.join("Models"));
             add_directory(home.join(".cache/huggingface/hub"));
@@ -626,7 +630,6 @@ impl ModelDiscovery {
             add_directory(xdg_cache_home.join("modelscope/hub"));
             add_directory(xdg_cache_home.join("ollama/models"));
         }
-        add_directory(PathBuf::from("models"));
         directories
     }
 

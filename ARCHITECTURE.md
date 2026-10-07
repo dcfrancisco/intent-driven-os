@@ -16,7 +16,8 @@ flowchart LR
     Verify --> Evidence[evidence-engine]
     Evidence --> Shell
     Plugin[plugin-sdk] -. extensions .-> Intent
-    Model[model-runner\nlocal GGUF + streaming] -. future assistant layer .-> Intent
+    Marina[Marina local model service\nshared model inventory + API] --> Intent
+    OIDSystem[OID system client\nlocal API principal] --> Marina
     Common[common] -. shared contracts .-> Intent
     Common -. shared contracts .-> Skills
     Common -. shared contracts .-> Policy
@@ -61,7 +62,13 @@ remain outside this milestone.
 - `verification-engine` validates postconditions, health, and rollback outcomes.
 - `evidence-engine` records plans, approvals, execution results, verification, and history.
 - `plugin-sdk` defines extension contracts without coupling the core to plugin implementations.
-- `model-runner` is the backend-neutral contract for the current local GGUF runner. Native llama.cpp implementation is isolated under `runtime/adapters/llama-cpp`; assistant sessions and tools remain a future governed layer.
+- `model-runner` is the backend-neutral contract beneath Marina. Marina is a
+  standalone service with model lifecycle, API compatibility, routing, and
+  service-install boundaries; native llama.cpp remains isolated under
+  `runtime/adapters/llama-cpp`. Assistant sessions and tools remain governed
+  OID/system capabilities above the model backend. OID and Marina share one
+  machine-level model inventory through the Marina API; OID does not duplicate
+  model files or construct backend handles.
 - `desktop-shell` integrates with terminal and desktop surfaces; Wayland, D-Bus, and systemd adapters will be isolated behind interfaces.
 
 ## Dependency rules

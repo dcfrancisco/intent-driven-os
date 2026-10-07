@@ -64,5 +64,16 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0062 | Runtime Recovery and Observability | Crash isolation, metrics, audit records, and deterministic recovery |
 | WP-0063 | Assistant Session and Tool Boundary | Governed sessions/tools after runner and router foundations are stable |
 | WP-0064 | Individual Model Runner Installer | Installable Marina service/client without the interactive console |
+| WP-0065 | Cross-Platform Runner Packaging | Linux, macOS, and Windows user/system installer artifacts |
+| WP-0066 | Standalone Service Transports | Portable local service lifecycle, health, and IPC/API transports |
+| WP-0067 | Assistant API Compatibility Edge | Versioned assistant API and OpenAI-compatible streaming surface |
+| WP-0068 | OID Runtime Integration | OID and system clients consume Marina through the public API |
+| WP-0069 | Linux Distro Packaging and Service | FHS-aligned packages, systemd units, upgrades, rollback, and removal |
+| WP-0070 | AI Capability and Provider Contract | Versioned messages, capabilities, sessions, tools, embeddings, and provider model |
+| WP-0071 | Runtime Security and Resource Isolation | Service sandboxing, secrets, quotas, device access, and data policy |
+| WP-0072 | AI Desktop Self-Management | Context, skills, approvals, maintenance, verification, and recovery |
+| WP-0073 | OID OS-Management Model | Training, evaluation, provenance, and Marina integration |
+| WP-0074 | Rust CA-Clipper Linux Subsystem | Legacy inventory, Rust rewrite, data compatibility, and Linux packaging |
+| WP-0075 | Product Brand and Launch Language | Product names, positioning, release boundaries, and claim discipline |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

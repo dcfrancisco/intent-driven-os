@@ -12,6 +12,14 @@ remaining runtime work through the bounded packages in
 observability), and finally WP-0063 (assistant sessions/tools). This sequence
 keeps assistant behavior above, rather than inside, model backends.
 
+The product distribution sequence continues with WP-0065 through WP-0071:
+cross-platform packaging, standalone service transports, the assistant API
+compatibility edge, OID integration, the canonical AI capability contract, and
+runtime isolation. Linux distro/service integration (WP-0069) is deliberately
+the final delivery phase after those contracts are stable. Marina is the
+standalone service; OID, assistants, and system workflows are clients of its
+public API.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

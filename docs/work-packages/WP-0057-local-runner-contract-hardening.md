@@ -23,3 +23,10 @@ Keep one active GGUF model and one active generation in this WP.
 ## Dependencies
 
 WP-0022, WP-0027, WP-0031, WP-0032, WP-0034, WP-0035; ADR-0010, ADR-0011.
+
+## Implementation status (2026-10-07)
+
+The first executable slice is implemented: stable runtime request IDs, one
+active model/generation invariants, streaming terminal events, native-backed
+cooperative cancellation, and generation statistics. The remaining acceptance
+gap is native Linux/macOS/Windows smoke evidence and resource/context admission.

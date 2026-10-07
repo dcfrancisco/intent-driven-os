@@ -6,10 +6,15 @@ the task is covered here.
 
 ## Mission
 
-OID (Open Intelligence Desktop) is a Linux-first, Rust-based AI runtime and
-keyboard-first console. The runtime owns model lifecycle, policy, hardware
-awareness, streaming, cancellation, observability, and recoverability. The
-console is a client and must not own runtime state or backend-native handles.
+OID (Open Intelligence Desktop) is a Linux-first, Rust-based AI desktop/OS and
+keyboard-first console. Marina is the cross-platform standalone model-runner
+service for Linux, macOS, and Windows; OID is one client of its public API.
+The product goal is a computer users can prompt to inspect, plan, operate,
+verify, recover, and maintain itself under explicit policy and human approval
+boundaries.
+The runtime owns model lifecycle, policy, hardware awareness, streaming,
+cancellation, observability, and recoverability. The console is a client and
+must not own runtime state or backend-native handles.
 
 The near-term product proof is a trustworthy local model service: load a local
 model, run an independently addressable streaming request, cancel it, observe
@@ -31,6 +36,14 @@ policy, health, and resource fit.
   architectural boundary. OID must not require Ollama to run local models.
 - The model runner is independently installable: `marina` and `marinactl` are
   the service/client product surface; `oid-console` is an optional client.
+- The canonical user installation is `$HOME/.marina` on Linux/macOS and the
+  equivalent per-user Marina home on Windows; binaries, native libraries, and
+  models do not belong in the source repository.
+- Marina must expose a versioned API usable by OID, AI assistants, and other
+  system clients; OpenAI-compatible HTTP is an edge, not the internal API.
+- Only Marina is a cross-platform release for Linux, macOS, and Windows. OID
+  and the AI desktop/OS are Linux-first; a dedicated OID model may be served
+  by Marina but must never bypass OID policy, approval, evidence, or skills.
 
 ## Working rules
 

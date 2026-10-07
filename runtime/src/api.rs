@@ -86,6 +86,11 @@ pub trait RuntimeService: Send + Sync {
     ) -> Result<GenerationStream, oid_shared::RuntimeError>;
     /// Cancel the active generation, if one exists.
     fn cancel_generation(&self);
+    /// Cancel a specific generation by its request identifier.
+    fn cancel_generation_for(&self, request_id: &str) {
+        let _ = request_id;
+        self.cancel_generation();
+    }
     /// Return normalized hardware information.
     fn hardware(&self) -> HardwareSnapshot;
     /// Return an event publisher handle.

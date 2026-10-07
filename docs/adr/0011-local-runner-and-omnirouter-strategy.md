@@ -6,17 +6,20 @@
 
 ## Decision
 
-OID will provide an Ollama-like local runner experience through an OID-owned,
-versioned runtime API. OID will not embed Ollama as its control-plane
-abstraction. A later router will select among backend adapters using declared
-capabilities, model identity, policy, health, resource fit, and caller
-preferences.
+Marina will provide an Ollama-like local runner experience through an
+OID-owned, versioned runtime API and will be usable as a standalone service.
+OID will not embed Ollama as its control-plane abstraction; OID and external AI
+assistants consume Marina as clients. A router will select among local and
+remote backend adapters using declared capabilities, model identity, policy,
+health, resource fit, cost, latency, quotas, and caller preferences.
 
 ```text
-OID client -> Runtime API -> policy/admission -> Router -> Backend adapter
-                                      |              |-> llama.cpp (local first)
-                                      |              |-> Ollama-compatible edge
-                                      |              `-> OpenAI-compatible edge
+OID / assistant / system client
+            -> Marina API edge
+            -> policy/admission -> Router -> Backend adapter
+                                      |       |-> llama.cpp (local first)
+                                      |       |-> Ollama / Docker Model Runner edge
+                                      |       `-> OpenAI-compatible remote edge
                                       `-> auditable decision/evidence
 ```
 
@@ -27,14 +30,23 @@ RAG, and autonomous agent loops are separate capabilities.
 ## Required capabilities
 
 - Stable model manifests and verified artifact/cache state.
-- Load/unload/list/inspect, streaming generation, cancellation, health, and
-  request metrics with stable IDs.
+- Load/unload/list/inspect/pull/copy/delete, streaming generation, chat,
+  cancellation, health, and request metrics with stable IDs.
+- Model templates/parameters, keep-alive, structured output, tool-call
+  proposals, embeddings, and multimodal inputs when an adapter declares them.
+- Standalone service installation and lifecycle management on Linux, macOS,
+  and Windows.
+- OpenAI-compatible and Ollama-compatible API edges, with explicit capability
+  gaps and stable error mapping.
 - Capability negotiation for context size, streaming, structured output,
   embeddings, tool calls, and modality support.
 - Admission checks for authorization, model trust, context, memory, device,
   concurrency, and quotas.
 - Explainable routing with candidates, rejection reasons, fallback status, and
-  policy/version identifiers.
+  policy/version identifiers, cost/latency estimates, quota state, and circuit
+  breaker state.
+- Provider credentials, aliases, retries, fallbacks, rate limits, and local /
+  offline routing policies without leaking credentials to clients.
 - Failure isolation and recovery for crashes, disconnects, timeouts,
   cancellation, and partial streams.
 - Compatibility adapters at the edge; provider-native types never enter the
@@ -68,4 +80,4 @@ The initial one-model constraint remains intentional until admission and
 scheduling are real.
 
 This ADR is a target decision, not a claim that all capabilities are complete.
-WP-0057 through WP-0063 provide the implementation and validation sequence.
+WP-0057 through WP-0068 provide the implementation and validation sequence.

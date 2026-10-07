@@ -51,6 +51,41 @@ Goal: broaden integration without weakening the common boundary.
 
 Exit criteria: at least two backend classes can implement the same caller workflow, and extension/compatibility behavior is versioned and documented.
 
+## v0.4 — Standalone cross-platform Marina service
+
+Goal: ship Marina as an independently installable service that works on Linux,
+macOS, and Windows and can be consumed by OID, AI assistants, and other
+applications.
+
+- Deliver user/system installers and architecture-aware variants (WP-0065).
+- Provide portable local service transports and a documented API (WP-0066).
+- Add a loopback-first assistant/OpenAI-compatible streaming edge (WP-0067).
+- Integrate OID through the public API, preserving policy and evidence (WP-0068).
+- Stabilize the canonical AI capability/provider contract and conformance suite
+  (WP-0070).
+- Add runtime security, resource isolation, crash recovery, and provider/model
+  provenance controls (WP-0071).
+
+Exit criteria: a clean machine can install Marina without OID, a non-OID
+assistant can make a streaming request, and OID can use the same service
+without reading model files or constructing backend handles. Cross-platform
+user installation and standalone service behavior must be stable before distro
+packaging begins.
+
+## v0.5 — Linux distro delivery
+
+Goal: finish Marina as a distro-quality Linux product after the portable
+runner, service, API, router, and isolation contracts are stable.
+
+- Ship Debian/Ubuntu and Fedora/RHEL packages with architecture variants
+  (WP-0069).
+- Add systemd user/system units, FHS paths, secure IPC, migration, rollback,
+  uninstall/purge, and offline installation.
+- Validate clean installs and upgrades on the supported distro matrix.
+
+Exit criteria: Linux package and service checks pass in both user and system
+installation modes without a development checkout or OID dependency.
+
 ## v1.0 — Production-grade runtime service
 
 Goal: provide a stable, secure, and operable model resource service.
@@ -62,3 +97,45 @@ Goal: provide a stable, secure, and operable model resource service.
 - Define OIP integration contracts without coupling the runtime to OIP deployments.
 
 Exit criteria: production readiness review passes for security, reliability, observability, API compatibility, and documented backend support.
+
+## v1.x — AI desktop/OS agency
+
+Goal: make OID the governed control plane users can prompt to operate and
+maintain the computer.
+
+- Build the desktop/system context graph and privacy/freshness controls.
+- Add typed desktop, filesystem, process, package, service, device, and
+  diagnostics skills.
+- Add risk-aware approvals, privilege brokering, bounded execution,
+  verification, rollback, and recovery.
+- Add policy-approved self-maintenance, notifications, evidence views, and
+  safety/task evaluations (WP-0072).
+
+Exit criteria: supported computer tasks produce inspectable plans, execute only
+within explicit authority, verify their outcomes, and recover safely when a
+step fails or the model is unavailable.
+
+## Parallel product track — OID OS-management model
+
+This track develops the specialized model that powers OID agency. It may begin
+with a specialized checkpoint or fine-tune while the runner and desktop
+control plane mature; a new base model is a separate research decision.
+
+- Define governed context, plan, tool-proposal, approval, verification, and
+  recovery datasets.
+- Establish reproducible training/fine-tuning, provenance, licensing, and
+  model-card workflows.
+- Evaluate safe action, refusal, approval compliance, recovery, latency,
+  memory, and offline behavior.
+- Publish the selected model as a Marina-served manifest and variant (WP-0073).
+
+Exit criteria: the model emits validated typed proposals, survives adversarial
+evaluation without bypassing OID authority, and can be served by Marina as a
+versioned, rollback-compatible model.
+
+## Linux product track — Rust CA-Clipper subsystem
+
+The legacy CA-Clipper archive is a separate Linux product input, not a Marina
+backend. WP-0074 first inventories and legally clears the archive, then builds
+a Rust/Linux vertical slice, data compatibility layer, and governed OID
+integration before adding it to distro packaging.

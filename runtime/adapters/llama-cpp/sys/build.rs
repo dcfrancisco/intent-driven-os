@@ -9,7 +9,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_REQUIRED");
 
     let configured_dir = env::var_os("LLAMA_CPP_LIB_DIR").map(PathBuf::from);
-    let default_dir = env::var_os("HOME").map(|home| PathBuf::from(home).join(".marina/models"));
+    let default_dir = env::var_os("HOME").map(|home| PathBuf::from(home).join(".marina/lib"));
     let Some(lib_dir) = configured_dir.or(default_dir) else {
         assert!(
             env::var_os("LLAMA_CPP_REQUIRED").is_none(),
@@ -39,5 +39,13 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib={library_name}");
+    // Release packages place native libraries next to the executable's
+    // parent `lib` directory. Keep the binary relocatable inside the Marina
+    // user prefix instead of requiring LD_LIBRARY_PATH/DYLD_LIBRARY_PATH.
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/../lib");
+    } else if cfg!(unix) {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+    }
     println!("cargo:rustc-cfg=native_llama_cpp");
 }

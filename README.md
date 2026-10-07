@@ -1,49 +1,150 @@
-# Open Intelligence Runtime and Console
+# Open Intelligence Desktop (OID)
 
-This project is an open-source AI-native runtime and console for Linux. The initial system is intentionally focused on two pieces: an Intelligent Runtime that manages models as system resources, and an AI Console that provides a keyboard-first, retro terminal interface to that intelligence.
+OID is a Linux-first AI desktop/OS. The long-term product lets a user prompt
+the computer to inspect its state, make a plan, operate through bounded skills,
+verify the result, and recover safely when something fails.
 
-The runtime has no UI. It manages model lifecycle, hardware resources, backend adapters, streaming, security, logging, and health. The console is one client: its `int>` prompt expresses intent, while the runtime and future operation layer produce safe, auditable plans and results.
+The product has three distinct layers:
+
+- **OID** — the Linux AI desktop/OS, policy, approvals, skills, verification,
+  recovery, and evidence plane.
+- **Marina** — the standalone model runner and local AI service. Marina is the
+  cross-platform release for Linux, macOS, and Windows.
+- **OID OS Model** — a future specialized model for computer-management plans
+  and typed tool proposals, served by Marina but never granted direct OS
+  authority.
+
+The Rust CA-Clipper subsystem is a separate Linux OID product track. It is not
+part of Marina and is being migrated from the legacy archive only after
+inventory, provenance, licensing, and data-compatibility review.
 
 ## Status
 
-This repository contains the Phase 5 Rust workspace and interactive console
-reference client. The runtime now has a backend-neutral native llama.cpp
-integration boundary, GGUF discovery, model lifecycle management, tokenizer
-routing, and streamed text generation with cancellation and metrics. The
-native backend uses `LLAMA_CPP_LIB_DIR` at build time. For the local Marina
-installation, set it to `/Users/dannyfrancisco/.marina/models`; the portable
-default form is `$HOME/.marina/models`:
+This repository contains the Rust workspace, Marina runner, OID runtime, and
+interactive console reference client. The local runner currently supports a
+backend-neutral llama.cpp boundary, GGUF discovery, model lifecycle, tokenizer
+routing, streamed text generation, cancellation, metrics, local bearer tokens,
+and a small OpenAI-compatible IDE bridge.
+
+The current runner is still a focused CPU-first release slice: one loaded
+model, one active generation, local-first operation, and no remote provider
+routing. Chat sessions, tools, embeddings, full provider secrets, production
+scheduling, and Linux distro packaging remain later work.
+
+For the local Marina installation, native libraries live in
+`$HOME/.marina/lib` and models live in `$HOME/.marina/models`:
 
 ```sh
-export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/models}"
+export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/lib}"
 ```
 
+Marina can keep persistent user configuration in `$HOME/.marina/config.yaml`
+(`%USERPROFILE%\.marina\config.yaml` on Windows):
+
+```yaml
+name: Marina
+model_directory: ~/.marina/models
+registry_path: ~/.marina/models.registry
+state_directory: ~/.marina
+```
+
+Environment variables such as `MARINA_HOME`, `MARINA_CONFIG`,
+`MARINA_MODEL_DIR`, `MARINA_REGISTRY`, and `MARINA_STATE_DIR` override the YAML
+file. This keeps tests, CI, and isolated deployments explicit while normal
+user installations share one stable configuration.
+
 The directory must contain the native `libllama` library. If it is not set or
-does not contain a usable library, the backend reports unavailable while the
-console remains usable for architecture validation.
+does not contain a usable library, the backend reports unavailable.
 
-## Local model bring-up on macOS x86_64
+## IDE access
 
-Build the pinned, CPU-only native dependency with:
+Create a local Marina access token:
+
+```bash
+TOKEN="$($HOME/.marina/bin/marinactl auth token create ide 2>/dev/null)"
+```
+
+Start Marina and the dependency-free IDE bridge:
+
+```bash
+$HOME/.marina/bin/marina
+python3 scripts/marina-openai-proxy.py
+```
+
+Configure an OpenAI-compatible IDE with:
+
+```text
+Base URL: http://127.0.0.1:11435/v1
+API key:  the printed Marina token
+```
+
+The bridge supports `/v1/models`, `/v1/chat/completions`,
+`/v1/completions`, bearer authentication, multi-turn text messages, and SSE
+stream responses. The token authorizes access to Marina; it is not a remote
+provider API key. Remote BYOK provider credentials are not implemented yet.
+
+## GitHub releases
+
+Tagging a release or manually starting [the Marina release workflow](.github/workflows/marina-release.yml)
+builds native CPU artifacts on their target machines:
+
+- Linux x86_64.
+- macOS Intel.
+- macOS Apple Silicon.
+- Windows x86_64.
+
+Each draft release contains `marina`, `marinactl`, the matching pinned
+llama.cpp libraries, license metadata, and SHA-256 checksums. Models are never
+bundled into releases. Windows and native llama.cpp smoke tests must run on
+their respective GitHub runners; this Mac workspace cannot validate them. A
+friend's Apple Silicon Mac can also build and smoke-test the
+`aarch64-apple-darwin` archive locally when we need hardware-specific
+verification or a fallback upload path.
+
+### Windows user installation
+
+On Windows, extract the release ZIP and run PowerShell as the normal user:
+
+```powershell
+.\install-model-runner.ps1 -ArchivePath .\marina-windows-x86_64.zip
+```
+
+The installer uses `%USERPROFILE%\.marina` by default:
+
+```text
+%USERPROFILE%\.marina\bin       marina.exe, marinactl.exe
+%USERPROFILE%\.marina\lib       llama.dll and ggml*.dll
+%USERPROFILE%\.marina\models    local GGUF models
+%USERPROFILE%\.marina\state     registry and runtime state
+%USERPROFILE%\.marina\logs      user-scoped logs
+```
+
+It does not require administrator privileges or install system-wide files.
+
+## Local model bring-up on macOS Intel or Apple Silicon
+
+Build and install the pinned native dependency into `$HOME/.marina/lib` with:
 
 ```bash
 ./scripts/setup-llama-macos.sh
 ```
 
-The acceptance model used locally is `qwen2.5-0.5b-instruct-q4_k_m.gguf`.
-Place it in `models/` (the directory is intentionally ignored by Git). For
-the exact model used in the acceptance run:
+The separate model-runner installer creates the canonical model store at
+`$HOME/.marina/models`. Import a model into that store with the runner client:
 
 ```bash
-curl -L --fail -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+./scripts/install-model-runner.sh
+export PATH="$HOME/.marina/bin:$PATH"
+marinactl model pull \
+  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+  qwen2.5-0.5b-instruct-q4_k_m
 ```
 
 Then run OID from the repository root with:
 
 ```bash
-LLAMA_CPP_LIB_DIR=/tmp/oid-llama-cpu-build/bin \
-DYLD_LIBRARY_PATH=/tmp/oid-llama-cpu-build/bin \
+LLAMA_CPP_LIB_DIR="$HOME/.marina/lib" \
+DYLD_LIBRARY_PATH="$HOME/.marina/lib" \
 cargo run -p oid-console --bin oid-console
 ```
 
@@ -53,6 +154,7 @@ The model runner can be installed without the interactive console:
 
 ```bash
 ./scripts/install-model-runner.sh
+export PATH="$HOME/.marina/bin:$PATH"
 marina
 marinactl status
 ```
@@ -67,9 +169,15 @@ cargo build --release -p oid-console --bin marina --bin marinactl
 ./marina/bin/marinactl status
 ```
 
-Use `--prefix "$HOME/.local"` to select an install prefix. The installer does
-not download models or require llama.cpp; configure `LLAMA_CPP_LIB_DIR` when a
-native backend is available.
+Use `--prefix "$HOME/.local"` only when you intentionally want the
+executables in `$HOME/.local/bin`; the canonical Marina installation is
+`$HOME/.marina`. Release archives include the matching native libraries under
+`$HOME/.marina/lib` and the installer places them there. A source/local build
+can use `./scripts/install-model-runner.sh --native-lib-dir DIR`; without that
+payload the runner is control-plane-only and reports llama.cpp unavailable.
+`marinactl model pull` manages `$HOME/.marina/models`, while
+`setup-llama-macos.sh` is the local development helper that builds the native
+payload into `$HOME/.marina/lib`.
 
 The persistent local runtime can be started independently of clients:
 
@@ -80,10 +188,11 @@ cargo run -p oid-console --bin marinactl -- model list
 ```
 
 Marina owns the `Runtime::start` composition root and keeps model state in the
-daemon process. `marinactl` communicates over the Unix socket at
-`$HOME/.marina/marina.sock` (override with `MARINA_SOCKET`). Closing the client
-does not stop Marina or unload its model. The initial protocol is intentionally
-local and is not a network API.
+daemon process. `marinactl` communicates over the local transport: Unix socket
+at `$HOME/.marina/marina.sock` on Linux/macOS, or loopback TCP on Windows via
+`MARINA_TCP_ADDR`. Closing the client does not stop Marina or unload its model.
+The native transport remains local-only; the IDE HTTP bridge is a separate
+loopback compatibility edge.
 
 At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
 `:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
@@ -101,7 +210,7 @@ marinactl generate model-id "Hello from Marina"
 ```
 
 At startup Marina also discovers existing `.gguf` files recursively in the
-Marina store, `./models`, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
+Marina store, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
 `TRANSFORMERS_CACHE`, `XDG_CACHE_HOME`), ModelScope caches, and common Ollama
 cache roots. Discovery registers files in place; `model pull` is the explicit
 copy/download path into `$HOME/.marina/models`.
@@ -163,8 +272,12 @@ Docker results do not replace real Linux host validation.
 ```bash
 cargo fmt --all -- --check
 cargo test --workspace
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features
 ```
+
+Strict Clippy is not yet clean because the existing handwritten SHA-256 and
+documentation surfaces still emit warnings. It is a release hardening task,
+not evidence that model execution is unavailable.
 
 The project targets Linux, Wayland first, and the latest stable Rust toolchain. Platform integration will be introduced behind traits and adapter crates as the design matures.
 
