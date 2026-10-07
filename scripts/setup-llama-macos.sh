@@ -68,9 +68,13 @@ fi
 "$cmake_command" --build "$LLAMA_CPP_BUILD" --target llama -j2
 
 mkdir -p "$LLAMA_CPP_INSTALL_DIR"
-find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 -type f \
+# Preserve CMake's versioned-library symlinks (libllama.dylib -> ...). The
+# unversioned linker name is required both when Cargo links Marina and when
+# the dynamic loader resolves the packaged library graph at runtime.
+find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
+  \( -type f -o -type l \) \
   \( -name '*.dylib' -o -name '*.so' -o -name '*.so.*' \) \
-  -exec cp -f {} "$LLAMA_CPP_INSTALL_DIR" \;
+  -exec cp -a {} "$LLAMA_CPP_INSTALL_DIR" \;
 
 echo
 echo "OID native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"

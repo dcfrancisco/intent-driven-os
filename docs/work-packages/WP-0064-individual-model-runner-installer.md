@@ -34,5 +34,7 @@ WP-RUNTIME-002, WP-0059, WP-0062; ADR-0010, ADR-0011, ADR-0012.
 
 The Unix installer accepts `--native-lib-dir` and installs the native payload
 under the same user prefix as the binaries. The Windows installer requires
-`lib/` in the release archive and prepares the DLL loader layout. Package
+`lib/` in the release archive and prepares the DLL loader layout. Local macOS
+x86_64 acceptance is verified from `/Users/dannyfrancisco/.marina/bin` using
+`/Users/dannyfrancisco/.marina/lib` and the existing Qwen GGUF. Package
 upgrade/uninstall lifecycle and distro-native packages remain open.

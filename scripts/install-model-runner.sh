@@ -41,7 +41,14 @@ cargo install --path "$ROOT/console" --root "$PREFIX" --locked --force \
 if [[ -n "$NATIVE_LIB_DIR" ]]; then
   [[ -d "$NATIVE_LIB_DIR" ]] || { echo "native library directory not found: $NATIVE_LIB_DIR" >&2; exit 1; }
   mkdir -p "$PREFIX/lib"
-  find "$NATIVE_LIB_DIR" -maxdepth 1 -type f \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'llama.dll' -o -name 'ggml*.dll' \) -exec cp -f {} "$PREFIX/lib/" \;
+  native_source_dir="$(cd "$NATIVE_LIB_DIR" && pwd)"
+  native_target_dir="$(cd "$PREFIX/lib" && pwd)"
+  if [[ "$native_source_dir" != "$native_target_dir" ]]; then
+    find "$NATIVE_LIB_DIR" -maxdepth 1 \
+      \( -type f -o -type l \) \
+      \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'llama.dll' -o -name 'ggml*.dll' \) \
+      -exec cp -a {} "$PREFIX/lib/" \;
+  fi
 fi
 
 STATE_DIR="${MARINA_STATE_DIR:-${HOME}/.marina}"

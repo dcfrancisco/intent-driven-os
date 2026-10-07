@@ -90,7 +90,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p "$RUNNER_TEMP/marina/lib"
-          find "$RUNNER_TEMP/llama-build" -type f \( -name 'libllama.*' -o -name 'libggml*.*' \) -exec cp {} "$RUNNER_TEMP/marina/lib" \;
+          find "$RUNNER_TEMP/llama-build" \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' \) -exec cp -a {} "$RUNNER_TEMP/marina/lib" \;
           test -n "$(find "$RUNNER_TEMP/marina/lib" -maxdepth 1 -type f -name 'libllama.*' -print -quit)"
       - name: Collect native libraries (Windows)
         if: runner.os == 'Windows'

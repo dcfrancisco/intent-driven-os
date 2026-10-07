@@ -28,5 +28,8 @@ WP-0022, WP-0027, WP-0031, WP-0032, WP-0034, WP-0035; ADR-0010, ADR-0011.
 
 The first executable slice is implemented: stable runtime request IDs, one
 active model/generation invariants, streaming terminal events, native-backed
-cooperative cancellation, and generation statistics. The remaining acceptance
-gap is native Linux/macOS/Windows smoke evidence and resource/context admission.
+cooperative cancellation, and generation statistics. Native macOS x86_64 smoke
+evidence is now present: the pinned llama.cpp library was built into the
+user-scoped Marina `lib/` directory, a Qwen GGUF was loaded through the daemon,
+and a streamed generation completed. Linux, Windows, Apple Silicon, and
+resource/context admission remain open evidence.
