@@ -1,6 +1,12 @@
 # Rust build artifacts
 target/
+marina/bin/
 models/
+/.marina/
+*.gguf
+*.safetensors
+*.safetensors.index.json
+*.bin
 *.profraw
 *.profdata
 
@@ -10,6 +16,21 @@ coverage/
 
 # Generated logs and local runtime output
 *.log
+scripts/__pycache__/
+*.py[cod]
+
+# Marina local runtime state, credentials, sockets, and registries
+marina.sock
+*.sock
+tokens
+*.registry
+runtime-state/
+state/
+logs/
+
+# Locally built native model backends
+libllama.*
+llama.cpp/build/
 
 # Local editor and operating-system files
 .DS_Store

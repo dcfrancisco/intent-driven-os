@@ -1,0 +1,147 @@
+name: Marina release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
+
+jobs:
+  check:
+    name: Workspace checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
+      - name: Check
+        run: cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: marina-linux-x86_64.tar.gz
+            shell: bash
+          - name: macos-intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: marina-macos-intel.tar.gz
+            shell: bash
+          - name: macos-apple-silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+            archive: marina-macos-apple-silicon.tar.gz
+            shell: bash
+          - name: windows-x86_64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            archive: marina-windows-x86_64.zip
+            shell: pwsh
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
+          targets: ${{ matrix.target }}
+      - uses: lukka/get-cmake@latest
+      - name: Checkout llama.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
+          git -C "$RUNNER_TEMP/llama.cpp" fetch --depth 1 origin "$env:LLAMA_CPP_COMMIT"
+          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach "$env:LLAMA_CPP_COMMIT"
+        if: runner.os == 'Windows'
+      - name: Checkout llama.cpp (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
+          git -C "$RUNNER_TEMP/llama.cpp" fetch --depth 1 origin "$LLAMA_CPP_COMMIT"
+          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach "$LLAMA_CPP_COMMIT"
+      - name: Configure llama.cpp
+        run: >-
+          cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama-build"
+          -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+          -DGGML_BLAS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
+          -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Build llama.cpp
+        run: cmake --build "$RUNNER_TEMP/llama-build" --config Release --target llama --parallel 2
+      - name: Collect native libraries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "$RUNNER_TEMP/marina/lib"
+          find "$RUNNER_TEMP/llama-build" \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' \) -exec cp -a {} "$RUNNER_TEMP/marina/lib" \;
+          test -n "$(find "$RUNNER_TEMP/marina/lib" -maxdepth 1 -type f -name 'libllama.*' -print -quit)"
+      - name: Collect native libraries (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/marina/lib" | Out-Null
+          Get-ChildItem -Path "$env:RUNNER_TEMP/llama-build" -Recurse -File -Include llama.lib,ggml*.lib,llama.dll,ggml*.dll | Copy-Item -Destination "$env:RUNNER_TEMP/marina/lib"
+          if (-not (Get-ChildItem -Path "$env:RUNNER_TEMP/marina/lib" -Filter "llama.dll" -File)) { throw "llama.dll was not produced" }
+      - name: Build Marina (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/marina/lib" LLAMA_CPP_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/marina" --locked --force --bin marina --bin marinactl
+      - name: Build Marina (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $env:LLAMA_CPP_LIB_DIR = "$env:RUNNER_TEMP/marina/lib"
+          $env:LLAMA_CPP_REQUIRED = "1"
+          cargo install --path console --root "$env:RUNNER_TEMP/marina" --locked --force --bin marina --bin marinactl
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        run: |
+          cp scripts/install-model-runner.sh "$RUNNER_TEMP/marina/"
+          cp LICENSE "$RUNNER_TEMP/marina/" 2>/dev/null || true
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/${{ matrix.archive }}" marina
+          shasum -a 256 "$RUNNER_TEMP/${{ matrix.archive }}" > "$RUNNER_TEMP/${{ matrix.archive }}.sha256"
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: |
+          Get-ChildItem -Path "$env:RUNNER_TEMP/marina/lib" -Filter "*.dll" -File | Copy-Item -Destination "$env:RUNNER_TEMP/marina/bin" -Force
+          if (Test-Path LICENSE) { Copy-Item LICENSE "$env:RUNNER_TEMP/marina/" }
+          Copy-Item scripts/install-model-runner.ps1 "$env:RUNNER_TEMP/marina/"
+          Compress-Archive -Path "$env:RUNNER_TEMP/marina/*" -DestinationPath "$env:RUNNER_TEMP/${{ matrix.archive }}"
+          (Get-FileHash "$env:RUNNER_TEMP/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.archive }}" | Out-File "$env:RUNNER_TEMP/${{ matrix.archive }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.archive }}
+            ${{ runner.temp }}/${{ matrix.archive }}.sha256
+
+  release:
+    name: Draft GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: artifacts/**/*

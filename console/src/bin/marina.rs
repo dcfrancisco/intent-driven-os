@@ -10,9 +10,11 @@ use oid_runtime::{config, logging, Runtime, RuntimeService};
 use oid_runtime::{GenerationMessage, GenerationRequest};
 use oid_shared::RuntimeEvent;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+
+static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn main() {
     if let Err(error) = run() {
@@ -22,17 +24,17 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|argument| argument == "--version" || argument == "-V") {
+        println!("marina {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let _ = logging::initialize();
     ipc::ensure_socket_parent()?;
-    let socket = ipc::socket_path();
-    if socket.exists() {
-        std::fs::remove_file(&socket)?;
-    }
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
-    let listener = UnixListener::bind(&socket)?;
-    eprintln!("Marina listening on {}", socket.display());
+    let listener = ipc::bind_listener()?;
+    eprintln!("Marina listening on {}", ipc::endpoint());
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
@@ -49,7 +51,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle(mut stream: UnixStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
+fn handle(mut stream: ipc::MarinaStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
     let mut request = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
     let fields: Vec<_> = request.trim_end().split('\t').collect();
@@ -76,21 +78,62 @@ fn handle(mut stream: UnixStream, runtime: &dyn RuntimeService) -> std::io::Resu
             }
             writeln!(stream, "END")?;
         }
+        "model_pull" if (2..=4).contains(&fields.len()) => {
+            let source = ipc::decode_field(fields[1]);
+            let model_id = fields
+                .get(2)
+                .filter(|value| !value.is_empty())
+                .map(|value| ipc::decode_field(value));
+            let checksum = fields
+                .get(3)
+                .filter(|value| !value.is_empty())
+                .map(|value| ipc::decode_field(value));
+            match runtime.model_pull(&source, model_id.as_deref(), checksum.as_deref()) {
+                Ok(model) => {
+                    writeln!(
+                        stream,
+                        "OK\tmodel_pull\t{}\t{}\t{:?}\t{}\t{}",
+                        ipc::encode_field(&model.id),
+                        ipc::encode_field(&model.name),
+                        model.status,
+                        ipc::encode_field(&model.location),
+                        ipc::encode_field(model.checksum.as_deref().unwrap_or_default())
+                    )?;
+                }
+                Err(error) => {
+                    writeln!(
+                        stream,
+                        "ERROR\tmodel_pull\t{}",
+                        ipc::encode_field(&error.to_string())
+                    )?;
+                }
+            }
+        }
         "model_load" if fields.len() == 2 => {
             respond_result(&mut stream, runtime.model_load(fields[1]))?;
         }
         "model_unload" if fields.len() == 2 => {
             respond_result(&mut stream, runtime.model_unload(fields[1]))?;
         }
-        "cancel" => {
-            runtime.cancel_generation();
+        "cancel" if fields.len() == 2 => {
+            runtime.cancel_generation_for(&ipc::decode_field(fields[1]));
             writeln!(stream, "OK cancelled")?;
         }
         "generate" if fields.len() >= 3 => {
             let request = GenerationRequest {
-                request_id: format!("ipc-{}", std::process::id()),
+                request_id: fields
+                    .get(3)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| ipc::decode_field(value))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "ipc-{}-{}",
+                            std::process::id(),
+                            REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+                        )
+                    }),
                 model_id: fields[1].to_owned(),
-                prompt: ipc::decode_field(&fields[3..].join("\t")),
+                prompt: ipc::decode_field(&fields[4..].join("\t")),
                 options: oid_runtime::GenerationOptions {
                     max_tokens: fields[2].parse().unwrap_or(128),
                     ..Default::default()
@@ -135,7 +178,7 @@ fn handle(mut stream: UnixStream, runtime: &dyn RuntimeService) -> std::io::Resu
 }
 
 fn respond_result(
-    stream: &mut UnixStream,
+    stream: &mut ipc::MarinaStream,
     result: Result<(), oid_shared::RuntimeError>,
 ) -> std::io::Result<()> {
     match result {

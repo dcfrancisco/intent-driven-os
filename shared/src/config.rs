@@ -7,6 +7,10 @@ pub struct RuntimeConfig {
     pub name: String,
     /// Public runtime version.
     pub version: String,
+    /// Optional persistent model directory. `None` keeps in-memory/test mode.
+    pub model_directory: Option<std::path::PathBuf>,
+    /// Optional persistent model registry file. `None` keeps in-memory/test mode.
+    pub registry_path: Option<std::path::PathBuf>,
 }
 
 impl Default for RuntimeConfig {
@@ -14,6 +18,8 @@ impl Default for RuntimeConfig {
         Self {
             name: "Marina".to_owned(),
             version: "v0.1".to_owned(),
+            model_directory: None,
+            registry_path: None,
         }
     }
 }

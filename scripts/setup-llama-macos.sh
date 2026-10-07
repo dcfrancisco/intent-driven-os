@@ -6,12 +6,39 @@ set -euo pipefail
 # library directory needs to be supplied to Cargo.
 LLAMA_CPP_ROOT="${LLAMA_CPP_ROOT:-${TMPDIR:-/tmp}/oid-llama.cpp}"
 LLAMA_CPP_BUILD="${LLAMA_CPP_BUILD:-${TMPDIR:-/tmp}/oid-llama-cpu-build}"
+LLAMA_CPP_INSTALL_DIR="${LLAMA_CPP_INSTALL_DIR:-${HOME}/.marina/lib}"
 LLAMA_CPP_REPOSITORY="${LLAMA_CPP_REPOSITORY:-https://github.com/ggml-org/llama.cpp.git}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-18443257a30c884d5332abb8e7dc43c7ffe42fda}"
 
-if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "x86_64" ]]; then
-  echo "This bring-up script targets macOS x86_64." >&2
-  exit 1
+OS_NAME="$(uname -s)"
+MACHINE_ARCH="$(uname -m)"
+ACCELERATOR="${OID_LLAMA_ACCELERATOR:-auto}"
+case "$OS_NAME:$MACHINE_ARCH" in
+  Darwin:arm64|Darwin:aarch64)
+    DEFAULT_ACCELERATOR=metal
+    ;;
+  Darwin:x86_64)
+    DEFAULT_ACCELERATOR=cpu
+    ;;
+  *)
+    echo "This script supports macOS only; detected $OS_NAME/$MACHINE_ARCH." >&2
+    echo "Use the same CMake options with a Linux or Windows build toolchain." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$ACCELERATOR" == auto ]]; then
+  ACCELERATOR="$DEFAULT_ACCELERATOR"
+fi
+case "$ACCELERATOR" in
+  cpu|metal) ;;
+  *) echo "OID_LLAMA_ACCELERATOR must be auto, cpu, or metal." >&2; exit 2 ;;
+esac
+
+GGML_NATIVE=ON
+GGML_METAL=OFF
+if [[ "$ACCELERATOR" == metal ]]; then
+  GGML_METAL=ON
 fi
 
 if [[ ! -d "$LLAMA_CPP_ROOT/.git" ]]; then
@@ -30,11 +57,9 @@ if [[ -z "$cmake_command" ]]; then
 fi
 
 "$cmake_command" -S "$LLAMA_CPP_ROOT" -B "$LLAMA_CPP_BUILD" \
-  -DGGML_NATIVE=OFF \
-  -DGGML_AVX=ON \
-  -DGGML_AVX2=OFF \
+  -DGGML_NATIVE="$GGML_NATIVE" \
   -DGGML_OPENMP=OFF \
-  -DGGML_METAL=OFF \
+  -DGGML_METAL="$GGML_METAL" \
   -DGGML_BLAS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=OFF \
@@ -42,6 +67,17 @@ fi
   -DCMAKE_BUILD_TYPE=Release
 "$cmake_command" --build "$LLAMA_CPP_BUILD" --target llama -j2
 
+mkdir -p "$LLAMA_CPP_INSTALL_DIR"
+# Preserve CMake's versioned-library symlinks (libllama.dylib -> ...). The
+# unversioned linker name is required both when Cargo links Marina and when
+# the dynamic loader resolves the packaged library graph at runtime.
+find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
+  \( -type f -o -type l \) \
+  \( -name '*.dylib' -o -name '*.so' -o -name '*.so.*' \) \
+  -exec cp -a {} "$LLAMA_CPP_INSTALL_DIR" \;
+
 echo
-echo "OID native llama.cpp is ready. Build/run OID with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_BUILD/bin LLAMA_CPP_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_BUILD/bin cargo run --release"
+echo "OID native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"
+echo "$LLAMA_CPP_INSTALL_DIR"
+echo "Build/run OID with:"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo run --release"

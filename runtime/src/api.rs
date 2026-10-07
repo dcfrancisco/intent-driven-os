@@ -50,6 +50,13 @@ pub trait RuntimeService: Send + Sync {
     fn model_list(&self) -> Vec<ModelMetadata>;
     /// Inspect model metadata by identifier.
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata>;
+    /// Pull or import a local/remote GGUF artifact and register it.
+    fn model_pull(
+        &self,
+        source: &str,
+        model_id: Option<&str>,
+        checksum: Option<&str>,
+    ) -> Result<ModelMetadata, oid_shared::RuntimeError>;
     /// Load a registered model through the active backend.
     ///
     /// # Errors
@@ -79,6 +86,11 @@ pub trait RuntimeService: Send + Sync {
     ) -> Result<GenerationStream, oid_shared::RuntimeError>;
     /// Cancel the active generation, if one exists.
     fn cancel_generation(&self);
+    /// Cancel a specific generation by its request identifier.
+    fn cancel_generation_for(&self, request_id: &str) {
+        let _ = request_id;
+        self.cancel_generation();
+    }
     /// Return normalized hardware information.
     fn hardware(&self) -> HardwareSnapshot;
     /// Return an event publisher handle.

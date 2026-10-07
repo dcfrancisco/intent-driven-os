@@ -3,7 +3,7 @@
 use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
     hardware::{HardwareService, HardwareSnapshot},
-    models::{ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
+    models::{ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
     LlamaCppAdapter, RuntimeApi, RuntimeConfig, RuntimeError, RuntimeService, RuntimeSnapshot,
     RuntimeStatus,
@@ -24,7 +24,7 @@ pub struct MarinaRuntime {
     hardware: HardwareService,
     started_at: Instant,
     loaded: Arc<Mutex<Option<LoadedModel>>>,
-    active_generation: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    active_generation: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
 }
 
 impl MarinaRuntime {
@@ -36,8 +36,18 @@ impl MarinaRuntime {
         let _ = backends.register(Box::new(llama));
         let _ = backends.enable("llama.cpp");
         let hardware = HardwareService::detect(&bus);
-        let models = ModelRegistry::in_memory(bus.clone());
-        let discovery = ModelDiscovery::new(ModelDiscovery::default_directories());
+        let models = config
+            .registry_path
+            .as_ref()
+            .and_then(|path| ModelRegistry::open(path, bus.clone()).ok())
+            .unwrap_or_else(|| ModelRegistry::in_memory(bus.clone()));
+        let discovery_directories = config
+            .model_directory
+            .clone()
+            .map_or_else(ModelDiscovery::default_directories, |directory| {
+                vec![directory]
+            });
+        let discovery = ModelDiscovery::new(discovery_directories);
         let _ = discovery.discover(&models, "llama.cpp");
         bus.publish(&RuntimeEvent::RuntimeStarted);
         bus.publish(&RuntimeEvent::HealthUpdated("Healthy".to_owned()));
@@ -131,16 +141,46 @@ impl RuntimeService for MarinaRuntime {
         self.models.inspect(id)
     }
 
+    fn model_pull(
+        &self,
+        source: &str,
+        model_id: Option<&str>,
+        checksum: Option<&str>,
+    ) -> Result<ModelMetadata, RuntimeError> {
+        let directory = self
+            .config
+            .model_directory
+            .clone()
+            .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .map(|home| home.join(".marina/models"))
+            })
+            .unwrap_or_else(|| {
+                crate::config::home_directory()
+                    .map(|home| home.join(".marina/models"))
+                    .unwrap_or_else(|| std::path::PathBuf::from(".marina/models"))
+            });
+        let model = ModelAcquirer::acquire(source, &directory, model_id, checksum)?;
+        self.models.register(model.clone())?;
+        Ok(model)
+    }
+
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
-        if self
+        if let Some(loaded) = self
             .loaded
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-            .is_some()
+            .as_ref()
         {
-            return Err(RuntimeError::ModelLifecycle(
-                "only one model may be loaded".to_owned(),
-            ));
+            if loaded.model_id == id {
+                return Ok(());
+            }
+            return Err(RuntimeError::ModelLifecycle(format!(
+                "model {} is already loaded",
+                loaded.model_id
+            )));
         }
         let model = self
             .models
@@ -200,13 +240,24 @@ impl RuntimeService for MarinaRuntime {
                 "load a model before generating".to_owned(),
             ));
         }
+        if self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .as_ref()
+            .is_some_and(|loaded| loaded.model_id != request.model_id)
+        {
+            return Err(RuntimeError::ModelLifecycle(
+                "requested model is not the loaded model".to_owned(),
+            ));
+        }
         let (sender, receiver) = mpsc::channel();
         let cancellation = Arc::new(AtomicBool::new(false));
         *self
             .active_generation
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))? =
-            Some(cancellation.clone());
+            Some((request.request_id.clone(), cancellation.clone()));
         let cancel_for_worker = cancellation.clone();
         let bus = self.bus.clone();
         let backends = self.backends.clone();
@@ -269,7 +320,7 @@ impl RuntimeService for MarinaRuntime {
                 if let Ok(mut active) = active_generation.lock() {
                     if active
                         .as_ref()
-                        .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                        .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
                     {
                         *active = None;
                     }
@@ -285,7 +336,7 @@ impl RuntimeService for MarinaRuntime {
                     if let Ok(mut active) = active_generation.lock() {
                         if active
                             .as_ref()
-                            .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                            .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
                         {
                             *active = None;
                         }
@@ -316,7 +367,7 @@ impl RuntimeService for MarinaRuntime {
             if let Ok(mut active) = active_generation.lock() {
                 if active
                     .as_ref()
-                    .is_some_and(|current| Arc::ptr_eq(current, &cancel_for_worker))
+                    .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
                 {
                     *active = None;
                 }
@@ -327,8 +378,18 @@ impl RuntimeService for MarinaRuntime {
 
     fn cancel_generation(&self) {
         if let Ok(active) = self.active_generation.lock() {
-            if let Some(cancellation) = active.as_ref() {
+            if let Some((_, cancellation)) = active.as_ref() {
                 cancellation.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn cancel_generation_for(&self, request_id: &str) {
+        if let Ok(active) = self.active_generation.lock() {
+            if let Some((active_id, cancellation)) = active.as_ref() {
+                if active_id == request_id {
+                    cancellation.store(true, Ordering::SeqCst);
+                }
             }
         }
     }
@@ -389,12 +450,58 @@ mod tests {
     fn marina_runtime_is_deterministic_and_publishes_events() {
         let bus = EventBus::new();
         let receiver = bus.subscribe();
-        let runtime = MarinaRuntime::start(RuntimeConfig::default(), bus);
+        let isolated_models = std::env::temp_dir().join(format!(
+            "oid-runtime-empty-models-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let config = RuntimeConfig {
+            model_directory: Some(isolated_models),
+            ..RuntimeConfig::default()
+        };
+        let runtime = MarinaRuntime::start(config, bus);
         assert_eq!(runtime.snapshot().backend, "None");
         assert_eq!(runtime.snapshot().models, 0);
         let _ = runtime.execute_command("status");
         assert!(receiver
             .try_iter()
             .any(|event| matches!(event, RuntimeEvent::RuntimeStarted)));
+    }
+
+    #[test]
+    fn model_pull_imports_local_artifact_into_configured_store() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-model-pull-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let source = root.join("source.gguf");
+        let destination = root.join("models");
+        let registry = root.join("registry.db");
+        std::fs::create_dir_all(&root).expect("create root");
+        std::fs::write(&source, b"GGUF").expect("write source");
+        let config = RuntimeConfig {
+            model_directory: Some(destination.clone()),
+            registry_path: Some(registry),
+            ..RuntimeConfig::default()
+        };
+        let runtime = MarinaRuntime::start(config, EventBus::new());
+        let model = runtime
+            .model_pull(
+                source.to_str().expect("source path"),
+                Some("local-demo"),
+                None,
+            )
+            .expect("pull local model");
+        assert_eq!(model.id, "local-demo");
+        assert!(destination.join("source.gguf").is_file());
+        assert_eq!(runtime.model_list().len(), 1);
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 }
