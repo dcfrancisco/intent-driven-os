@@ -77,5 +77,15 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0075 | Product Brand and Launch Language | Product names, positioning, release boundaries, and claim discipline |
 | WP-0076 | Marina Training and Model Lifecycle | Governed datasets, training jobs, evaluation, promotion, and rollback |
 | WP-0077 | Marina Native Transport and API | Native HTTP, persistent listeners, auth, lifecycle, and admission |
+| WP-0078 | Marina Linux Native Qualification | Native Linux x86_64 runtime and release qualification |
+| WP-0079 | Marina Windows Native Qualification | Native Windows x86_64 runtime and release qualification |
+| WP-0080 | Marina macOS arm64 Qualification | Native Apple Silicon runtime qualification |
+| WP-0081 | Marina Remote Transport Qualification | Authenticated private/TLS remote deployment qualification |
+| WP-0082 | Marina Training Contracts | Backend-neutral Phase 1 training schemas and boundaries |
+| WP-0083 | Marina Dataset Registration | Immutable dataset identity, validation, provenance, and hashes |
+| WP-0084 | Marina Training Job Lifecycle | Isolated jobs, scheduling, cancellation, checkpoints, and limits |
+| WP-0085 | Marina CPU Training Backend | Bounded real CPU-compatible small-model training |
+| WP-0086 | Marina Training Evaluation | Baselines, evaluation, promotion gates, activation, and rollback |
+| WP-0087 | Marina Artifact Lineage | Immutable model, adapter, checkpoint, and conversion lineage |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

@@ -6,7 +6,7 @@
 - Related systems: Intent-Driven OS (OID), IDEs, Athena Hub, Delivery Wizard
 - Category: Transport / API / authorization
 - Priority: P1 prerequisite for ADR-0020
-- Related work: WP-0077; ADR-0012, ADR-0013, ADR-0015, ADR-0020
+- Related work: WP-0077–WP-0081; ADR-0012, ADR-0013, ADR-0015, ADR-0020
 
 ## Context
 

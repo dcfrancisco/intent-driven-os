@@ -1,0 +1,28 @@
+{
+  "schema": "marina.runtime.qualification/v1",
+  "work_package": "WP-0078",
+  "platform": "linux-x86_64",
+  "host": "AMD Phenom(tm) II X6 1055T Processor",
+  "oid_runtime_backend": "marina-http",
+  "status": "passed",
+  "request_id": "console-26439-1",
+  "marina_generation_id": "marina-gen-23469-18",
+  "model": "qwen2.5-0.5b-instruct-q4_k_m",
+  "outcome": "completed",
+  "metrics": {
+    "prompt_tokens": 8,
+    "generated_tokens": 1,
+    "context_tokens": 9,
+    "tokens_per_second": 0.7776049766718507,
+    "latency_ms": 1286,
+    "inference_time_ms": 1286
+  },
+  "durable_evidence": {
+    "store": "/tmp/oid-phenom-state/evidence.log",
+    "started_record": "inference-console-26439-1-started",
+    "terminal_record": "inference-console-26439-1-completed",
+    "linked": true,
+    "raw_prompt_or_response_persisted": false,
+    "credentials_persisted": false
+  }
+}

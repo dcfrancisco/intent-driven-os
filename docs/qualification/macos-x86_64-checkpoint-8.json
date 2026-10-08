@@ -1,0 +1,37 @@
+{
+  "schema": "marina.runtime.qualification/v1",
+  "checkpoint": "WP-0077-8",
+  "status": "passed",
+  "platform": "macos-x86_64",
+  "backend": "llama.cpp",
+  "model": "qwen2.5-0.5b-instruct-q4_k_m",
+  "native_library": {
+    "llama": "0.3.0",
+    "ggml": "0.22.0",
+    "commit": "18443257a30c884d5332abb8e7dc43c7ffe42fda",
+    "configuration": "GGML_NATIVE=ON; GGML_METAL=OFF; GGML_OPENMP=OFF; GGML_BLAS=OFF"
+  },
+  "runs": {
+    "success": 1,
+    "cancellation": 1,
+    "timeout_recovery": 1
+  },
+  "checks": {
+    "real_http_inference": "passed",
+    "unique_generation_ids": "passed",
+    "cancellation_recovery": "passed",
+    "timeout_recovery": "passed",
+    "authentication_and_scopes": "passed",
+    "durable_oid_evidence": "passed_in_checkpoint_5",
+    "native_abort_diagnostic": "classified_as_expected_abort_status"
+  },
+  "observed_generation_ids": [
+    "marina-gen-49647-1",
+    "marina-gen-49647-2",
+    "marina-gen-49647-4"
+  ],
+  "notes": [
+    "The timeout request consumed generation ID 3 before recovery received ID 4.",
+    "Linux, Windows, and macOS arm64 were not executed in this workspace."
+  ]
+}

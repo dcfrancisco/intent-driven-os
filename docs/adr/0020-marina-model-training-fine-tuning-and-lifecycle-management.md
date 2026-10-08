@@ -6,7 +6,7 @@
 - Related system: Intent-Driven OS (OID)
 - Category: Model runtime / machine-learning infrastructure
 - Priority: P1 architecture, phased implementation
-- Related work: WP-0076, WP-0077; ADR-0010, ADR-0011, ADR-0013, ADR-0015, ADR-0017, ADR-0021
+- Related work: WP-0076, WP-0077, WP-0082–WP-0087; ADR-0010, ADR-0011, ADR-0013, ADR-0015, ADR-0017, ADR-0021
 
 ## Context
 
@@ -216,16 +216,26 @@ uncontrolled restart loops.
 
 ## Implementation plan
 
-WP-0076 defines the common contracts and decomposes implementation into:
+WP-0076 is the umbrella work package. Phase 1 is decomposed into the following
+reviewable work packages, all dependent on the stabilized Marina API and
+admission boundary in WP-0077:
 
-1. Training backend SPI, job states, datasets, lineage, and artifacts.
-2. Job persistence, scheduling, cancellation, worker isolation, and limits.
-3. A real CPU-compatible small-model backend and serving demonstration.
-4. Immutable dataset/model registries with hashes and provenance.
-5. Evaluation, baseline comparison, promotion, activation, and rollback.
-6. LoRA/QLoRA adapter integration.
-7. Hardware compatibility, resource reservations, and workload priority.
-8. Training metrics, evidence, audit records, and CLI/API observability.
+1. WP-0082 — Training backend SPI, job states, datasets, lineage, artifacts,
+   and the production-inference isolation boundary.
+2. WP-0083 — Dataset registration, immutable versions, validation,
+   provenance, access policy, and hashes.
+3. WP-0084 — Job persistence, scheduling, cancellation, checkpoints, worker
+   isolation, retries, and resource limits.
+4. WP-0085 — A real bounded CPU-compatible small-model backend.
+5. WP-0087 — Immutable model, adapter, checkpoint, conversion, and deployment
+   artifact lineage.
+6. WP-0086 — Evaluation, baseline comparison, promotion approval, activation,
+   rollback, and evidence.
+
+LoRA/QLoRA, hardware reservations, and richer training observability remain
+follow-on work after these Phase 1 contracts and lifecycle controls. The
+training worker SHALL remain isolated from the production inference process;
+training SHALL NOT be added to the inference request path.
 
 ## Minimum acceptance criteria
 

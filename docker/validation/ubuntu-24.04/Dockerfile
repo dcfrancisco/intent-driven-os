@@ -10,10 +10,12 @@ RUN apt-get update \
         bash \
         build-essential \
         ca-certificates \
+        cmake \
         curl \
         git \
         libssl-dev \
         pkg-config \
+        python3 \
         procps \
         util-linux \
     && rm -rf /var/lib/apt/lists/*

@@ -15,6 +15,37 @@ use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
 
+#[cfg(any(native_llama_cpp, test))]
+const LLAMA_DECODE_ABORTED: i32 = 2;
+
+#[cfg(any(native_llama_cpp, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecodeOutcome {
+    Success,
+    Cancelled,
+    NativeFailure,
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn classify_decode_result(result: i32, cancelled: bool) -> DecodeOutcome {
+    if result == 0 {
+        DecodeOutcome::Success
+    } else if result == LLAMA_DECODE_ABORTED && cancelled {
+        DecodeOutcome::Cancelled
+    } else {
+        DecodeOutcome::NativeFailure
+    }
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn decode_error(stage: &str, result: i32) -> String {
+    if result == LLAMA_DECODE_ABORTED {
+        format!("llama.cpp {stage} decode aborted without an active Marina cancellation: {result}")
+    } else {
+        format!("llama.cpp {stage} decode failed: {result}")
+    }
+}
+
 #[cfg(native_llama_cpp)]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -448,15 +479,25 @@ impl NativeModel {
                     ),
                 )
             };
-            if decode_result != 0 {
-                unsafe {
-                    ffi::llama_sampler_free(sampler);
-                    ffi::llama_free(context);
-                }
-                if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            match classify_decode_result(
+                decode_result,
+                cancelled.load(std::sync::atomic::Ordering::SeqCst),
+            ) {
+                DecodeOutcome::Success => {}
+                DecodeOutcome::Cancelled => {
+                    unsafe {
+                        ffi::llama_sampler_free(sampler);
+                        ffi::llama_free(context);
+                    }
                     return Err("generation cancelled".to_owned());
                 }
-                return Err(format!("llama.cpp prompt decode failed: {decode_result}"));
+                DecodeOutcome::NativeFailure => {
+                    unsafe {
+                        ffi::llama_sampler_free(sampler);
+                        ffi::llama_free(context);
+                    }
+                    return Err(decode_error("prompt", decode_result));
+                }
             }
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
             let mut generated_tokens = Vec::new();
@@ -498,15 +539,25 @@ impl NativeModel {
                 let result = unsafe {
                     ffi::llama_decode(context, ffi::llama_batch_get_one(next.as_mut_ptr(), 1))
                 };
-                if result != 0 {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
-                    }
-                    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                match classify_decode_result(
+                    result,
+                    cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                ) {
+                    DecodeOutcome::Success => {}
+                    DecodeOutcome::Cancelled => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
                         return Err("generation cancelled".to_owned());
                     }
-                    return Err(format!("llama.cpp decode failed: {result}"));
+                    DecodeOutcome::NativeFailure => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
+                        return Err(decode_error("token", result));
+                    }
                 }
             }
             if !cancelled_result && !pending_utf8.is_empty() {
@@ -528,6 +579,30 @@ impl NativeModel {
                 context_tokens: prompt_count + generated,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_decode_result, decode_error, DecodeOutcome};
+
+    #[test]
+    fn native_abort_is_cancellation_only_when_requested() {
+        assert_eq!(classify_decode_result(2, true), DecodeOutcome::Cancelled);
+        assert_eq!(
+            classify_decode_result(2, false),
+            DecodeOutcome::NativeFailure
+        );
+        assert_eq!(
+            classify_decode_result(-1, true),
+            DecodeOutcome::NativeFailure
+        );
+        assert!(decode_error("token", 2).contains("without an active Marina cancellation"));
+    }
+
+    #[test]
+    fn successful_decode_remains_success() {
+        assert_eq!(classify_decode_result(0, false), DecodeOutcome::Success);
     }
 }
 

@@ -1,0 +1,25 @@
+{
+  "schema": "marina.runtime.qualification/v1",
+  "work_package": "WP-0078",
+  "status": "blocked",
+  "platform": "linux-x86_64",
+  "host_observed": "macos-x86_64",
+  "native_execution": false,
+  "reason": "No Linux x86_64 host, VM, or available container runtime was present; Docker daemon unavailable.",
+  "checks": {
+    "native_linux_build": "unverified",
+    "unix_socket": "unverified",
+    "http_discovery": "unverified",
+    "authentication_authorization": "unverified",
+    "real_gguf_inference": "unverified",
+    "memory_context_admission": "unverified",
+    "cancellation_timeout_recovery": "unverified",
+    "oid_integration": "unverified",
+    "durable_evidence": "unverified"
+  },
+  "prepared_artifacts": [
+    "scripts/setup-llama-linux.sh",
+    "scripts/qualify-marina-http.sh",
+    "docs/validation/marina-linux-native.md"
+  ]
+}

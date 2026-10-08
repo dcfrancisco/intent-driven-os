@@ -114,16 +114,28 @@ complete before WP-0076/ADR-0020:
 Then WP-0076 and ADR-0020 define the training sequence:
 
 - Establish backend-neutral training, dataset, artifact, lineage, and job-state
-  contracts.
-- Execute a bounded CPU-compatible small-model training proof.
-- Add dataset/model hashes, checkpoints, evaluation, baseline comparison,
-  promotion approval, activation, and rollback.
+  contracts (WP-0082, WP-0083).
+- Implement isolated job lifecycle, checkpoints, cancellation, and limits
+  (WP-0084).
+- Execute a bounded CPU-compatible small-model training proof (WP-0085).
+- Add artifact lineage, dataset/model hashes, evaluation, baseline comparison,
+  promotion approval, activation, and rollback (WP-0087, WP-0086).
 - Add hardware/resource eligibility, worker isolation, inference priority, and
   training evidence.
 - Integrate LoRA/QLoRA only through replaceable training backends.
 
 Training must never automatically replace an active inference model or turn
 prompts, logs, or operating-system observations into training data.
+
+## WP-0077 qualification transfer gate
+
+WP-0077's macOS x86_64 local-only baseline and WP-0078's native Ubuntu
+26.04/AMD Phenom II x86_64 baseline are qualified. Windows, macOS arm64, and
+remote obligations remain tracked separately in WP-0079 through WP-0081 and
+must not be inferred from compilation. The GitHub Actions Ubuntu qualification
+workflow is an additional unverified baseline. ADR-0020 Phase 1 planning may
+proceed with WP-0082, but training execution cannot begin until its contracts,
+dataset governance, job isolation, and artifact boundaries are accepted.
 
 ## v1.x — AI desktop/OS agency
 

@@ -1,0 +1,27 @@
+{
+  "schema": "marina.runtime.qualification/v1",
+  "checkpoint": "WP-0077-8",
+  "host": "macos-x86_64",
+  "platforms": {
+    "macos-x86_64": {
+      "status": "qualified_local_only",
+      "evidence": "macos-x86_64-checkpoint-8.json"
+    },
+    "macos-arm64": {
+      "status": "blocked",
+      "missing_prerequisite": "Apple Silicon runtime host"
+    },
+    "linux-x86_64": {
+      "status": "blocked",
+      "missing_prerequisite": "Native Linux host/VM/container runtime and native llama.cpp libraries; Docker daemon unavailable"
+    },
+    "windows-x86_64": {
+      "status": "blocked",
+      "missing_prerequisite": "Windows runtime host or GitHub Windows runner with native DLL payload"
+    }
+  },
+  "remote_network": {
+    "status": "not_qualified",
+    "missing_prerequisite": "Authenticated private transport or mutually authenticated TLS test environment"
+  }
+}

@@ -71,6 +71,15 @@ that preserves the local compatibility backend by default. A live smoke
 client has been verified; interactive console cancellation/evidence behavior is
 verified at Checkpoint 5, while target-platform verification remains open.
 
+### Qualification transfer to WP-0078
+
+WP-0078 owns the outstanding native Linux x86_64 qualification obligations
+transferred from this WP. Its current machine-readable result is
+`docs/qualification/linux-x86_64-wp-0078.json`. WP-0077 remains open until
+Linux native execution is verified or the governance owner formally narrows
+the cross-platform acceptance criteria. The macOS x86_64 local-only baseline
+remains qualified and is not replaced by this transfer.
+
 ### Checkpoint 5: durable inference evidence and remote metrics
 
 The existing append-only `FileEvidenceStore` now stores inference records in
@@ -150,6 +159,91 @@ Automated targeted tests pass for scoped identity behavior, nested config
 flattening, unknown/insufficient memory admission, request limits, model
 client mappings, evidence persistence, cancellation recovery, and console
 integration. Linux and Windows runtime verification remain unperformed.
+
+### Checkpoint 7: runtime reliability and release qualification
+
+The native llama.cpp diagnostic was reproduced under controlled conditions on
+macOS x86_64 using the Qwen2.5 0.5B Instruct Q4_K_M GGUF from
+`$HOME/.marina/models`. The installed library reports the llama.cpp C API
+library as `0.3.0` and ggml as `0.22.0`; the build was CPU-only with
+`GGML_NATIVE=ON`, `GGML_METAL=OFF`, `GGML_OPENMP=OFF`, and `GGML_BLAS=OFF`
+from commit `18443257a30c884d5332abb8e7dc43c7ffe42fda`. The model metadata
+reported Qwen2 architecture, Q4_K medium quantization, and a 32,768-token
+training context. Marina used contexts 128, 512, and 4096 with batch and
+micro-batch bounded to 512.
+
+Normal one-token inference succeeded at all three contexts. When cancellation
+or a 1 ms timeout interrupted an in-flight decode, native stderr repeatedly
+reported:
+
+```text
+ggml_backend_sched_graph_compute_async failed with error 1
+process_ubatch: failed to compute graph, compute status: 1
+llama_decode: failed to decode, ret = 2
+```
+
+The pinned upstream `llama.h` defines the context abort callback as causing
+`llama_decode()` to abort, and defines `llama_decode()` return value `2` as
+“aborted”; GGML status value `1` is `GGML_STATUS_ABORTED`. The adapter's abort
+callback observes the cancellation flag, returns a cancelled result, frees the
+native context, and clears the request's cancellation registry entry. The
+daemon then accepts subsequent requests. This establishes that the observed
+`llama_decode ret=2` is an intentional abort status, not an ordinary model or
+allocation failure. The upstream graph logger still emits error-looking text
+for the abort, so that diagnostic is retained as an upstream behavior risk.
+
+The native wrapper now classifies `llama_decode` status `2` as cancellation
+only when Marina cancellation is active. A status `2` without cancellation,
+or any other nonzero status even when cancellation races with it, remains a
+native failure. Regression tests cover these distinctions; no native error is
+suppressed.
+
+Authoritative pinned API references:
+`https://github.com/ggml-org/llama.cpp/blob/18443257a30c884d5332abb8e7dc43c7ffe42fda/include/llama.h`.
+
+The repeatable qualification script ran three success, three cancellation,
+and three timeout/recovery sequences. Generation IDs were unique and
+monotonic within the daemon (`marina-gen-33150-5` through `marina-gen-33150-16`,
+with timeout requests consuming IDs). A second principal's self-cancel token
+received HTTP 403 when attempting to cancel another principal's request; the
+owner then cancelled it successfully with HTTP 202. No stale permit or
+contradictory terminal HTTP result was observed. Durable OID evidence remains
+covered by Checkpoint 5's restart test; direct HTTP qualification does not
+create OID evidence by design.
+
+The qualification script is `scripts/qualify-marina-http.sh`. macOS x86_64 is
+qualified for local-only release with the upstream abort diagnostic documented
+and correctly classified. macOS arm64, Linux, and Windows native runtime tests
+were not available in this workspace and remain unverified. Remote-network
+deployment is not release-qualified; its separate acceptance criteria are
+recorded in `docs/MARINA-RELEASE-READINESS.md`.
+
+### Checkpoint 7B: focused abort-path investigation
+
+The corrected release was smoke-tested through success, cancellation,
+timeout, and recovery. Success and recovery returned normal completed
+responses; cancellation returned `finish_reason=cancelled` and HTTP 202 from
+the cancellation endpoint; timeout returned HTTP 504. The native log retained
+the upstream abort diagnostic, while the API outcome remained structured and
+recoverable. The new FFI regression tests cover intentional abort, abort
+without an active cancellation, and a concurrent non-abort native failure.
+
+### Checkpoint 8: cross-platform qualification
+
+No additional platform was qualified. The available host is macOS x86_64
+(`Darwin 21.6.0`). Docker client support is installed, but the Docker daemon
+is unavailable, so a Linux runtime could not be started. No Windows host,
+Windows runner, or Apple Silicon host is attached. Linux x86_64, Windows
+x86_64, and macOS arm64 are therefore blocked/unverified with explicit
+prerequisites recorded in the compatibility matrix. Cross-compilation or
+client-only availability is not treated as native runtime evidence.
+
+`qualify-marina-http.sh` now supports `QUALIFY_REPORT` and emits the
+machine-readable `marina.runtime.qualification/v1` JSON schema after a passing
+run. WP-0078 has since qualified the native Linux x86_64 Phenom II baseline;
+the Ubuntu GitHub Actions workflow remains a separate unverified baseline.
+Existing macOS x86_64 behavior remains preserved. Local-only and remote-network
+readiness remain separate decisions.
 
 ### Checkpoint 4B observed run
 

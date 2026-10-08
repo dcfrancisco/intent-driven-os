@@ -1,7 +1,8 @@
 //! Native loopback HTTP API for Marina.
 
 use oid_runtime::{
-    auth, GenerationMessage, GenerationOptions, GenerationRequest, MarinaRuntime, RuntimeService,
+    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream, MarinaRuntime,
+    RuntimeService,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
 const MAX_CONTEXT_TOKENS: u64 = 32_768;
+const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
@@ -330,12 +332,46 @@ fn generate(
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
                 finish_owner(owners, &request_id);
-                return respond_error(stream, 504, "generation request timed out".to_owned());
+                if drain_cancelled_generation(&generation) {
+                    return respond_error(stream, 504, "generation request timed out".to_owned());
+                }
+                return respond_error(
+                    stream,
+                    500,
+                    "generation cancellation did not complete within the cleanup deadline"
+                        .to_owned(),
+                );
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 finish_owner(owners, &request_id);
                 return respond_error(stream, 500, "generation stream closed".to_owned());
             }
+        }
+    }
+}
+
+/// Wait for the backend worker to publish its terminal result after a timeout.
+///
+/// Returning a timeout response before this point can leave the single
+/// generation admission occupied on slower CPUs. Draining the terminal event
+/// preserves the safety boundary: a subsequent request is admitted only after
+/// the native worker has released its runtime state.
+fn drain_cancelled_generation(generation: &GenerationStream) -> bool {
+    let deadline = Instant::now() + CANCELLATION_CLEANUP_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        match generation.recv_timeout(remaining) {
+            Ok(GenerationMessage::Token(_)) => {}
+            Ok(
+                GenerationMessage::Cancelled(_)
+                | GenerationMessage::Completed(_)
+                | GenerationMessage::Failed(_),
+            ) => return true,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
         }
     }
 }

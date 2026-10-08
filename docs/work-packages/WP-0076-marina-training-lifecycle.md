@@ -46,7 +46,20 @@ training framework.
 WP-0058, WP-0060, WP-0062, WP-0070, WP-0071, WP-0073, WP-0077; ADR-0020,
 ADR-0021.
 
+## Phase 1 decomposition
+
+Implementation is intentionally split into WP-0082 through WP-0087:
+
+- WP-0082: contracts and isolation boundary;
+- WP-0083: dataset registration and validation;
+- WP-0084: job lifecycle and worker isolation;
+- WP-0085: CPU-compatible training backend;
+- WP-0087: artifact and lineage management; and
+- WP-0086: evaluation and promotion gates.
+
 ## Status
 
 Proposed. No training endpoints or training backend are implemented by this WP
-yet; the existing Marina inference path remains independently usable.
+yet; the existing Marina inference path remains independently usable. Planning
+may proceed, but execution remains gated by the Phase 1 contracts and
+production-inference isolation requirements.
