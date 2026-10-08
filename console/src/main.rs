@@ -12,6 +12,7 @@ mod input_router;
 mod operations;
 mod presence;
 mod prompt;
+mod remote_runtime;
 mod renderer;
 mod shell;
 mod signals;

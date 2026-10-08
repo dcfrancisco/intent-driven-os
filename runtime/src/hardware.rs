@@ -86,7 +86,11 @@ fn detect_snapshot() -> HardwareSnapshot {
     let logical_cores = std::thread::available_parallelism().map_or(1, usize::from);
     let (cpu, physical_cores) =
         linux_cpu_details().unwrap_or_else(|| ("unknown CPU".to_owned(), None));
-    let (installed_ram_bytes, available_ram_bytes) = linux_memory_details();
+    let (installed_ram_bytes, available_ram_bytes) = if std::env::consts::OS == "macos" {
+        mac_memory_details()
+    } else {
+        linux_memory_details()
+    };
     let simd_capabilities = simd_capabilities();
     let machine_variant = machine_variant(&simd_capabilities);
     HardwareSnapshot {
@@ -195,6 +199,30 @@ fn linux_memory_details() -> (Option<u64>, Option<u64>) {
         }
     }
     (total, available)
+}
+
+fn mac_memory_details() -> (Option<u64>, Option<u64>) {
+    let installed =
+        command_output("sysctl", &["-n", "hw.memsize"]).and_then(|value| value.parse::<u64>().ok());
+    let page_size = command_output("sysctl", &["-n", "hw.pagesize"])
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(4096);
+    let available = command_output("vm_stat", &[]).and_then(|output| {
+        let pages = output
+            .lines()
+            .filter_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                let value = value.trim().trim_end_matches('.').parse::<u64>().ok()?;
+                matches!(
+                    name.trim(),
+                    "Pages free" | "Pages inactive" | "Pages speculative"
+                )
+                .then_some(value)
+            })
+            .sum::<u64>();
+        (pages > 0).then_some(pages.saturating_mul(page_size))
+    });
+    (installed, available)
 }
 
 fn simd_capabilities() -> Vec<String> {

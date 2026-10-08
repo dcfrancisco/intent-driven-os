@@ -64,6 +64,9 @@ pub struct GenerationStatistics {
     pub inference_time_ms: u128,
     /// Context tokens used.
     pub context_tokens: u64,
+    /// Whether the numeric measurements are available and trustworthy.
+    /// When false, consumers must display the measurements as unknown.
+    pub metrics_known: bool,
 }
 
 /// Completed generation result.
@@ -71,6 +74,8 @@ pub struct GenerationStatistics {
 pub struct GenerationResult {
     /// Request identifier.
     pub request_id: String,
+    /// Runtime-owned generation identifier, distinct from the caller request.
+    pub generation_id: String,
     /// Complete generated text.
     pub text: String,
     /// Runtime measurements.
@@ -98,7 +103,8 @@ pub struct GenerationStream {
 }
 
 impl GenerationStream {
-    pub(crate) fn new(
+    /// Construct a stream for a transport adapter that owns the producer.
+    pub fn from_parts(
         receiver: mpsc::Receiver<GenerationMessage>,
         cancellation: Arc<AtomicBool>,
     ) -> Self {
@@ -106,6 +112,13 @@ impl GenerationStream {
             receiver,
             cancellation,
         }
+    }
+
+    pub(crate) fn new(
+        receiver: mpsc::Receiver<GenerationMessage>,
+        cancellation: Arc<AtomicBool>,
+    ) -> Self {
+        Self::from_parts(receiver, cancellation)
     }
 
     /// Receive the next stream item, blocking only the caller that reads it.

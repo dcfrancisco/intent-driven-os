@@ -83,6 +83,12 @@ The bridge supports `/v1/models`, `/v1/chat/completions`,
 stream responses. The token authorizes access to Marina; it is not a remote
 provider API key. Remote BYOK provider credentials are not implemented yet.
 
+Marina also has a native HTTP API. Enable it explicitly on loopback with
+`MARINA_HTTP_ADDR=127.0.0.1:11434 marina`; it uses the same runtime service as
+the Unix socket and requires a bearer token by default. The Python bridge is
+kept for migration and compatibility testing, not as the production service
+boundary.
+
 ## GitHub releases
 
 Tagging a release or manually starting [the Marina release workflow](.github/workflows/marina-release.yml)

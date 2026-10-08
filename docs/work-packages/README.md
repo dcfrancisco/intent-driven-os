@@ -75,5 +75,7 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0073 | OID OS-Management Model | Training, evaluation, provenance, and Marina integration |
 | WP-0074 | Rust CA-Clipper Linux Subsystem | Legacy inventory, Rust rewrite, data compatibility, and Linux packaging |
 | WP-0075 | Product Brand and Launch Language | Product names, positioning, release boundaries, and claim discipline |
+| WP-0076 | Marina Training and Model Lifecycle | Governed datasets, training jobs, evaluation, promotion, and rollback |
+| WP-0077 | Marina Native Transport and API | Native HTTP, persistent listeners, auth, lifecycle, and admission |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

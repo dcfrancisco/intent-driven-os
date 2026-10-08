@@ -14,6 +14,8 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
+static GENERATION_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 /// Production runtime service used by the console and future clients.
 #[derive(Clone, Debug)]
 pub struct MarinaRuntime {
@@ -24,7 +26,7 @@ pub struct MarinaRuntime {
     hardware: HardwareService,
     started_at: Instant,
     loaded: Arc<Mutex<Option<LoadedModel>>>,
-    active_generation: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
+    active_generation: Arc<Mutex<Option<(String, String, Arc<AtomicBool>)>>>,
 }
 
 impl MarinaRuntime {
@@ -77,6 +79,52 @@ impl RuntimeApi for MarinaRuntime {
             version: "0.1",
         }
     }
+}
+
+fn admit_generation(
+    hardware: &HardwareService,
+    loaded: &Arc<Mutex<Option<LoadedModel>>>,
+    request: &GenerationRequest,
+) -> Result<(), RuntimeError> {
+    let model_bytes = loaded
+        .lock()
+        .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+        .as_ref()
+        .map_or(0, |model| model.memory_bytes);
+    admit_memory(
+        hardware.snapshot().available_ram_bytes,
+        model_bytes,
+        request.options.context_size,
+    )
+}
+
+fn admit_memory(
+    available: Option<u64>,
+    model_bytes: u64,
+    context_size: u32,
+) -> Result<(), RuntimeError> {
+    const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
+    const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
+    let available = available.ok_or_else(|| {
+        RuntimeError::ModelLifecycle(
+            "memory admission unavailable: available system memory is unknown".to_owned(),
+        )
+    })?;
+    let context_bytes = u64::from(context_size)
+        .checked_mul(KV_BYTES_PER_CONTEXT_TOKEN)
+        .ok_or_else(|| {
+            RuntimeError::ModelLifecycle("context memory estimate overflow".to_owned())
+        })?;
+    let required = model_bytes
+        .saturating_add(context_bytes)
+        .saturating_add(SAFETY_MARGIN_BYTES);
+    if available < required {
+        return Err(RuntimeError::ModelLifecycle(format!(
+            "memory admission rejected: available={} required={} model={} context={}",
+            available, required, model_bytes, context_bytes
+        )));
+    }
+    Ok(())
 }
 
 impl RuntimeService for MarinaRuntime {
@@ -240,6 +288,7 @@ impl RuntimeService for MarinaRuntime {
                 "load a model before generating".to_owned(),
             ));
         }
+        admit_generation(&self.hardware, &self.loaded, &request)?;
         if self
             .loaded
             .lock()
@@ -251,17 +300,33 @@ impl RuntimeService for MarinaRuntime {
                 "requested model is not the loaded model".to_owned(),
             ));
         }
-        let (sender, receiver) = mpsc::channel();
         let cancellation = Arc::new(AtomicBool::new(false));
-        *self
+        let generation_id = format!(
+            "marina-gen-{}-{}",
+            std::process::id(),
+            GENERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let mut active_generation = self
             .active_generation
             .lock()
-            .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))? =
-            Some((request.request_id.clone(), cancellation.clone()));
+            .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))?;
+        if active_generation.is_some() {
+            return Err(RuntimeError::ModelLifecycle(
+                "generation capacity exhausted: one active generation is supported".to_owned(),
+            ));
+        }
+        *active_generation = Some((
+            request.request_id.clone(),
+            generation_id.clone(),
+            cancellation.clone(),
+        ));
+        drop(active_generation);
+        let (sender, receiver) = mpsc::channel();
         let cancel_for_worker = cancellation.clone();
         let bus = self.bus.clone();
         let backends = self.backends.clone();
         let active_generation = self.active_generation.clone();
+        let generation_id_for_worker = generation_id.clone();
         thread::spawn(move || {
             let started = Instant::now();
             bus.publish(&RuntimeEvent::GenerationStarted(request.request_id.clone()));
@@ -307,10 +372,12 @@ impl RuntimeService for MarinaRuntime {
                     },
                     latency_ms,
                     inference_time_ms: latency_ms,
+                    metrics_known: true,
                     ..GenerationStatistics::default()
                 };
                 let _ = sender.send(GenerationMessage::Cancelled(GenerationResult {
                     request_id: request.request_id.clone(),
+                    generation_id: generation_id_for_worker.clone(),
                     text: generated,
                     statistics,
                 }));
@@ -320,7 +387,7 @@ impl RuntimeService for MarinaRuntime {
                 if let Ok(mut active) = active_generation.lock() {
                     if active
                         .as_ref()
-                        .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
+                        .is_some_and(|(_, _, current)| Arc::ptr_eq(current, &cancel_for_worker))
                     {
                         *active = None;
                     }
@@ -336,7 +403,7 @@ impl RuntimeService for MarinaRuntime {
                     if let Ok(mut active) = active_generation.lock() {
                         if active
                             .as_ref()
-                            .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
+                            .is_some_and(|(_, _, current)| Arc::ptr_eq(current, &cancel_for_worker))
                         {
                             *active = None;
                         }
@@ -356,9 +423,11 @@ impl RuntimeService for MarinaRuntime {
                 latency_ms,
                 inference_time_ms: latency_ms,
                 context_tokens: statistics.context_tokens,
+                metrics_known: true,
             };
             let result = GenerationResult {
                 request_id: request.request_id.clone(),
+                generation_id: generation_id_for_worker,
                 text: generated,
                 statistics,
             };
@@ -367,7 +436,7 @@ impl RuntimeService for MarinaRuntime {
             if let Ok(mut active) = active_generation.lock() {
                 if active
                     .as_ref()
-                    .is_some_and(|(_, current)| Arc::ptr_eq(current, &cancel_for_worker))
+                    .is_some_and(|(_, _, current)| Arc::ptr_eq(current, &cancel_for_worker))
                 {
                     *active = None;
                 }
@@ -378,7 +447,7 @@ impl RuntimeService for MarinaRuntime {
 
     fn cancel_generation(&self) {
         if let Ok(active) = self.active_generation.lock() {
-            if let Some((_, cancellation)) = active.as_ref() {
+            if let Some((_, _, cancellation)) = active.as_ref() {
                 cancellation.store(true, Ordering::SeqCst);
             }
         }
@@ -386,12 +455,20 @@ impl RuntimeService for MarinaRuntime {
 
     fn cancel_generation_for(&self, request_id: &str) {
         if let Ok(active) = self.active_generation.lock() {
-            if let Some((active_id, cancellation)) = active.as_ref() {
+            if let Some((active_id, _, cancellation)) = active.as_ref() {
                 if active_id == request_id {
                     cancellation.store(true, Ordering::SeqCst);
                 }
             }
         }
+    }
+
+    fn active_generation_id(&self, request_id: &str) -> Option<String> {
+        self.active_generation.lock().ok().and_then(|active| {
+            active.as_ref().and_then(|(active_id, generation_id, _)| {
+                (active_id == request_id).then(|| generation_id.clone())
+            })
+        })
     }
 
     fn hardware(&self) -> HardwareSnapshot {
@@ -442,7 +519,7 @@ pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, Runt
 
 #[cfg(test)]
 mod tests {
-    use super::MarinaRuntime;
+    use super::{admit_memory, MarinaRuntime};
     use crate::RuntimeService;
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
@@ -503,5 +580,12 @@ mod tests {
         assert!(destination.join("source.gguf").is_file());
         assert_eq!(runtime.model_list().len(), 1);
         std::fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn memory_admission_rejects_unknown_and_insufficient_capacity() {
+        assert!(admit_memory(None, 0, 1).is_err());
+        assert!(admit_memory(Some(512 * 1_048_576), 256 * 1_048_576, 32_768).is_err());
+        assert!(admit_memory(Some(2 * 1_073_741_824), 256 * 1_048_576, 4_096).is_ok());
     }
 }

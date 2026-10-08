@@ -21,3 +21,5 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0017 — OID OS-Management Model Track](0017-oid-os-management-model.md)
 - [ADR-0018 — Rust CA-Clipper Linux Subsystem](0018-rust-clipper-linux-subsystem.md)
 - [ADR-0019 — OID Product Brand Architecture](0019-product-brand-architecture.md)
+- [ADR-0020 — Marina Model Training, Fine-Tuning, and Lifecycle Management](0020-marina-model-training-fine-tuning-and-lifecycle-management.md)
+- [ADR-0021 — Marina Transport, API, and Authorization Architecture](0021-marina-transport-api-and-authorization.md)

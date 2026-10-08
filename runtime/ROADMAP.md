@@ -98,6 +98,33 @@ Goal: provide a stable, secure, and operable model resource service.
 
 Exit criteria: production readiness review passes for security, reliability, observability, API compatibility, and documented backend support.
 
+## Parallel product track — Marina training and model lifecycle
+
+Training is a governed lifecycle capability layered after the inference
+contracts, native service API, request lifecycle, and resource admission; it
+is not a prerequisite for the first working runner. WP-0077 and ADR-0021 must
+complete before WP-0076/ADR-0020:
+
+- Deliver the native HTTP server and versioned API.
+- Persist listener configuration while preserving Unix-socket and Windows
+  loopback defaults.
+- Add authentication, scopes, cancellation, timeouts, quotas, and admission.
+- Integrate OID as a genuine Marina client and retain IDE compatibility.
+
+Then WP-0076 and ADR-0020 define the training sequence:
+
+- Establish backend-neutral training, dataset, artifact, lineage, and job-state
+  contracts.
+- Execute a bounded CPU-compatible small-model training proof.
+- Add dataset/model hashes, checkpoints, evaluation, baseline comparison,
+  promotion approval, activation, and rollback.
+- Add hardware/resource eligibility, worker isolation, inference priority, and
+  training evidence.
+- Integrate LoRA/QLoRA only through replaceable training backends.
+
+Training must never automatically replace an active inference model or turn
+prompts, logs, or operating-system observations into training data.
+
 ## v1.x — AI desktop/OS agency
 
 Goal: make OID the governed control plane users can prompt to operate and

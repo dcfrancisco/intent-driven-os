@@ -3,7 +3,60 @@
 use oid_shared::RuntimeConfig;
 use std::collections::BTreeMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::PathBuf;
+
+/// Native HTTP listener configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpConfig {
+    /// Optional loopback address. `None` keeps HTTP disabled.
+    pub address: Option<String>,
+    /// Require a valid Marina bearer token for API routes.
+    pub authentication_enabled: bool,
+}
+
+/// Load the native HTTP listener configuration.
+pub fn http_config() -> Result<HttpConfig, String> {
+    let values = read_config_file(&config_file())?;
+    let configured_address = values
+        .get("server.listeners.0.bind_address")
+        .zip(values.get("server.listeners.0.port"))
+        .map(|(host, port)| format!("{host}:{port}"));
+    let nested_transport = values.get("server.listeners.0.transport");
+    let address = std::env::var("MARINA_HTTP_ADDR")
+        .ok()
+        .or_else(|| values.get("http_address").cloned())
+        .or_else(|| values.get("server_http_address").cloned())
+        .or(configured_address)
+        .filter(|_| nested_transport.is_none_or(|transport| transport == "tcp"));
+    if let Some(address) = address.as_deref() {
+        let parsed = address
+            .parse::<SocketAddr>()
+            .map_err(|error| format!("invalid MARINA_HTTP_ADDR {address}: {error}"))?;
+        let allow_non_loopback = std::env::var("MARINA_HTTP_ALLOW_NON_LOOPBACK")
+            .ok()
+            .or_else(|| values.get("http_allow_non_loopback").cloned())
+            .is_some_and(|value| {
+                matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
+            });
+        if !parsed.ip().is_loopback() && !allow_non_loopback {
+            return Err(format!(
+                "HTTP address {address} is not loopback; set MARINA_HTTP_ALLOW_NON_LOOPBACK=true only for an explicitly secured deployment"
+            ));
+        }
+    }
+    let authentication_enabled = std::env::var("MARINA_HTTP_AUTH")
+        .ok()
+        .or_else(|| values.get("server.authentication.enabled").cloned())
+        .or_else(|| values.get("http_authentication_enabled").cloned())
+        .map_or(true, |value| {
+            !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no")
+        });
+    Ok(HttpConfig {
+        address,
+        authentication_enabled,
+    })
+}
 
 /// Return the current user's home directory across supported platforms.
 #[must_use]
@@ -88,9 +141,39 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
         return Ok(BTreeMap::new());
     };
     let mut values = BTreeMap::new();
-    for (line_number, line) in contents.lines().enumerate() {
-        let line = line.split_once('#').map_or(line, |(value, _)| value).trim();
+    let mut sections: Vec<(usize, String)> = Vec::new();
+    let mut listener_index = None;
+    for (line_number, raw_line) in contents.lines().enumerate() {
+        let without_comment = raw_line
+            .split_once('#')
+            .map_or(raw_line, |(value, _)| value);
+        let indent = without_comment
+            .chars()
+            .take_while(|character| *character == ' ')
+            .count();
+        let line = without_comment.trim();
         if line.is_empty() {
+            continue;
+        }
+        while sections.last().is_some_and(|(level, _)| *level >= indent) {
+            sections.pop();
+        }
+        if let Some(item) = line.strip_prefix("- ") {
+            if item.starts_with("name:") {
+                listener_index = Some(listener_index.map_or(0, |index| index + 1));
+                sections.push((indent, listener_index.unwrap_or_default().to_string()));
+            }
+            let line = item;
+            let Some((key, value)) = line.split_once(':') else {
+                return Err(format!("invalid Marina config at line {}", line_number + 1));
+            };
+            let mut prefix = sections
+                .iter()
+                .map(|(_, key)| key.clone())
+                .collect::<Vec<_>>();
+            prefix.push(key.trim().to_owned());
+            let value = value.trim().trim_matches(['"', '\'']);
+            values.insert(prefix.join("."), value.to_owned());
             continue;
         }
         let Some((key, value)) = line.split_once(':') else {
@@ -104,14 +187,24 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
             ));
         }
         let value = value.trim().trim_matches(['"', '\'']);
-        values.insert(key.to_owned(), value.to_owned());
+        let mut prefix = sections
+            .iter()
+            .map(|(_, key)| key.clone())
+            .collect::<Vec<_>>();
+        prefix.push(key.to_owned());
+        if value.is_empty() {
+            sections.push((indent, key.to_owned()));
+        } else {
+            values.insert(prefix.join("."), value.to_owned());
+            values.insert(key.to_owned(), value.to_owned());
+        }
     }
     Ok(values)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::read_config_file;
+    use super::{http_config, read_config_file};
 
     #[test]
     fn reads_small_yaml_key_value_config() {
@@ -128,6 +221,58 @@ mod tests {
         assert_eq!(
             values.get("model_directory").map(String::as_str),
             Some("/tmp/models")
+        );
+        std::fs::remove_file(path).expect("remove");
+    }
+
+    #[test]
+    fn rejects_non_loopback_http_without_explicit_override() {
+        let previous = std::env::var_os("MARINA_HTTP_ADDR");
+        let previous_override = std::env::var_os("MARINA_HTTP_ALLOW_NON_LOOPBACK");
+        std::env::set_var("MARINA_HTTP_ADDR", "0.0.0.0:11434");
+        std::env::remove_var("MARINA_HTTP_ALLOW_NON_LOOPBACK");
+        assert!(http_config().is_err());
+        match previous {
+            Some(value) => std::env::set_var("MARINA_HTTP_ADDR", value),
+            None => std::env::remove_var("MARINA_HTTP_ADDR"),
+        }
+        match previous_override {
+            Some(value) => std::env::set_var("MARINA_HTTP_ALLOW_NON_LOOPBACK", value),
+            None => std::env::remove_var("MARINA_HTTP_ALLOW_NON_LOOPBACK"),
+        }
+    }
+
+    #[test]
+    fn reads_nested_listener_schema_and_flattens_listener_fields() {
+        let path = std::env::temp_dir().join(format!(
+            "marina-nested-config-{}-{}.yaml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            "server:\n  listeners:\n    - name: local\n      transport: tcp\n      bind_address: 127.0.0.1\n      port: 12434\n  authentication:\n    enabled: true\n",
+        )
+        .expect("write");
+        let values = read_config_file(&path).expect("parse nested config");
+        assert_eq!(
+            values
+                .get("server.listeners.0.bind_address")
+                .map(String::as_str),
+            Some("127.0.0.1")
+        );
+        assert_eq!(
+            values.get("server.listeners.0.port").map(String::as_str),
+            Some("12434")
+        );
+        assert_eq!(
+            values
+                .get("server.authentication.enabled")
+                .map(String::as_str),
+            Some("true")
         );
         std::fs::remove_file(path).expect("remove");
     }

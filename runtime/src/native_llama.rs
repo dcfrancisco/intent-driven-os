@@ -194,6 +194,7 @@ impl Backend for LlamaCppAdapter {
                         latency_ms: started.elapsed().as_millis(),
                         inference_time_ms: stats.generation_time.unwrap_or_default().as_millis(),
                         context_tokens: prompt_tokens + stats.generated_tokens,
+                        metrics_known: true,
                         ..GenerationStatistics::default()
                     });
                 }

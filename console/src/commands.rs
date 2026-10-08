@@ -3,6 +3,9 @@
 use crate::operations::ConsoleOperations;
 use crate::signals::SignalController;
 use std::io::Write;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static GENERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 use oid_runtime::{
     BackendHealth, GenerationMessage, GenerationOptions, GenerationRequest, ModelMetadata,
@@ -124,6 +127,7 @@ pub fn execute_with_operations_and_signals(
                 "  :intent create a directory <path>  Plan a governed operation".to_owned(),
                 "  :operations recover|inspect|approve|resume|rollback  Manage operations"
                     .to_owned(),
+                "  :inference inspect <request-id>  Inspect durable model evidence".to_owned(),
                 "  :quit     Shut down the console".to_owned(),
             ],
             CommandAction::Continue,
@@ -222,6 +226,15 @@ pub fn execute_with_operations_and_signals(
                 operations
                     .rollback(id)
                     .unwrap_or_else(|error| vec![format!("Rollback failed: {error}")]),
+                CommandAction::Continue,
+            )
+        }
+        _ if command.starts_with("inference inspect ") => {
+            let id = command.trim_start_matches("inference inspect ").trim();
+            (
+                operations
+                    .inference_inspect(id)
+                    .unwrap_or_else(|error| vec![format!("Error: {error}")]),
                 CommandAction::Continue,
             )
         }
@@ -416,7 +429,11 @@ fn generate_lines_result_with_interrupt(
         options.max_tokens = max_tokens;
     }
     let request = GenerationRequest {
-        request_id: format!("console-{}", std::process::id()),
+        request_id: format!(
+            "console-{}-{}",
+            std::process::id(),
+            GENERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ),
         model_id: runtime.snapshot().loaded_model.unwrap_or_default(),
         prompt: prompt.to_owned(),
         options,
@@ -437,22 +454,32 @@ fn generate_lines_result_with_interrupt(
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
+                let metrics = if result.statistics.metrics_known {
+                    format!(
+                        "generated {} tokens at {:.1} tokens/sec",
+                        result.statistics.generated_tokens, result.statistics.tokens_per_second
+                    )
+                } else {
+                    "generation metrics unknown".to_owned()
+                };
                 lines.push(format!(
-                    "Generated {} tokens at {:.1} tokens/sec",
-                    result.statistics.generated_tokens, result.statistics.tokens_per_second
+                    "Request {} completed: {metrics}",
+                    result.request_id
                 ));
-                lines.push(format!(
-                    "Prompt tokens: {} | Context: {} | Latency: {} ms",
-                    result.statistics.prompt_tokens,
-                    result.statistics.context_tokens,
-                    result.statistics.latency_ms
-                ));
+                if result.statistics.metrics_known {
+                    lines.push(format!(
+                        "Prompt tokens: {} | Context: {} | Latency: {} ms",
+                        result.statistics.prompt_tokens,
+                        result.statistics.context_tokens,
+                        result.statistics.latency_ms
+                    ));
+                }
                 break;
             }
             Ok(GenerationMessage::Cancelled(result)) => {
                 lines.push(format!(
-                    "Generation cancelled after {} tokens",
-                    result.statistics.generated_tokens
+                    "Request {} cancelled after {} tokens",
+                    result.request_id, result.statistics.generated_tokens
                 ));
                 break;
             }

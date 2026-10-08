@@ -138,9 +138,16 @@ mod ffi {
         pub fn llama_sampler_sample(sampler: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
         pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
         pub fn llama_sampler_free(sampler: *mut c_void);
-        pub fn llama_get_model(ctx: *const c_void) -> *const c_void;
-        pub fn llama_vocab_get_text(vocab: *const c_void, token: i32) -> *const c_char;
         pub fn llama_vocab_is_eog(vocab: *const c_void, token: i32) -> bool;
+        pub fn llama_detokenize(
+            vocab: *const c_void,
+            tokens: *const i32,
+            n_tokens: i32,
+            text: *mut c_char,
+            text_len_max: i32,
+            remove_special: bool,
+            unparse_special: bool,
+        ) -> i32;
         pub fn llama_tokenize(
             vocab: *const c_void,
             text: *const c_char,
@@ -219,6 +226,28 @@ pub struct NativeGenerationStatistics {
     pub context_tokens: u64,
 }
 
+#[cfg(native_llama_cpp)]
+fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
+    match std::str::from_utf8(buffer) {
+        Ok(text) => {
+            let text = text.to_owned();
+            buffer.clear();
+            text
+        }
+        Err(error) if error.error_len().is_none() => {
+            let valid_length = error.valid_up_to();
+            let text = String::from_utf8_lossy(&buffer[..valid_length]).into_owned();
+            buffer.drain(..valid_length);
+            text
+        }
+        Err(_) => {
+            let text = String::from_utf8_lossy(buffer).into_owned();
+            buffer.clear();
+            text
+        }
+    }
+}
+
 // The handle is only accessed while held by the adapter mutex.
 unsafe impl Send for NativeModel {}
 
@@ -277,6 +306,44 @@ impl NativeModel {
         {
             let _ = text;
             Err("native llama.cpp is unavailable".to_owned())
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
+    unsafe fn detokenize(vocabulary: *const c_void, tokens: &[i32]) -> Result<Vec<u8>, String> {
+        let token_count = i32::try_from(tokens.len()).map_err(|_| "too many tokens".to_owned())?;
+        let mut capacity = tokens
+            .len()
+            .checked_mul(16)
+            .and_then(|value| value.checked_add(64))
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or_else(|| "detokenized text is too large".to_owned())?;
+        loop {
+            let mut text =
+                vec![0_i8; usize::try_from(capacity).map_err(|_| "text too large".to_owned())?];
+            let length = ffi::llama_detokenize(
+                vocabulary,
+                tokens.as_ptr(),
+                token_count,
+                text.as_mut_ptr(),
+                capacity,
+                false,
+                false,
+            );
+            if length < 0 {
+                capacity = length
+                    .checked_neg()
+                    .ok_or_else(|| "detokenized text length overflow".to_owned())?;
+                continue;
+            }
+            let length =
+                usize::try_from(length).map_err(|_| "invalid detokenized length".to_owned())?;
+            let bytes = std::slice::from_raw_parts(text.as_ptr().cast::<u8>(), length);
+            // GGUF byte-fallback tokens can form an incomplete UTF-8 sequence
+            // at an individual streaming boundary. Preserve the decoded byte
+            // stream and replace only invalid sequences instead of failing an
+            // otherwise valid generation.
+            return Ok(bytes.to_vec());
         }
     }
 
@@ -392,6 +459,9 @@ impl NativeModel {
                 return Err(format!("llama.cpp prompt decode failed: {decode_result}"));
             }
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
+            let mut generated_tokens = Vec::new();
+            let mut emitted_bytes = Vec::new();
+            let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
             for _ in 0..max_tokens {
@@ -403,15 +473,20 @@ impl NativeModel {
                 if unsafe { ffi::llama_vocab_is_eog(vocab, token) } {
                     break;
                 }
-                let piece = unsafe { ffi::llama_vocab_get_text(vocab, token) };
-                if piece.is_null() {
-                    break;
-                }
-                let text = unsafe { CStr::from_ptr(piece) }.to_string_lossy();
-                if !callback(&text) {
+                generated_tokens.push(token);
+                let text = unsafe { Self::detokenize(vocab, &generated_tokens) }?;
+                let delta = if text.starts_with(&emitted_bytes) {
+                    &text[emitted_bytes.len()..]
+                } else {
+                    text.as_slice()
+                };
+                pending_utf8.extend_from_slice(delta);
+                let delta = take_complete_utf8(&mut pending_utf8);
+                if !delta.is_empty() && !callback(&delta) {
                     cancelled_result = true;
                     break;
                 }
+                emitted_bytes = text;
                 generated += 1;
                 unsafe {
                     ffi::llama_sampler_accept(sampler, token);
@@ -432,6 +507,12 @@ impl NativeModel {
                         return Err("generation cancelled".to_owned());
                     }
                     return Err(format!("llama.cpp decode failed: {result}"));
+                }
+            }
+            if !cancelled_result && !pending_utf8.is_empty() {
+                let final_text = String::from_utf8_lossy(&pending_utf8).into_owned();
+                if !final_text.is_empty() && !callback(&final_text) {
+                    cancelled_result = true;
                 }
             }
             unsafe {
