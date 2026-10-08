@@ -1,0 +1,41 @@
+[Unit]
+Description=Marina native model runner
+Documentation=https://github.com/dannyfrancisco/intent-driven-os/tree/main/docs/adr/0014-linux-distribution-and-service-integration
+After=local-fs.target
+Before=oid-readiness.service
+
+[Service]
+Type=simple
+User=marina
+Group=marina
+ExecStart=/usr/bin/marina
+Restart=on-failure
+RestartSec=3s
+Environment=MARINA_CONFIG=/etc/marina/config.yaml
+Environment=MARINA_SOCKET=/run/marina/marina.sock
+Environment=MARINA_STATE_DIR=/var/lib/marina
+Environment=MARINA_MODEL_DIR=/var/lib/marina/models
+Environment=MARINA_REGISTRY=/var/lib/marina/models.registry
+Environment=MARINA_TOKEN_FILE=/etc/marina/tokens
+Environment=MARINA_HTTP_ADDR=127.0.0.1:12434
+Environment=MARINA_HTTP_AUTH=true
+Environment=LD_LIBRARY_PATH=/usr/lib/marina
+RuntimeDirectory=marina
+StateDirectory=marina
+CacheDirectory=marina
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/marina /var/cache/marina /run/marina
+LimitNOFILE=4096
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

@@ -42,6 +42,22 @@ enabling it, all of the following are required:
 - [ ] Resource admission and evidence behavior verified on the target host.
 - [ ] OID client compatibility verified against the deployed endpoint.
 
+## OID image readiness
+
+The first bootable OID image is a separate acceptance gate under ADR-0023 and
+WP-0088. Image composition assets exist, but the following remain unverified:
+
+- [ ] Real Debian/Ubuntu image build from the documented native Linux host.
+- [ ] VM boot with Marina and OID systemd services under separate identities.
+- [ ] Missing-model degraded boot and offline startup.
+- [ ] Real GGUF inference through OID's governed response path.
+- [ ] Governed plan/authorization/execution/verification evidence.
+- [ ] Evidence survival across service restart and reboot.
+- [ ] Image checksum/manifest and recovery behavior on the target VM.
+
+The image milestone must not be inferred from Marina's qualified local runtime
+or from compilation of the image builder.
+
 ## Platform qualification
 
 | Target | Build | Native runtime | Status |

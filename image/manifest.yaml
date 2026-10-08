@@ -1,0 +1,47 @@
+schema: oid-linux-image/v1
+base:
+  distribution: debian
+  release: bookworm
+  architecture: amd64
+  init: systemd
+  image_type: raw-gpt-disk
+  offline_boot: true
+packages:
+  - ca-certificates
+  - curl
+  - systemd
+  - systemd-sysv
+  - util-linux
+  - coreutils
+  - procps
+  - iproute2
+  - openssh-client
+components:
+  - name: marina
+    binary: /usr/bin/marina
+    service: packaging/marina/marina.service
+    user: marina
+  - name: marinactl
+    binary: /usr/bin/marinactl
+  - name: oid-console
+    binary: /usr/bin/oid-console
+    service: packaging/oid/oid-console.service
+    user: oid
+  - name: oid-readiness
+    helper: packaging/oid/oid-readiness
+    service: packaging/oid/oid-readiness.service
+model_policy:
+  required: false
+  install_helper: /usr/libexec/install-oid-image-model
+  destination: /var/lib/marina/models
+  checksum: sha256
+network_policy:
+  marina_http_bind: 127.0.0.1:12434
+  cloud_required_at_boot: false
+  remote_transport: disabled
+evidence:
+  directory: /var/lib/oid/evidence
+  preserve_on_restart: true
+  preserve_on_reboot: true
+  raw_prompt_response_retention: false
+

@@ -1,0 +1,24 @@
+[Unit]
+Description=OID Marina readiness and degraded-state check
+After=marina.service
+Wants=marina.service
+Before=oid-console.service
+
+[Service]
+Type=oneshot
+User=oid
+Group=oid
+ExecStart=/usr/libexec/oid-readiness
+EnvironmentFile=-/etc/oid/marina-client.env
+Environment=OID_MARINA_URL=http://127.0.0.1:12434
+Environment=OID_READINESS_FILE=/run/oid/readiness
+RuntimeDirectory=oid
+RemainAfterExit=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/oid /var/lib/oid
+
+[Install]
+WantedBy=multi-user.target

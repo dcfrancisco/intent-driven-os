@@ -82,9 +82,14 @@ runner, service, API, router, and isolation contracts are stable.
 - Add systemd user/system units, FHS paths, secure IPC, migration, rollback,
   uninstall/purge, and offline installation.
 - Validate clean installs and upgrades on the supported distro matrix.
+- Build the first reproducible OID bootable-image proof with Marina and OID
+  services ordered by readiness (WP-0088, ADR-0023). Image assets are in
+  progress; the builder now emits input/output checksums and preserves native
+  library symlinks, but VM qualification remains required.
 
 Exit criteria: Linux package and service checks pass in both user and system
-installation modes without a development checkout or OID dependency.
+installation modes without a development checkout or OID dependency, and the
+boot-to-governed-operation proof passes in the supported image environment.
 
 ## v1.0 — Production-grade runtime service
 

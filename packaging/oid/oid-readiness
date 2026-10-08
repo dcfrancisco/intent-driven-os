@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+url=${OID_MARINA_URL:-http://127.0.0.1:12434}
+out=${OID_READINESS_FILE:-/run/oid/readiness}
+mkdir -p "$(dirname "$out")"
+tmp="$out.tmp.$$"
+
+if command -v curl >/dev/null 2>&1 && curl --silent --show-error --fail --max-time 2 "$url/healthz" >/dev/null 2>&1; then
+    auth_args=
+    if [ -n "${OID_MARINA_TOKEN:-}" ]; then
+        auth_args="-H"; auth_value="Authorization: Bearer $OID_MARINA_TOKEN"
+        models=$(curl --silent --show-error --fail --max-time 2 "$auth_args" "$auth_value" "$url/v1/models" 2>/dev/null || true)
+    else
+        models=$(curl --silent --show-error --fail --max-time 2 "$url/v1/models" 2>/dev/null || true)
+    fi
+    if printf '%s' "$models" | grep -q '"data"'; then
+        state=ready
+        detail=model-service-available
+    else
+        state=degraded
+        detail=no-model-or-model-discovery-unavailable
+    fi
+else
+    state=degraded
+    detail=marina-unavailable
+fi
+
+{
+    printf 'state=%s\n' "$state"
+    printf 'detail=%s\n' "$detail"
+    printf 'checked_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >"$tmp"
+chmod 0640 "$tmp"
+mv "$tmp" "$out"
+# Readiness is informational. A missing model must not block offline boot.
+exit 0

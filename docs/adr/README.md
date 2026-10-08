@@ -23,3 +23,4 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0019 — OID Product Brand Architecture](0019-product-brand-architecture.md)
 - [ADR-0020 — Marina Model Training, Fine-Tuning, and Lifecycle Management](0020-marina-model-training-fine-tuning-and-lifecycle-management.md)
 - [ADR-0021 — Marina Transport, API, and Authorization Architecture](0021-marina-transport-api-and-authorization.md)
+- [ADR-0023 — OID Linux Distribution, Boot Lifecycle, and System Services](0023-oid-linux-distribution-boot-lifecycle-and-system-services.md)
