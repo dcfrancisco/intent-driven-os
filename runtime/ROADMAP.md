@@ -30,6 +30,12 @@ gap in the native adapter: embedded GGUF chat templates are now applied before
 tokenization. Level 5 local-runner status is based on the corrected binary's
 real-GGUF execution, not on process completion alone.
 
+The lifecycle closeout subsequently resolved two findings: the acceptance
+harness now sends newline-terminated tab-delimited frames, and Marina clears
+the active-generation admission slot before exposing terminal generation
+events. The final native lifecycle sequence passed; console process-signal
+startup-marker instability remains tracked separately under WP-0056.
+
 ## v0.2 — Resource and policy control
 
 Goal: make model execution predictable under resource contention.

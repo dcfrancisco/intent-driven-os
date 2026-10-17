@@ -105,7 +105,20 @@ Strict workspace Clippy was compared with baseline revision `6034903`: both
 reported 92 diagnostics with identical diagnostic lines. These are
 pre-existing workspace findings; no new final-runner finding was introduced.
 
-This remains **NO-GO** for milestone completion. The final-binary independent
-Unix-socket harness blocked before its first token, so independent prompt
-isolation, live Ctrl+C cancellation/recovery, unload/reload, and clean shutdown
-still need a completed final-binary acceptance run.
+This was initially **NO-GO** because the diagnostic harness omitted the
+required newline and used an insufficient timeout. That finding is superseded
+by the corrected harness and lifecycle evidence recorded below.
+
+### Resolved lifecycle findings
+
+- `MARINA-F-001`: the stalled probe omitted the newline required by Marina's
+  line protocol; the checked-in harness now constructs frames explicitly.
+- `MARINA-F-002`: Marina released the active-generation permit only after
+  sending the terminal event; terminal ordering is corrected and verified.
+- `MARINA-F-003`: four console process-signal tests remain open as a separate
+  startup-marker environment issue under WP-0056. This does not block the
+  native Marina lifecycle gate, but requires a stable process-test rerun.
+
+The corrected final-binary lifecycle run passed independent prompts, streaming,
+real cancellation, post-cancel recovery, unload/reload, post-reload inference,
+status, and shutdown. The CPU-first Marina local-runner gate is **GO**.

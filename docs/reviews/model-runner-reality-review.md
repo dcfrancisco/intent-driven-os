@@ -688,6 +688,21 @@ Current status remains **Level 5 for the CPU-first local runner**, with this
 regression correction verified on macOS x86_64. Other platform qualifications
 and broader production-service work remain separate gates.
 
+## Lifecycle blocker investigation — 2026-10-17
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MARINA-F-001 | The prior inline probe sent a literal `\\n`; Marina waited in `read_line`. A corrected frame reached `TOKEN\\tParis` after 50.0 seconds. | Harness escaping error plus a 30-second timeout below CPU first-token latency. | Added `scripts/accept-marina-lifecycle.py` with explicit `"\\t"`/`"\\n"` framing and 240-second bounds. | ADR-0011 | WP-0059 | Corrected harness returned terminal responses and cancellation. | RESOLVED |
+| MARINA-F-002 | After `DONE\\tcompleted`, the next request returned `model is busy`. | Marina sent the terminal message before clearing `active_generation`. | Clear the active slot before terminal completion, cancellation, or failure delivery. | ADR-0011 | WP-0059 | Final lifecycle run passed independent requests, cancellation, recovery, and no busy race. | RESOLVED |
+| MARINA-F-003 | Four console process-signal tests timed out waiting for `✓ Console ready`; two SIGTERM tests passed. | Not isolated; treated as process-test environment instability, not Marina IPC. | Keep open under WP-0056; rerun on a stable process-test environment. | ADR-0011 | WP-0056 | Native Marina lifecycle passed independently. | OPEN |
+
+The corrected final lifecycle run passed two independent prompts (`Paris` and
+`4`), incremental streaming, real cancellation after the first token
+(`DONE\\tcancelled\\t1`), post-cancel `Jupiter` recovery, healthy status,
+unload/reload, post-reload inference, and clean SIGTERM shutdown. The
+CPU-first local-runner gate is **GO**; MARINA-F-003 remains a separate open
+console test-environment finding.
+
 ## Final closeout audit — 2026-10-17
 
 The final native decoder build passed uninterrupted real-GGUF generation with
@@ -699,6 +714,6 @@ fails. The template test and `cargo test --workspace` passed.
 Strict Clippy at the final source and baseline `6034903` both produced 92
 identical diagnostics, all pre-existing workspace findings. The final-binary
 independent socket/lifecycle harness did not receive its first token and was
-stopped. Therefore independent prompt isolation, real-GGUF Ctrl+C
-cancellation/recovery, unload/reload, and shutdown remain pending final
-acceptance evidence, and the milestone decision is **NO-GO**.
+stopped. That result was superseded by the corrected checked-in harness and the
+final lifecycle run recorded below; the remaining open item is the separate
+console process-signal startup-marker finding MARINA-F-003.

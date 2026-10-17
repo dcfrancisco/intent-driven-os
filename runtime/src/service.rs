@@ -375,6 +375,14 @@ impl RuntimeService for MarinaRuntime {
                     metrics_known: true,
                     ..GenerationStatistics::default()
                 };
+                if let Ok(mut active) = active_generation.lock() {
+                    if active
+                        .as_ref()
+                        .is_some_and(|(_, _, current)| Arc::ptr_eq(current, &cancel_for_worker))
+                    {
+                        *active = None;
+                    }
+                }
                 let _ = sender.send(GenerationMessage::Cancelled(GenerationResult {
                     request_id: request.request_id.clone(),
                     generation_id: generation_id_for_worker.clone(),
@@ -384,22 +392,12 @@ impl RuntimeService for MarinaRuntime {
                 bus.publish(&RuntimeEvent::GenerationCancelled(
                     request.request_id.clone(),
                 ));
-                if let Ok(mut active) = active_generation.lock() {
-                    if active
-                        .as_ref()
-                        .is_some_and(|(_, _, current)| Arc::ptr_eq(current, &cancel_for_worker))
-                    {
-                        *active = None;
-                    }
-                }
                 return;
             }
             let statistics = match result {
                 Ok(statistics) => statistics,
                 Err(error) => {
                     let message = error.to_string();
-                    let _ = sender.send(GenerationMessage::Failed(error));
-                    bus.publish(&RuntimeEvent::GenerationFailed(message));
                     if let Ok(mut active) = active_generation.lock() {
                         if active
                             .as_ref()
@@ -408,6 +406,8 @@ impl RuntimeService for MarinaRuntime {
                             *active = None;
                         }
                     }
+                    let _ = sender.send(GenerationMessage::Failed(error));
+                    bus.publish(&RuntimeEvent::GenerationFailed(message));
                     return;
                 }
             };
@@ -431,8 +431,6 @@ impl RuntimeService for MarinaRuntime {
                 text: generated,
                 statistics,
             };
-            let _ = sender.send(GenerationMessage::Completed(result));
-            bus.publish(&RuntimeEvent::GenerationCompleted(request.request_id));
             if let Ok(mut active) = active_generation.lock() {
                 if active
                     .as_ref()
@@ -441,6 +439,8 @@ impl RuntimeService for MarinaRuntime {
                     *active = None;
                 }
             }
+            let _ = sender.send(GenerationMessage::Completed(result));
+            bus.publish(&RuntimeEvent::GenerationCompleted(request.request_id));
         });
         Ok(GenerationStream::new(receiver, cancellation))
     }

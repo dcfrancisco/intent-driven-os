@@ -82,6 +82,12 @@ scheduling are real.
 This ADR is a target decision, not a claim that all capabilities are complete.
 WP-0057 through WP-0068 provide the implementation and validation sequence.
 
+The lifecycle closeout also requires terminal-event ordering: a completed,
+cancelled, or failed generation must release its active-generation admission
+slot before the terminal response is observable to the client. This is an
+implementation invariant under WP-0059, not a change to the backend-neutral
+architecture.
+
 ## CPU-first closeout audit — 2026-10-17
 
 The final build verified embedded-template application and uninterrupted

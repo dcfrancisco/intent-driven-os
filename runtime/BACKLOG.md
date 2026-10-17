@@ -34,6 +34,12 @@ Independent final-binary socket/lifecycle acceptance remains open because the
 socket harness blocked before its first token; do not mark the CPU-first
 milestone complete until that sequence passes.
 
+Lifecycle follow-up 2026-10-17: `MARINA-F-001` (harness newline framing) and
+`MARINA-F-002` (terminal-before-slot-release race) are resolved and verified
+by `scripts/accept-marina-lifecycle.py`. `MARINA-F-003` remains open under
+WP-0056 for four process-signal tests that timed out before the console-ready
+marker.
+
 The acceptance evidence and the original failed output are retained in
 `docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
 sampling-controlled qualification concern, not a process-exit assertion.
