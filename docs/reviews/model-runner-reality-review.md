@@ -687,3 +687,18 @@ cargo test -p oid-llama-cpp-sys --lib embedded_chat_template_formats_a_user_prom
 Current status remains **Level 5 for the CPU-first local runner**, with this
 regression correction verified on macOS x86_64. Other platform qualifications
 and broader production-service work remain separate gates.
+
+## Final closeout audit — 2026-10-17
+
+The final native decoder build passed uninterrupted real-GGUF generation with
+relevant decoded text and `DONE\tcompleted`; no `<|im_end|>`, malformed
+terminal marker, `Ġ`, or `Ċ` leakage was emitted. The adapter applies a
+present embedded template and does not silently fall back when application
+fails. The template test and `cargo test --workspace` passed.
+
+Strict Clippy at the final source and baseline `6034903` both produced 92
+identical diagnostics, all pre-existing workspace findings. The final-binary
+independent socket/lifecycle harness did not receive its first token and was
+stopped. Therefore independent prompt isolation, real-GGUF Ctrl+C
+cancellation/recovery, unload/reload, and shutdown remain pending final
+acceptance evidence, and the milestone decision is **NO-GO**.

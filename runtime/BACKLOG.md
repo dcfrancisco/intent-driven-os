@@ -28,6 +28,12 @@ public API.
 - [x] Verify streaming, cancellation, independent requests, unload/reload,
       and post-reload inference on the corrected binary.
 
+Closeout audit 2026-10-17: the final decoder build passed uninterrupted
+real-GGUF completion, embedded-template formatting, and workspace tests.
+Independent final-binary socket/lifecycle acceptance remains open because the
+socket harness blocked before its first token; do not mark the CPU-first
+milestone complete until that sequence passes.
+
 The acceptance evidence and the original failed output are retained in
 `docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
 sampling-controlled qualification concern, not a process-exit assertion.

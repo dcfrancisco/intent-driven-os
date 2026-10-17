@@ -429,15 +429,18 @@ impl NativeModel {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or_else(|| "detokenized text is too large".to_owned())?;
         loop {
-            let mut text =
-                vec![0_i8; usize::try_from(capacity).map_err(|_| "text too large".to_owned())?];
+            let mut text = vec![
+                0_i8;
+                usize::try_from(capacity)
+                    .map_err(|_| "token text is too large".to_owned())?
+            ];
             let length = ffi::llama_detokenize(
                 vocabulary,
                 tokens.as_ptr(),
                 token_count,
                 text.as_mut_ptr(),
                 capacity,
-                false,
+                true,
                 false,
             );
             if length < 0 {
@@ -446,15 +449,33 @@ impl NativeModel {
                     .ok_or_else(|| "detokenized text length overflow".to_owned())?;
                 continue;
             }
-            let length =
-                usize::try_from(length).map_err(|_| "invalid detokenized length".to_owned())?;
-            let bytes = std::slice::from_raw_parts(text.as_ptr().cast::<u8>(), length);
-            // GGUF byte-fallback tokens can form an incomplete UTF-8 sequence
-            // at an individual streaming boundary. Preserve the decoded byte
-            // stream and replace only invalid sequences instead of failing an
-            // otherwise valid generation.
-            return Ok(bytes.to_vec());
+            return Ok(std::slice::from_raw_parts(
+                text.as_ptr().cast::<u8>(),
+                usize::try_from(length).map_err(|_| "invalid detokenized length".to_owned())?,
+            )
+            .to_vec());
         }
+    }
+
+    #[cfg(native_llama_cpp)]
+    fn terminal_piece_prefix(piece: &[u8]) -> (&[u8], bool) {
+        const TERMINAL_MARKERS: [&[u8]; 4] =
+            [b"<|im_end|>", b"</|im_end|}", b"<|endoftext|>", b"</s>"];
+        TERMINAL_MARKERS
+            .iter()
+            .find_map(|marker| {
+                if let Some(index) = piece
+                    .windows(marker.len())
+                    .position(|window| window == *marker)
+                {
+                    return Some((&piece[..index], true));
+                }
+                (1..marker.len())
+                    .rev()
+                    .find(|length| piece.ends_with(&marker[..*length]))
+                    .map(|length| (&piece[..piece.len() - length], true))
+            })
+            .unwrap_or((piece, false))
     }
 
     /// Generate tokens and invoke the callback for every token piece.
@@ -596,10 +617,11 @@ impl NativeModel {
                 }
                 generated_tokens.push(token);
                 let text = unsafe { Self::detokenize(vocab, &generated_tokens) }?;
+                let (text, terminal) = Self::terminal_piece_prefix(&text);
                 let delta = if text.starts_with(&emitted_bytes) {
                     &text[emitted_bytes.len()..]
                 } else {
-                    text.as_slice()
+                    text
                 };
                 pending_utf8.extend_from_slice(delta);
                 let delta = take_complete_utf8(&mut pending_utf8);
@@ -607,8 +629,11 @@ impl NativeModel {
                     cancelled_result = true;
                     break;
                 }
-                emitted_bytes = text;
+                emitted_bytes = text.to_vec();
                 generated += 1;
+                if terminal {
+                    break;
+                }
                 unsafe {
                     ffi::llama_sampler_accept(sampler, token);
                 }
@@ -663,6 +688,7 @@ impl NativeModel {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{classify_decode_result, decode_error, DecodeOutcome};
 
@@ -701,6 +727,17 @@ mod tests {
     #[test]
     fn successful_decode_remains_success() {
         assert_eq!(classify_decode_result(0, false), DecodeOutcome::Success);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn terminal_special_pieces_are_not_emitted() {
+        let (prefix, terminal) = super::NativeModel::terminal_piece_prefix(b"answer</|im_end|}");
+        assert_eq!(prefix, b"answer");
+        assert!(terminal);
+        let (plain, terminal) = super::NativeModel::terminal_piece_prefix(b"answer");
+        assert_eq!(plain, b"answer");
+        assert!(!terminal);
     }
 }
 

@@ -90,3 +90,22 @@ machine-readable `marina.runtime.qualification/v1` JSON report.
 For Linux x86_64, use `scripts/setup-llama-linux.sh` and follow
 `docs/validation/marina-linux-native.md`. The portable baseline disables
 optional x86 SIMD extensions; optimized builds require separate qualification.
+
+## CPU-first closeout audit — 2026-10-17
+
+Final native inputs were macOS x86_64, the Qwen GGUF
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` (SHA-256
+`74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`), and
+`$HOME/.marina/lib/libllama.0.3.0.dylib`. An uninterrupted final-binary CLI
+run produced relevant decoded text (`Paris<br>France`) and
+`DONE\tcompleted\t5`, with no control-token or tokenizer-byte leakage. The
+embedded-template native test and full workspace test suite passed.
+
+Strict workspace Clippy was compared with baseline revision `6034903`: both
+reported 92 diagnostics with identical diagnostic lines. These are
+pre-existing workspace findings; no new final-runner finding was introduced.
+
+This remains **NO-GO** for milestone completion. The final-binary independent
+Unix-socket harness blocked before its first token, so independent prompt
+isolation, live Ctrl+C cancellation/recovery, unload/reload, and clean shutdown
+still need a completed final-binary acceptance run.

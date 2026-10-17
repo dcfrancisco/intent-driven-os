@@ -82,6 +82,13 @@ scheduling are real.
 This ADR is a target decision, not a claim that all capabilities are complete.
 WP-0057 through WP-0068 provide the implementation and validation sequence.
 
+## CPU-first closeout audit — 2026-10-17
+
+The final build verified embedded-template application and uninterrupted
+decoded real-GGUF output. The milestone remains open: final-binary independent
+request isolation and the cancellation/recovery/unload/reload/shutdown socket
+sequence did not complete and must not be inferred from unit tests.
+
 ## Superseding implementation note — 2026-10-17
 
 The first native runner implementation passed raw prompts directly to the
