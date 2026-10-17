@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod http;
 #[path = "../ipc.rs"]
 mod ipc;
 
@@ -33,6 +34,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
+    let http_configuration = config::http_config().map_err(std::io::Error::other)?;
+    if let Some(address) = http_configuration.address {
+        let http_runtime = Arc::clone(&runtime);
+        let authentication_enabled = http_configuration.authentication_enabled;
+        let http_address = address.clone();
+        thread::spawn(move || {
+            if let Err(error) = http::serve(&http_address, http_runtime, authentication_enabled) {
+                eprintln!("Marina HTTP server failed: {error}");
+            }
+        });
+        eprintln!("Marina HTTP listening on {address}");
+    }
     let listener = ipc::bind_listener()?;
     eprintln!("Marina listening on {}", ipc::endpoint());
     for connection in listener.incoming() {

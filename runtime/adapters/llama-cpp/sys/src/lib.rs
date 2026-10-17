@@ -15,6 +15,37 @@ use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
 
+#[cfg(any(native_llama_cpp, test))]
+const LLAMA_DECODE_ABORTED: i32 = 2;
+
+#[cfg(any(native_llama_cpp, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecodeOutcome {
+    Success,
+    Cancelled,
+    NativeFailure,
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn classify_decode_result(result: i32, cancelled: bool) -> DecodeOutcome {
+    if result == 0 {
+        DecodeOutcome::Success
+    } else if result == LLAMA_DECODE_ABORTED && cancelled {
+        DecodeOutcome::Cancelled
+    } else {
+        DecodeOutcome::NativeFailure
+    }
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn decode_error(stage: &str, result: i32) -> String {
+    if result == LLAMA_DECODE_ABORTED {
+        format!("llama.cpp {stage} decode aborted without an active Marina cancellation: {result}")
+    } else {
+        format!("llama.cpp {stage} decode failed: {result}")
+    }
+}
+
 #[cfg(native_llama_cpp)]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -36,6 +67,13 @@ struct ModelParams {
     no_host: bool,
     no_alloc: bool,
     load_mtp: bool,
+}
+
+#[cfg(native_llama_cpp)]
+#[repr(C)]
+struct ChatMessage {
+    role: *const c_char,
+    content: *const c_char,
 }
 
 #[cfg(native_llama_cpp)]
@@ -111,7 +149,9 @@ unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
 
 #[cfg(native_llama_cpp)]
 mod ffi {
-    use super::{c_char, c_void, Batch, ContextParams, ModelParams, SamplerChainParams};
+    use super::{
+        c_char, c_void, Batch, ChatMessage, ContextParams, ModelParams, SamplerChainParams,
+    };
 
     #[allow(improper_ctypes)]
     extern "C" {
@@ -122,7 +162,19 @@ mod ffi {
         pub fn llama_model_load_from_file(path: *const c_char, params: ModelParams) -> *mut c_void;
         pub fn llama_model_free(model: *mut c_void);
         pub fn llama_model_get_vocab(model: *const c_void) -> *const c_void;
+        pub fn llama_model_chat_template(
+            model: *const c_void,
+            name: *const c_char,
+        ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
+        pub fn llama_chat_apply_template(
+            template: *const c_char,
+            chat: *const ChatMessage,
+            n_msg: usize,
+            add_ass: bool,
+            buffer: *mut c_char,
+            buffer_size: i32,
+        ) -> i32;
         pub fn llama_context_default_params() -> ContextParams;
         pub fn llama_init_from_model(model: *mut c_void, params: ContextParams) -> *mut c_void;
         pub fn llama_free(ctx: *mut c_void);
@@ -138,9 +190,16 @@ mod ffi {
         pub fn llama_sampler_sample(sampler: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
         pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
         pub fn llama_sampler_free(sampler: *mut c_void);
-        pub fn llama_get_model(ctx: *const c_void) -> *const c_void;
-        pub fn llama_vocab_get_text(vocab: *const c_void, token: i32) -> *const c_char;
         pub fn llama_vocab_is_eog(vocab: *const c_void, token: i32) -> bool;
+        pub fn llama_detokenize(
+            vocab: *const c_void,
+            tokens: *const i32,
+            n_tokens: i32,
+            text: *mut c_char,
+            text_len_max: i32,
+            remove_special: bool,
+            unparse_special: bool,
+        ) -> i32;
         pub fn llama_tokenize(
             vocab: *const c_void,
             text: *const c_char,
@@ -219,6 +278,28 @@ pub struct NativeGenerationStatistics {
     pub context_tokens: u64,
 }
 
+#[cfg(native_llama_cpp)]
+fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
+    match std::str::from_utf8(buffer) {
+        Ok(text) => {
+            let text = text.to_owned();
+            buffer.clear();
+            text
+        }
+        Err(error) if error.error_len().is_none() => {
+            let valid_length = error.valid_up_to();
+            let text = String::from_utf8_lossy(&buffer[..valid_length]).into_owned();
+            buffer.drain(..valid_length);
+            text
+        }
+        Err(_) => {
+            let text = String::from_utf8_lossy(buffer).into_owned();
+            buffer.clear();
+            text
+        }
+    }
+}
+
 // The handle is only accessed while held by the adapter mutex.
 unsafe impl Send for NativeModel {}
 
@@ -280,6 +361,123 @@ impl NativeModel {
         }
     }
 
+    #[cfg(native_llama_cpp)]
+    fn format_prompt(&self, prompt: &str) -> Result<String, String> {
+        unsafe {
+            let template =
+                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
+            if template.is_null() {
+                return Ok(prompt.to_owned());
+            }
+
+            let user_role = CString::new("user").map_err(|_| "invalid chat role".to_owned())?;
+            let content = CString::new(prompt).map_err(|_| "prompt contains NUL".to_owned())?;
+            let message = ChatMessage {
+                role: user_role.as_ptr(),
+                content: content.as_ptr(),
+            };
+            let required = ffi::llama_chat_apply_template(
+                template,
+                &raw const message,
+                1,
+                true,
+                std::ptr::null_mut(),
+                0,
+            );
+            if required < 0 {
+                return Err(format!(
+                    "llama.cpp could not apply the model chat template: {required}"
+                ));
+            }
+            let capacity = required
+                .checked_add(1)
+                .ok_or_else(|| "formatted prompt is too large".to_owned())?;
+            let mut buffer = vec![
+                0_i8;
+                usize::try_from(capacity)
+                    .map_err(|_| "formatted prompt is too large".to_owned())?
+            ];
+            let written = ffi::llama_chat_apply_template(
+                template,
+                &raw const message,
+                1,
+                true,
+                buffer.as_mut_ptr(),
+                capacity,
+            );
+            if written < 0 {
+                return Err(format!(
+                    "llama.cpp could not format the model chat template: {written}"
+                ));
+            }
+            let bytes = std::slice::from_raw_parts(
+                buffer.as_ptr().cast::<u8>(),
+                usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
+            );
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
+    unsafe fn detokenize(vocabulary: *const c_void, tokens: &[i32]) -> Result<Vec<u8>, String> {
+        let token_count = i32::try_from(tokens.len()).map_err(|_| "too many tokens".to_owned())?;
+        let mut capacity = tokens
+            .len()
+            .checked_mul(16)
+            .and_then(|value| value.checked_add(64))
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or_else(|| "detokenized text is too large".to_owned())?;
+        loop {
+            let mut text = vec![
+                0_i8;
+                usize::try_from(capacity)
+                    .map_err(|_| "token text is too large".to_owned())?
+            ];
+            let length = ffi::llama_detokenize(
+                vocabulary,
+                tokens.as_ptr(),
+                token_count,
+                text.as_mut_ptr(),
+                capacity,
+                true,
+                false,
+            );
+            if length < 0 {
+                capacity = length
+                    .checked_neg()
+                    .ok_or_else(|| "detokenized text length overflow".to_owned())?;
+                continue;
+            }
+            return Ok(std::slice::from_raw_parts(
+                text.as_ptr().cast::<u8>(),
+                usize::try_from(length).map_err(|_| "invalid detokenized length".to_owned())?,
+            )
+            .to_vec());
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
+    fn terminal_piece_prefix(piece: &[u8]) -> (&[u8], bool) {
+        const TERMINAL_MARKERS: [&[u8]; 4] =
+            [b"<|im_end|>", b"</|im_end|}", b"<|endoftext|>", b"</s>"];
+        TERMINAL_MARKERS
+            .iter()
+            .find_map(|marker| {
+                if let Some(index) = piece
+                    .windows(marker.len())
+                    .position(|window| window == *marker)
+                {
+                    return Some((&piece[..index], true));
+                }
+                (1..marker.len())
+                    .rev()
+                    .find(|length| piece.ends_with(&marker[..*length]))
+                    .map(|length| (&piece[..piece.len() - length], true))
+            })
+            .unwrap_or((piece, false))
+    }
+
     /// Generate tokens and invoke the callback for every token piece.
     ///
     /// # Errors
@@ -319,7 +517,8 @@ impl NativeModel {
         }
         #[cfg(native_llama_cpp)]
         {
-            let mut prompt_tokens = self.tokenize(prompt)?;
+            let formatted_prompt = self.format_prompt(prompt)?;
+            let mut prompt_tokens = self.tokenize(&formatted_prompt)?;
             let prompt_count = prompt_tokens.len() as u64;
             let max_context =
                 usize::try_from(context_size).map_err(|_| "context too large".to_owned())?;
@@ -381,17 +580,30 @@ impl NativeModel {
                     ),
                 )
             };
-            if decode_result != 0 {
-                unsafe {
-                    ffi::llama_sampler_free(sampler);
-                    ffi::llama_free(context);
-                }
-                if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            match classify_decode_result(
+                decode_result,
+                cancelled.load(std::sync::atomic::Ordering::SeqCst),
+            ) {
+                DecodeOutcome::Success => {}
+                DecodeOutcome::Cancelled => {
+                    unsafe {
+                        ffi::llama_sampler_free(sampler);
+                        ffi::llama_free(context);
+                    }
                     return Err("generation cancelled".to_owned());
                 }
-                return Err(format!("llama.cpp prompt decode failed: {decode_result}"));
+                DecodeOutcome::NativeFailure => {
+                    unsafe {
+                        ffi::llama_sampler_free(sampler);
+                        ffi::llama_free(context);
+                    }
+                    return Err(decode_error("prompt", decode_result));
+                }
             }
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
+            let mut generated_tokens = Vec::new();
+            let mut emitted_bytes = Vec::new();
+            let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
             for _ in 0..max_tokens {
@@ -403,16 +615,25 @@ impl NativeModel {
                 if unsafe { ffi::llama_vocab_is_eog(vocab, token) } {
                     break;
                 }
-                let piece = unsafe { ffi::llama_vocab_get_text(vocab, token) };
-                if piece.is_null() {
-                    break;
-                }
-                let text = unsafe { CStr::from_ptr(piece) }.to_string_lossy();
-                if !callback(&text) {
+                generated_tokens.push(token);
+                let text = unsafe { Self::detokenize(vocab, &generated_tokens) }?;
+                let (text, terminal) = Self::terminal_piece_prefix(&text);
+                let delta = if text.starts_with(&emitted_bytes) {
+                    &text[emitted_bytes.len()..]
+                } else {
+                    text
+                };
+                pending_utf8.extend_from_slice(delta);
+                let delta = take_complete_utf8(&mut pending_utf8);
+                if !delta.is_empty() && !callback(&delta) {
                     cancelled_result = true;
                     break;
                 }
+                emitted_bytes = text.to_vec();
                 generated += 1;
+                if terminal {
+                    break;
+                }
                 unsafe {
                     ffi::llama_sampler_accept(sampler, token);
                 }
@@ -423,15 +644,31 @@ impl NativeModel {
                 let result = unsafe {
                     ffi::llama_decode(context, ffi::llama_batch_get_one(next.as_mut_ptr(), 1))
                 };
-                if result != 0 {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
-                    }
-                    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                match classify_decode_result(
+                    result,
+                    cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                ) {
+                    DecodeOutcome::Success => {}
+                    DecodeOutcome::Cancelled => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
                         return Err("generation cancelled".to_owned());
                     }
-                    return Err(format!("llama.cpp decode failed: {result}"));
+                    DecodeOutcome::NativeFailure => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
+                        return Err(decode_error("token", result));
+                    }
+                }
+            }
+            if !cancelled_result && !pending_utf8.is_empty() {
+                let final_text = String::from_utf8_lossy(&pending_utf8).into_owned();
+                if !final_text.is_empty() && !callback(&final_text) {
+                    cancelled_result = true;
                 }
             }
             unsafe {
@@ -447,6 +684,60 @@ impl NativeModel {
                 context_tokens: prompt_count + generated,
             })
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::{classify_decode_result, decode_error, DecodeOutcome};
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    fn embedded_chat_template_formats_a_user_prompt() {
+        let model_path = std::env::var("MARINA_TEST_GGUF")
+            .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let formatted = model
+            .format_prompt("Reply with exactly: MARINA_OK")
+            .expect("embedded chat template should format the prompt");
+        assert!(formatted.contains("<|im_start|>user"));
+        assert!(formatted.contains("Reply with exactly: MARINA_OK"));
+        assert!(formatted.contains("<|im_start|>assistant"));
+        drop(model);
+        super::shutdown();
+    }
+
+    #[test]
+    fn native_abort_is_cancellation_only_when_requested() {
+        assert_eq!(classify_decode_result(2, true), DecodeOutcome::Cancelled);
+        assert_eq!(
+            classify_decode_result(2, false),
+            DecodeOutcome::NativeFailure
+        );
+        assert_eq!(
+            classify_decode_result(-1, true),
+            DecodeOutcome::NativeFailure
+        );
+        assert!(decode_error("token", 2).contains("without an active Marina cancellation"));
+    }
+
+    #[test]
+    fn successful_decode_remains_success() {
+        assert_eq!(classify_decode_result(0, false), DecodeOutcome::Success);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn terminal_special_pieces_are_not_emitted() {
+        let (prefix, terminal) = super::NativeModel::terminal_piece_prefix(b"answer</|im_end|}");
+        assert_eq!(prefix, b"answer");
+        assert!(terminal);
+        let (plain, terminal) = super::NativeModel::terminal_piece_prefix(b"answer");
+        assert_eq!(plain, b"answer");
+        assert!(!terminal);
     }
 }
 

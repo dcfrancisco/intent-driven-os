@@ -8,9 +8,27 @@ rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
 build = "build.rs"
+autobins = false
+
+[[bin]]
+name = "oid-console"
+path = "src/main.rs"
+
+[[bin]]
+name = "marina"
+path = "src/bin/marina.rs"
+
+[[bin]]
+name = "marinactl"
+path = "src/bin/marinactl.rs"
+
+[[bin]]
+name = "oid-marina-chat"
+path = "src/bin/oid-marina-chat.rs"
 
 [dependencies]
 oid-runtime = { path = "../runtime" }
+oid-model-client = { path = "../crates/model-client" }
 oid-shared = { path = "../shared" }
 oid-common = { path = "../crates/common" }
 oid-intent-runtime = { path = "../crates/intent-runtime" }
@@ -20,6 +38,7 @@ oid-verification-engine = { path = "../crates/verification-engine" }
 oid-evidence-engine = { path = "../crates/evidence-engine" }
 oid-operation-coordinator = { path = "../crates/operation-coordinator" }
 signal-hook = "0.3"
+serde_json = "1"
 
 [lints]
 workspace = true

@@ -1,0 +1,35 @@
+[Unit]
+Description=OID governed interactive console
+Documentation=https://github.com/dannyfrancisco/intent-driven-os/tree/main/docs/adr/0023-oid-linux-distribution-boot-lifecycle-and-system-services
+After=oid-readiness.service
+Wants=oid-readiness.service
+
+[Service]
+Type=simple
+User=oid
+Group=oid
+EnvironmentFile=-/etc/oid/marina-client.env
+Environment=OID_RUNTIME_BACKEND=marina-http
+Environment=OID_MARINA_URL=http://127.0.0.1:12434
+Environment=OID_MARINA_MODEL=
+Environment=LD_LIBRARY_PATH=/usr/lib/marina
+WorkingDirectory=/var/lib/oid
+ExecStart=/usr/bin/oid-console
+Restart=on-failure
+RestartSec=2s
+StandardInput=tty
+StandardOutput=journal+console
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/oid /run/oid
+SupplementaryGroups=marina
+
+[Install]
+WantedBy=multi-user.target

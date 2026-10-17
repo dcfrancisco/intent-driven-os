@@ -1,6 +1,7 @@
 //! Text user interface lifecycle.
 
-use oid_runtime::{config, logging, MarinaRuntime, Runtime, RuntimeService};
+use oid_model_client::MarinaHttpClient;
+use oid_runtime::{config, logging, Runtime, RuntimeService};
 use oid_shared::{EventBus, RuntimeEvent};
 use std::io;
 
@@ -19,7 +20,7 @@ use crate::{
 
 /// Console application state.
 pub struct Application {
-    runtime: MarinaRuntime,
+    runtime: Box<dyn RuntimeService>,
     bus: EventBus,
     status_bar: StatusBar,
     prompt: Prompt,
@@ -40,8 +41,19 @@ impl Application {
         bus.publish(&RuntimeEvent::ConfigurationLoaded);
         let _logger = logging::initialize();
         bus.publish(&RuntimeEvent::LoggingInitialized);
-        let runtime = Runtime::start_with_bus(configuration, bus.clone())
+        let local_runtime = Runtime::start_with_bus(configuration, bus.clone())
             .expect("Marina production runtime configuration is valid");
+        let runtime: Box<dyn RuntimeService> =
+            if std::env::var("OID_RUNTIME_BACKEND").is_ok_and(|backend| backend == "marina-http") {
+                let client = MarinaHttpClient::from_environment()
+                    .expect("OID Marina HTTP configuration is valid");
+                Box::new(crate::remote_runtime::RemoteRuntimeService::new(
+                    local_runtime,
+                    client,
+                ))
+            } else {
+                Box::new(local_runtime)
+            };
         Self {
             runtime,
             bus,
@@ -71,13 +83,13 @@ impl Application {
     pub fn run(mut self) -> io::Result<()> {
         Renderer::render_startup();
         self.presence.refresh();
-        Renderer::render_status(&self.runtime, &self.status_bar);
+        Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
         loop {
             self.prompt.set_directory(self.shell.directory.current());
             match LineEditor::read_command(
                 &self.prompt,
                 &mut self.history,
-                &self.runtime,
+                self.runtime.as_ref(),
                 &mut self.presence,
                 &self.shell.signals,
             )? {
@@ -87,7 +99,7 @@ impl Application {
                         InputRoute::Oid(command) => commands::execute_with_operations_and_signals(
                             &command,
                             &HistoryView::new(self.history.entries()),
-                            &self.runtime,
+                            self.runtime.as_ref(),
                             &mut self.operations,
                             Some(&self.shell.signals),
                         ),
@@ -102,7 +114,7 @@ impl Application {
                         Renderer::clear()?;
                     }
                     Renderer::render_output(&result.output);
-                    Renderer::render_status(&self.runtime, &self.status_bar);
+                    Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
                     if result.action == CommandAction::Exit || shutdown_requested {
                         self.runtime.stop();
                         self.presence.refresh();
@@ -111,7 +123,7 @@ impl Application {
                     }
                 }
                 EditResult::Cancelled => {
-                    Renderer::render_status(&self.runtime, &self.status_bar);
+                    Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
                 }
                 EditResult::Eof => {
                     self.runtime.stop();

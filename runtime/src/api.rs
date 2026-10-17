@@ -91,6 +91,10 @@ pub trait RuntimeService: Send + Sync {
         let _ = request_id;
         self.cancel_generation();
     }
+    /// Return the independent Marina generation ID for an active request.
+    fn active_generation_id(&self, _request_id: &str) -> Option<String> {
+        None
+    }
     /// Return normalized hardware information.
     fn hardware(&self) -> HardwareSnapshot;
     /// Return an event publisher handle.

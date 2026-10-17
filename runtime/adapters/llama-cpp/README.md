@@ -24,3 +24,9 @@ export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/lib}"
 
 Without this configuration, normal workspace builds remain portable and the
 adapter reports `BackendUnavailable`.
+
+The native wrapper treats `llama_decode` return value `2` as cancellation only
+when Marina's cancellation flag is active. The same status without an active
+cancellation, and all other nonzero decode statuses, remain native failures.
+The upstream llama.cpp graph logger may still print error-looking diagnostics
+for an intentional abort.

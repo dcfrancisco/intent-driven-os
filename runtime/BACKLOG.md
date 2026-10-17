@@ -20,6 +20,30 @@ the final delivery phase after those contracts are stable. Marina is the
 standalone service; OID, assistants, and system workflows are clients of its
 public API.
 
+### Regression gate completed 2026-10-17
+
+- [x] Apply the embedded GGUF chat template before tokenization when present.
+- [x] Preserve raw-prompt fallback for models without a chat template.
+- [x] Rebuild and reproduce the corrected behavior with a real Qwen GGUF.
+- [x] Verify streaming, cancellation, independent requests, unload/reload,
+      and post-reload inference on the corrected binary.
+
+Closeout audit 2026-10-17: the final decoder build passed uninterrupted
+real-GGUF completion, embedded-template formatting, and workspace tests.
+Independent final-binary socket/lifecycle acceptance remains open because the
+socket harness blocked before its first token; do not mark the CPU-first
+milestone complete until that sequence passes.
+
+Lifecycle follow-up 2026-10-17: `MARINA-F-001` (harness newline framing) and
+`MARINA-F-002` (terminal-before-slot-release race) are resolved and verified
+by `scripts/accept-marina-lifecycle.py`. `MARINA-F-003` remains open under
+WP-0056 for four process-signal tests that timed out before the console-ready
+marker.
+
+The acceptance evidence and the original failed output are retained in
+`docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
+sampling-controlled qualification concern, not a process-exit assertion.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

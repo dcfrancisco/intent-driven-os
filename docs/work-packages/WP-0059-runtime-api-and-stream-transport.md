@@ -23,6 +23,23 @@ disconnect behavior, and protocol version negotiation.
 
 WP-RUNTIME-002, WP-0057; ADR-0004, ADR-0006, ADR-0011.
 
+## Lifecycle closeout findings — 2026-10-17
+
+- **MARINA-F-001 (P1, resolved):** the external acceptance probe omitted the
+  required newline and used a timeout shorter than observed CPU first-token
+  latency. Corrective harness: `scripts/accept-marina-lifecycle.py`.
+- **MARINA-F-002 (P1, resolved):** Marina exposed terminal generation events
+  before releasing the active-generation slot. The runtime now releases the
+  slot before terminal delivery for completion, cancellation, and failure.
+- **MARINA-F-003 (P2, open):** four console process-signal tests timed out
+  before the startup marker in one workspace run. This is tracked under
+  WP-0056 and is separate from the native Marina socket lifecycle gate.
+
+Acceptance evidence: final release binaries passed two independent prompts,
+streaming, real cancellation, post-cancel recovery, unload/reload,
+post-reload inference, healthy status, and clean shutdown. MARINA-F-003 still
+requires a stable process-test environment before that console gate closes.
+
 ## Implementation status (2026-10-07)
 
 Implemented for the local first slice: `marina` and `marinactl` communicate over

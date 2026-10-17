@@ -81,3 +81,27 @@ scheduling are real.
 
 This ADR is a target decision, not a claim that all capabilities are complete.
 WP-0057 through WP-0068 provide the implementation and validation sequence.
+
+The lifecycle closeout also requires terminal-event ordering: a completed,
+cancelled, or failed generation must release its active-generation admission
+slot before the terminal response is observable to the client. This is an
+implementation invariant under WP-0059, not a change to the backend-neutral
+architecture.
+
+## CPU-first closeout audit — 2026-10-17
+
+The final build verified embedded-template application and uninterrupted
+decoded real-GGUF output. The milestone remains open: final-binary independent
+request isolation and the cancellation/recovery/unload/reload/shutdown socket
+sequence did not complete and must not be inferred from unit tests.
+
+## Superseding implementation note — 2026-10-17
+
+The first native runner implementation passed raw prompts directly to the
+backend even when a GGUF contained `tokenizer.chat_template`. A real Qwen
+GGUF exposed this as unrelated instruction output despite successful model
+loading and process completion. The llama.cpp adapter now obtains and applies
+the embedded template for a single user message before tokenization, while
+retaining raw-prompt behavior for template-less models. This keeps prompt
+semantics inside the model execution adapter, preserves the backend-neutral
+runtime boundary, and makes prompt correctness a release acceptance property.

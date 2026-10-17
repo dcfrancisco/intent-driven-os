@@ -1,0 +1,16 @@
+# System-profile defaults. Environment variables in marina.service are the
+# explicit system-path overrides; this file remains safe to inspect offline.
+name: marina-system
+version: 0.1
+state_directory: /var/lib/marina
+model_directory: /var/lib/marina/models
+registry_path: /var/lib/marina/models.registry
+server:
+  listeners:
+    - name: local-http
+      transport: tcp
+      bind_address: 127.0.0.1
+      port: 12434
+  authentication:
+    enabled: true
+

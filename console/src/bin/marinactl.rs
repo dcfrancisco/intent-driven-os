@@ -30,13 +30,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .next()
             .ok_or("usage: marinactl auth token create [label]")?;
         if action == "token" && args.next().as_deref() == Some("create") {
-            let label = args.collect::<Vec<_>>().join(" ");
+            let arguments = args.collect::<Vec<_>>();
+            let scopes = arguments
+                .iter()
+                .find_map(|value| value.strip_prefix("--scopes="))
+                .map(|value| value.split(',').collect::<Vec<_>>());
+            let label = arguments
+                .iter()
+                .filter(|value| !value.starts_with("--scopes="))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
             let label = if label.is_empty() {
                 "local-client"
             } else {
                 &label
             };
-            let token = oid_runtime::auth::create_token(label)?;
+            let token = scopes.as_deref().map_or_else(
+                || oid_runtime::auth::create_token(label),
+                |scopes| oid_runtime::auth::create_token_with_scopes(label, scopes),
+            )?;
             println!("{token}");
             eprintln!(
                 "Token created in {}. Store the printed token securely; it cannot be recovered.",

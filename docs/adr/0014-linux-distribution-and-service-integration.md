@@ -136,7 +136,9 @@ purge, offline installation, and package signature verification.
 The current runner does not yet satisfy this ADR. The following are blocking
 gaps rather than optional enhancements:
 
-- no distro packages or service units;
+- Debian package prototype and service assets now exist under WP-0089, and the
+  isolated dpkg lifecycle test passes; native systemd/ABI qualification on
+  supported distributions remains open;
 - no profile-aware path resolver or system/user separation;
 - no authenticated/versioned transport (the current tab protocol is local
   development-only);

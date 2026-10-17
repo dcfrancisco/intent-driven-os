@@ -5,6 +5,32 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Scope required to discover models.
+pub const MODELS_READ: &str = "models:read";
+/// Scope required to run inference.
+pub const INFERENCE: &str = "inference";
+/// Scope required to cancel another principal's request.
+pub const INFERENCE_CANCEL_ANY: &str = "inference:cancel:any";
+/// Scope required to load, unload, or acquire models.
+pub const MODELS_ADMIN: &str = "models:admin";
+
+/// Authenticated bearer-token identity and scopes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenIdentity {
+    /// Stable local principal label.
+    pub principal: String,
+    /// Explicit capabilities granted to the token.
+    pub scopes: Vec<String>,
+}
+
+impl TokenIdentity {
+    /// Return whether this identity has a scope.
+    #[must_use]
+    pub fn allows(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|candidate| candidate == scope)
+    }
+}
+
 /// Return the local token database path.
 #[must_use]
 pub fn token_file() -> PathBuf {
@@ -24,6 +50,11 @@ pub fn token_file() -> PathBuf {
 
 /// Create a new opaque bearer token and return it once to the caller.
 pub fn create_token(label: &str) -> io::Result<String> {
+    create_token_with_scopes(label, &[MODELS_READ, INFERENCE, "inference:cancel:self"])
+}
+
+/// Create a token with explicitly configured scopes.
+pub fn create_token_with_scopes(label: &str, scopes: &[&str]) -> io::Result<String> {
     let path = token_file();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -36,17 +67,50 @@ pub fn create_token(label: &str) -> io::Result<String> {
     let token = random_token()?;
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
     restrict_permissions(&file)?;
-    writeln!(file, "{}\t{}", token, sanitize_label(label))?;
+    writeln!(
+        file,
+        "{}\t{}\t{}",
+        token,
+        sanitize_label(label),
+        scopes.join(",")
+    )?;
     Ok(token)
 }
 
 /// Validate a bearer token against the local token database.
 #[must_use]
 pub fn authenticate(candidate: &str) -> bool {
-    fs::read_to_string(token_file()).is_ok_and(|contents| {
-        contents.lines().any(|line| {
-            line.split_once('\t')
-                .is_some_and(|(token, _)| constant_time_eq(token.as_bytes(), candidate.as_bytes()))
+    identity(candidate).is_some()
+}
+
+/// Authenticate a bearer token and return its local principal and scopes.
+#[must_use]
+pub fn identity(candidate: &str) -> Option<TokenIdentity> {
+    fs::read_to_string(token_file()).ok().and_then(|contents| {
+        contents.lines().find_map(|line| {
+            let mut fields = line.split('\t');
+            let token = fields.next()?;
+            if !constant_time_eq(token.as_bytes(), candidate.as_bytes()) {
+                return None;
+            }
+            let principal = fields.next().unwrap_or("local-client").to_owned();
+            let scopes = fields
+                .next()
+                .map(|value| {
+                    value
+                        .split(',')
+                        .filter(|scope| !scope.trim().is_empty())
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![
+                        MODELS_READ.to_owned(),
+                        INFERENCE.to_owned(),
+                        "inference:cancel:self".to_owned(),
+                    ]
+                });
+            Some(TokenIdentity { principal, scopes })
         })
     })
 }
@@ -117,5 +181,17 @@ mod tests {
     fn compares_tokens_without_prefix_confusion() {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abcd"));
+    }
+
+    #[test]
+    fn token_identity_requires_explicit_scopes() {
+        let identity = TokenIdentity {
+            principal: "client-a".to_owned(),
+            scopes: vec![MODELS_READ.to_owned(), INFERENCE.to_owned()],
+        };
+        assert!(identity.allows(MODELS_READ));
+        assert!(identity.allows(INFERENCE));
+        assert!(!identity.allows(MODELS_ADMIN));
+        assert!(!identity.allows(INFERENCE_CANCEL_ANY));
     }
 }

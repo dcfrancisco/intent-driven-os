@@ -32,6 +32,9 @@ Implemented or substantially present:
 - Model discovery, model registry view, one active model, tokenization,
   streaming generation, cooperative cancellation, and basic statistics.
 - Marina daemon plus local `marinactl` Unix-socket boundary.
+- Native loopback HTTP API for health, model discovery/load, chat/completions,
+  bearer authentication, streaming, and request cancellation; the Python
+  bridge remains a migration edge.
 - The runner can be installed independently as `marina` plus `marinactl`; the
   interactive console is optional.
 - Governed operation lifecycle with approval, recovery, verification, rollback,
@@ -75,6 +78,13 @@ Not complete:
 9. **Linux application subsystem:** migrate the separate CA-Clipper project to
    a governed Rust/Linux subsystem for the OID distro after inventory,
    provenance, licensing, and data-compatibility gates (WP-0074).
+10. **Marina model lifecycle:** add governed dataset registration, training,
+    fine-tuning, evaluation, promotion, and rollback without coupling training
+    dependencies to inference (WP-0076, ADR-0020).
+11. **Marina native service API:** replace the Python bridge as a production
+    dependency with native HTTP, persistent listener configuration,
+    authentication, request lifecycle controls, OID client integration, and
+    resource admission before training begins (WP-0077, ADR-0021).
 
 The installation and productization track is WP-0064 through WP-0071: package
 the model runner daemon/client independently for Linux, macOS, and Windows,

@@ -25,6 +25,17 @@ streaming, cancellation, and basic metrics have validation evidence. The next
 work is WP-0057 through WP-0063, in order: contract hardening, trust/admission,
 service transport, routing, compatibility, recovery, then assistant sessions.
 
+The 2026-10-17 regression investigation found and corrected a prompt-semantic
+gap in the native adapter: embedded GGUF chat templates are now applied before
+tokenization. Level 5 local-runner status is based on the corrected binary's
+real-GGUF execution, not on process completion alone.
+
+The lifecycle closeout subsequently resolved two findings: the acceptance
+harness now sends newline-terminated tab-delimited frames, and Marina clears
+the active-generation admission slot before exposing terminal generation
+events. The final native lifecycle sequence passed; console process-signal
+startup-marker instability remains tracked separately under WP-0056.
+
 ## v0.2 — Resource and policy control
 
 Goal: make model execution predictable under resource contention.
@@ -82,9 +93,14 @@ runner, service, API, router, and isolation contracts are stable.
 - Add systemd user/system units, FHS paths, secure IPC, migration, rollback,
   uninstall/purge, and offline installation.
 - Validate clean installs and upgrades on the supported distro matrix.
+- Build the first reproducible OID bootable-image proof with Marina and OID
+  services ordered by readiness (WP-0088, ADR-0023). Image assets are in
+  progress; the builder now emits input/output checksums and preserves native
+  library symlinks, but VM qualification remains required.
 
 Exit criteria: Linux package and service checks pass in both user and system
-installation modes without a development checkout or OID dependency.
+installation modes without a development checkout or OID dependency, and the
+boot-to-governed-operation proof passes in the supported image environment.
 
 ## v1.0 — Production-grade runtime service
 
@@ -97,6 +113,45 @@ Goal: provide a stable, secure, and operable model resource service.
 - Define OIP integration contracts without coupling the runtime to OIP deployments.
 
 Exit criteria: production readiness review passes for security, reliability, observability, API compatibility, and documented backend support.
+
+## Parallel product track — Marina training and model lifecycle
+
+Training is a governed lifecycle capability layered after the inference
+contracts, native service API, request lifecycle, and resource admission; it
+is not a prerequisite for the first working runner. WP-0077 and ADR-0021 must
+complete before WP-0076/ADR-0020:
+
+- Deliver the native HTTP server and versioned API.
+- Persist listener configuration while preserving Unix-socket and Windows
+  loopback defaults.
+- Add authentication, scopes, cancellation, timeouts, quotas, and admission.
+- Integrate OID as a genuine Marina client and retain IDE compatibility.
+
+Then WP-0076 and ADR-0020 define the training sequence:
+
+- Establish backend-neutral training, dataset, artifact, lineage, and job-state
+  contracts (WP-0082, WP-0083).
+- Implement isolated job lifecycle, checkpoints, cancellation, and limits
+  (WP-0084).
+- Execute a bounded CPU-compatible small-model training proof (WP-0085).
+- Add artifact lineage, dataset/model hashes, evaluation, baseline comparison,
+  promotion approval, activation, and rollback (WP-0087, WP-0086).
+- Add hardware/resource eligibility, worker isolation, inference priority, and
+  training evidence.
+- Integrate LoRA/QLoRA only through replaceable training backends.
+
+Training must never automatically replace an active inference model or turn
+prompts, logs, or operating-system observations into training data.
+
+## WP-0077 qualification transfer gate
+
+WP-0077's macOS x86_64 local-only baseline and WP-0078's native Ubuntu
+26.04/AMD Phenom II x86_64 baseline are qualified. Windows, macOS arm64, and
+remote obligations remain tracked separately in WP-0079 through WP-0081 and
+must not be inferred from compilation. The GitHub Actions Ubuntu qualification
+workflow is an additional unverified baseline. ADR-0020 Phase 1 planning may
+proceed with WP-0082, but training execution cannot begin until its contracts,
+dataset governance, job isolation, and artifact boundaries are accepted.
 
 ## v1.x — AI desktop/OS agency
 

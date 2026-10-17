@@ -1,7 +1,7 @@
 //! Console-facing governed operation workflows.
 
 use oid_common::{ExecutionResult, OidError, OperationId};
-use oid_evidence_engine::FileEvidenceStore;
+use oid_evidence_engine::{EvidenceStore, FileEvidenceStore};
 use oid_linux_skills::{
     CreateDirectorySkill, LinuxSystemHealthSkill, SkillRequest, SystemHealthSkill,
 };
@@ -151,6 +151,37 @@ impl ConsoleOperations {
             ));
         }
         output.push(format!("State\n  {:?}", record.status).to_uppercase());
+        Ok(output)
+    }
+
+    /// Inspect durable inference evidence after a process restart.
+    pub fn inference_inspect(&self, raw_id: &str) -> Result<Vec<String>, OidError> {
+        let request_id = raw_id.trim();
+        if request_id.is_empty() {
+            return Err(OidError::InvalidInput("inference request id".to_owned()));
+        }
+        let path = self.pending_path.parent().map_or_else(
+            || PathBuf::from("evidence.log"),
+            |root| root.join("evidence.log"),
+        );
+        let history = FileEvidenceStore::new(path).inference_history(request_id)?;
+        if history.is_empty() {
+            return Err(OidError::NotFound(format!(
+                "inference evidence: {request_id}"
+            )));
+        }
+        let mut output = vec![format!("Inference {request_id}")];
+        for record in history {
+            output.push(format!(
+                "{}\n  Outcome: {}\n  Generation: {}\n  Model: {}\n  Verification: {}\n  Metrics: {}",
+                record.id,
+                record.outcome,
+                record.generation_id.unwrap_or_else(|| "unknown".to_owned()),
+                record.model,
+                record.verification,
+                record.metrics
+            ));
+        }
         Ok(output)
     }
 

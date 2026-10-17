@@ -632,3 +632,88 @@ Exact model used: `qwen2.5-0.5b-instruct-q4_k_m.gguf`
 Remaining blocker: **none for Level 5; native execution is CPU-only in this
 acceptance configuration.**  
 MODEL RUNNER MATURITY: **Level 5**
+
+## Current-build regression investigation — 2026-10-17
+
+The Level 5 historical result was re-executed against the current source at
+`6034903a3fd3d002812038ed650ba0d5b6f4a4`, rather than accepted from the prior
+label. The fresh release build used the pinned native library in
+`$HOME/.marina/lib` and the real model
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` (SHA-256
+`74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`).
+
+### Reproduced failure
+
+Before correction:
+
+```text
+marinactl generate qwen2.5-0.5b-instruct-q4_k_m "Hello from Marina"
+```
+
+loaded the intended GGUF but generated unrelated medical text about a
+46-year-old woman with BMI 27.7. The daemon reported successful completion
+only because the request reached its 128-token limit; the process exit was not
+treated as inference correctness.
+
+GGUF metadata inspection confirmed that the model contains
+`tokenizer.chat_template`. The runtime passed the raw user text directly to
+`llama_tokenize`, so the Qwen instruction model never received its required
+user/assistant role framing. This was a prompt-construction defect, not a model
+load, request-routing, or cancellation defect.
+
+### Correction and current evidence
+
+`runtime/adapters/llama-cpp/sys/src/lib.rs` now retrieves the embedded model
+chat template through `llama_model_chat_template`, formats a single user
+message with `llama_chat_apply_template`, and tokenizes that formatted prompt.
+Models without an embedded template retain the raw-prompt fallback.
+
+The rebuilt binary produced usable response text (`Hello Marina. Is`) for the
+same request, streamed incrementally, and returned a typed cancellation after
+Ctrl+C. A real-GGUF acceptance sequence then demonstrated two independent
+requests, unload, reload, and a post-reload request. The exact-response probe
+was not accepted as a model-quality guarantee under the default temperature
+and was retained as diagnostic evidence; deterministic semantic checks must
+control sampling explicitly.
+
+The native corrective test is available as an ignored, environment-gated test:
+
+```text
+MARINA_TEST_GGUF=$HOME/.marina/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+LLAMA_CPP_LIB_DIR=$HOME/.marina/lib LLAMA_CPP_REQUIRED=1 \
+cargo test -p oid-llama-cpp-sys --lib embedded_chat_template_formats_a_user_prompt -- --ignored
+```
+
+Current status remains **Level 5 for the CPU-first local runner**, with this
+regression correction verified on macOS x86_64. Other platform qualifications
+and broader production-service work remain separate gates.
+
+## Lifecycle blocker investigation — 2026-10-17
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MARINA-F-001 | The prior inline probe sent a literal `\\n`; Marina waited in `read_line`. A corrected frame reached `TOKEN\\tParis` after 50.0 seconds. | Harness escaping error plus a 30-second timeout below CPU first-token latency. | Added `scripts/accept-marina-lifecycle.py` with explicit `"\\t"`/`"\\n"` framing and 240-second bounds. | ADR-0011 | WP-0059 | Corrected harness returned terminal responses and cancellation. | RESOLVED |
+| MARINA-F-002 | After `DONE\\tcompleted`, the next request returned `model is busy`. | Marina sent the terminal message before clearing `active_generation`. | Clear the active slot before terminal completion, cancellation, or failure delivery. | ADR-0011 | WP-0059 | Final lifecycle run passed independent requests, cancellation, recovery, and no busy race. | RESOLVED |
+| MARINA-F-003 | Four console process-signal tests timed out waiting for `✓ Console ready`; two SIGTERM tests passed. | Not isolated; treated as process-test environment instability, not Marina IPC. | Keep open under WP-0056; rerun on a stable process-test environment. | ADR-0011 | WP-0056 | Native Marina lifecycle passed independently. | OPEN |
+
+The corrected final lifecycle run passed two independent prompts (`Paris` and
+`4`), incremental streaming, real cancellation after the first token
+(`DONE\\tcancelled\\t1`), post-cancel `Jupiter` recovery, healthy status,
+unload/reload, post-reload inference, and clean SIGTERM shutdown. The
+CPU-first local-runner gate is **GO**; MARINA-F-003 remains a separate open
+console test-environment finding.
+
+## Final closeout audit — 2026-10-17
+
+The final native decoder build passed uninterrupted real-GGUF generation with
+relevant decoded text and `DONE\tcompleted`; no `<|im_end|>`, malformed
+terminal marker, `Ġ`, or `Ċ` leakage was emitted. The adapter applies a
+present embedded template and does not silently fall back when application
+fails. The template test and `cargo test --workspace` passed.
+
+Strict Clippy at the final source and baseline `6034903` both produced 92
+identical diagnostics, all pre-existing workspace findings. The final-binary
+independent socket/lifecycle harness did not receive its first token and was
+stopped. That result was superseded by the corrected checked-in harness and the
+final lifecycle run recorded below; the remaining open item is the separate
+console process-signal startup-marker finding MARINA-F-003.
