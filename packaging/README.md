@@ -3,6 +3,33 @@
 These files implement the first system-profile image composition described by
 ADR-0023. Marina packaging remains governed by ADR-0014 and WP-0069.
 
+WP-0089 packages these same assets into a versioned Debian artifact with
+`scripts/package-oid-deb.sh`. It includes the existing Marina, `marinactl`,
+and `oid-console` binaries plus relocatable native libraries; it does not
+include model files. Run `scripts/qualify-oid-deb.sh` against the resulting
+package to test dpkg lifecycle behavior in an isolated root.
+
+Build the system package on native Linux from qualified artifacts:
+
+```sh
+./scripts/package-oid-deb.sh \
+  --version 0.1.0 \
+  --marina target/release/marina \
+  --marinactl target/release/marinactl \
+  --oid-console target/release/oid-console \
+  --native-lib-dir /path/to/qualified/llama/lib
+```
+
+Install or upgrade on an authorized Debian/Ubuntu host with `dpkg -i`; then
+explicitly enable/start the existing units with `systemctl`. Package removal
+does not purge `/var/lib/marina/models`, `/var/lib/oid/evidence`, or conffiles.
+The package does not bind or claim Ollama's port; Marina retains its documented
+loopback default and can be configured separately.
+
+For a rootless OID client installation, use `scripts/install-oid-user.sh`.
+It installs only `oid-console`; Marina remains managed by
+`scripts/install-model-runner.sh` under `$HOME/.marina`.
+
 The two services intentionally have different identities:
 
 - `marina.service` runs the model runner as `marina`, owns `/var/lib/marina`,

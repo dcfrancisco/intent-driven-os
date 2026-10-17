@@ -71,6 +71,13 @@ struct ModelParams {
 
 #[cfg(native_llama_cpp)]
 #[repr(C)]
+struct ChatMessage {
+    role: *const c_char,
+    content: *const c_char,
+}
+
+#[cfg(native_llama_cpp)]
+#[repr(C)]
 #[derive(Clone, Copy)]
 struct ContextParams {
     n_ctx: u32,
@@ -142,7 +149,9 @@ unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
 
 #[cfg(native_llama_cpp)]
 mod ffi {
-    use super::{c_char, c_void, Batch, ContextParams, ModelParams, SamplerChainParams};
+    use super::{
+        c_char, c_void, Batch, ChatMessage, ContextParams, ModelParams, SamplerChainParams,
+    };
 
     #[allow(improper_ctypes)]
     extern "C" {
@@ -153,7 +162,19 @@ mod ffi {
         pub fn llama_model_load_from_file(path: *const c_char, params: ModelParams) -> *mut c_void;
         pub fn llama_model_free(model: *mut c_void);
         pub fn llama_model_get_vocab(model: *const c_void) -> *const c_void;
+        pub fn llama_model_chat_template(
+            model: *const c_void,
+            name: *const c_char,
+        ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
+        pub fn llama_chat_apply_template(
+            template: *const c_char,
+            chat: *const ChatMessage,
+            n_msg: usize,
+            add_ass: bool,
+            buffer: *mut c_char,
+            buffer_size: i32,
+        ) -> i32;
         pub fn llama_context_default_params() -> ContextParams;
         pub fn llama_init_from_model(model: *mut c_void, params: ContextParams) -> *mut c_void;
         pub fn llama_free(ctx: *mut c_void);
@@ -341,6 +362,64 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
+    fn format_prompt(&self, prompt: &str) -> Result<String, String> {
+        unsafe {
+            let template =
+                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
+            if template.is_null() {
+                return Ok(prompt.to_owned());
+            }
+
+            let user_role = CString::new("user").map_err(|_| "invalid chat role".to_owned())?;
+            let content = CString::new(prompt).map_err(|_| "prompt contains NUL".to_owned())?;
+            let message = ChatMessage {
+                role: user_role.as_ptr(),
+                content: content.as_ptr(),
+            };
+            let required = ffi::llama_chat_apply_template(
+                template,
+                &raw const message,
+                1,
+                true,
+                std::ptr::null_mut(),
+                0,
+            );
+            if required < 0 {
+                return Err(format!(
+                    "llama.cpp could not apply the model chat template: {required}"
+                ));
+            }
+            let capacity = required
+                .checked_add(1)
+                .ok_or_else(|| "formatted prompt is too large".to_owned())?;
+            let mut buffer = vec![
+                0_i8;
+                usize::try_from(capacity)
+                    .map_err(|_| "formatted prompt is too large".to_owned())?
+            ];
+            let written = ffi::llama_chat_apply_template(
+                template,
+                &raw const message,
+                1,
+                true,
+                buffer.as_mut_ptr(),
+                capacity,
+            );
+            if written < 0 {
+                return Err(format!(
+                    "llama.cpp could not format the model chat template: {written}"
+                ));
+            }
+            let bytes = std::slice::from_raw_parts(
+                buffer.as_ptr().cast::<u8>(),
+                usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
+            );
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
     unsafe fn detokenize(vocabulary: *const c_void, tokens: &[i32]) -> Result<Vec<u8>, String> {
         let token_count = i32::try_from(tokens.len()).map_err(|_| "too many tokens".to_owned())?;
         let mut capacity = tokens
@@ -417,7 +496,8 @@ impl NativeModel {
         }
         #[cfg(native_llama_cpp)]
         {
-            let mut prompt_tokens = self.tokenize(prompt)?;
+            let formatted_prompt = self.format_prompt(prompt)?;
+            let mut prompt_tokens = self.tokenize(&formatted_prompt)?;
             let prompt_count = prompt_tokens.len() as u64;
             let max_context =
                 usize::try_from(context_size).map_err(|_| "context too large".to_owned())?;
@@ -585,6 +665,24 @@ impl NativeModel {
 #[cfg(test)]
 mod tests {
     use super::{classify_decode_result, decode_error, DecodeOutcome};
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    fn embedded_chat_template_formats_a_user_prompt() {
+        let model_path = std::env::var("MARINA_TEST_GGUF")
+            .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let formatted = model
+            .format_prompt("Reply with exactly: MARINA_OK")
+            .expect("embedded chat template should format the prompt");
+        assert!(formatted.contains("<|im_start|>user"));
+        assert!(formatted.contains("Reply with exactly: MARINA_OK"));
+        assert!(formatted.contains("<|im_start|>assistant"));
+        drop(model);
+        super::shutdown();
+    }
 
     #[test]
     fn native_abort_is_cancellation_only_when_requested() {

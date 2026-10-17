@@ -632,3 +632,58 @@ Exact model used: `qwen2.5-0.5b-instruct-q4_k_m.gguf`
 Remaining blocker: **none for Level 5; native execution is CPU-only in this
 acceptance configuration.**  
 MODEL RUNNER MATURITY: **Level 5**
+
+## Current-build regression investigation — 2026-10-17
+
+The Level 5 historical result was re-executed against the current source at
+`6034903a3fd3d002812038ed650ba0d5b6f4a4`, rather than accepted from the prior
+label. The fresh release build used the pinned native library in
+`$HOME/.marina/lib` and the real model
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` (SHA-256
+`74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`).
+
+### Reproduced failure
+
+Before correction:
+
+```text
+marinactl generate qwen2.5-0.5b-instruct-q4_k_m "Hello from Marina"
+```
+
+loaded the intended GGUF but generated unrelated medical text about a
+46-year-old woman with BMI 27.7. The daemon reported successful completion
+only because the request reached its 128-token limit; the process exit was not
+treated as inference correctness.
+
+GGUF metadata inspection confirmed that the model contains
+`tokenizer.chat_template`. The runtime passed the raw user text directly to
+`llama_tokenize`, so the Qwen instruction model never received its required
+user/assistant role framing. This was a prompt-construction defect, not a model
+load, request-routing, or cancellation defect.
+
+### Correction and current evidence
+
+`runtime/adapters/llama-cpp/sys/src/lib.rs` now retrieves the embedded model
+chat template through `llama_model_chat_template`, formats a single user
+message with `llama_chat_apply_template`, and tokenizes that formatted prompt.
+Models without an embedded template retain the raw-prompt fallback.
+
+The rebuilt binary produced usable response text (`Hello Marina. Is`) for the
+same request, streamed incrementally, and returned a typed cancellation after
+Ctrl+C. A real-GGUF acceptance sequence then demonstrated two independent
+requests, unload, reload, and a post-reload request. The exact-response probe
+was not accepted as a model-quality guarantee under the default temperature
+and was retained as diagnostic evidence; deterministic semantic checks must
+control sampling explicitly.
+
+The native corrective test is available as an ignored, environment-gated test:
+
+```text
+MARINA_TEST_GGUF=$HOME/.marina/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+LLAMA_CPP_LIB_DIR=$HOME/.marina/lib LLAMA_CPP_REQUIRED=1 \
+cargo test -p oid-llama-cpp-sys --lib embedded_chat_template_formats_a_user_prompt -- --ignored
+```
+
+Current status remains **Level 5 for the CPU-first local runner**, with this
+regression correction verified on macOS x86_64. Other platform qualifications
+and broader production-service work remain separate gates.

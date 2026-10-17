@@ -25,6 +25,11 @@ streaming, cancellation, and basic metrics have validation evidence. The next
 work is WP-0057 through WP-0063, in order: contract hardening, trust/admission,
 service transport, routing, compatibility, recovery, then assistant sessions.
 
+The 2026-10-17 regression investigation found and corrected a prompt-semantic
+gap in the native adapter: embedded GGUF chat templates are now applied before
+tokenization. Level 5 local-runner status is based on the corrected binary's
+real-GGUF execution, not on process completion alone.
+
 ## v0.2 — Resource and policy control
 
 Goal: make model execution predictable under resource contention.

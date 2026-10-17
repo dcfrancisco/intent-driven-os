@@ -20,6 +20,18 @@ the final delivery phase after those contracts are stable. Marina is the
 standalone service; OID, assistants, and system workflows are clients of its
 public API.
 
+### Regression gate completed 2026-10-17
+
+- [x] Apply the embedded GGUF chat template before tokenization when present.
+- [x] Preserve raw-prompt fallback for models without a chat template.
+- [x] Rebuild and reproduce the corrected behavior with a real Qwen GGUF.
+- [x] Verify streaming, cancellation, independent requests, unload/reload,
+      and post-reload inference on the corrected binary.
+
+The acceptance evidence and the original failed output are retained in
+`docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
+sampling-controlled qualification concern, not a process-exit assertion.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

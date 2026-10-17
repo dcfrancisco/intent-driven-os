@@ -40,7 +40,8 @@ and Marina managed as separate system components.
 ## Dependencies
 
 ADR-0023, ADR-0014, ADR-0016, ADR-0017, ADR-0021, WP-0069, WP-0071, WP-0077,
-and a qualified Marina Linux baseline from WP-0078.
+and a qualified Marina Linux baseline from WP-0078, plus the packaged Linux
+environment milestone WP-0089.
 
 ## Status
 
@@ -78,13 +79,17 @@ purge semantics. WP-0069 remains the packaging prerequisite; this WP does not
 replace distro-native install/upgrade qualification.
 
 The current repository evidence is limited to source inspection and shell
-validation. A real Linux image build, VM boot, model inference, governed
-operation, offline boot, reboot persistence, and service recovery remain
-UNVERIFIED until executed on a Linux host or VM.
+validation. The in-VM helper now also checks service identities and persistent
+state directories, but it deliberately reports model inference, governed
+operation, and reboot persistence as unverified until those scenarios execute.
+A real Linux image build, VM boot, model inference, governed operation,
+offline boot, reboot persistence, and service recovery remain UNVERIFIED until
+executed on a Linux host or VM.
 
 ## Current verification
 
-Passed: shell syntax checks and `git diff --check`.
+Passed: shell syntax checks and `git diff --check`; the builder emits a
+machine-readable image/input hash manifest.
 
 Unverified: real image build, VM boot, native systemd startup, GGUF inference,
 governed operation, offline boot, reboot evidence persistence, and restart

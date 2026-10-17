@@ -2,7 +2,8 @@
 
 - Status: Proposed
 - Date: 2026-10-09
-- Related: ADR-0014, ADR-0016, ADR-0017, ADR-0021; WP-0069, WP-0071, WP-0088
+- Related: ADR-0014, ADR-0016, ADR-0017, ADR-0021; WP-0069, WP-0071, WP-0088,
+  WP-0089
 
 ## Context
 
@@ -65,6 +66,11 @@ ordering, offline behavior, and system-level acceptance test.
 
 This ADR does not authorize training execution, cloud BYOK, distributed
 training, autonomous OS mutation, or a custom kernel/distribution build.
+
+WP-0089 is a prerequisite packaging milestone for WP-0088. The bootable image
+must consume an operationally qualified package or equivalent package
+contents; image composition must not become the first place where install,
+upgrade, service identity, and data-retention behavior is tested.
 
 ## Initial implementation work package
 

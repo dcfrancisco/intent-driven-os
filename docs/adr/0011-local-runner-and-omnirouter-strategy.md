@@ -81,3 +81,14 @@ scheduling are real.
 
 This ADR is a target decision, not a claim that all capabilities are complete.
 WP-0057 through WP-0068 provide the implementation and validation sequence.
+
+## Superseding implementation note — 2026-10-17
+
+The first native runner implementation passed raw prompts directly to the
+backend even when a GGUF contained `tokenizer.chat_template`. A real Qwen
+GGUF exposed this as unrelated instruction output despite successful model
+loading and process completion. The llama.cpp adapter now obtains and applies
+the embedded template for a single user message before tokenization, while
+retaining raw-prompt behavior for template-less models. This keeps prompt
+semantics inside the model execution adapter, preserves the backend-neutral
+runtime boundary, and makes prompt correctness a release acceptance property.

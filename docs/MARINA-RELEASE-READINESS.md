@@ -3,6 +3,21 @@
 This checklist separates a local, user-scoped Marina release from a remote
 deployment. Compilation is not runtime qualification.
 
+## Current regression state — 2026-10-17
+
+The current source was rebuilt and executed against the real Qwen GGUF on
+macOS x86_64. The previous build accepted raw prompts without applying the
+model's embedded `tokenizer.chat_template`, reproducing unrelated output for
+`Hello from Marina`. The native adapter now applies the embedded template
+before tokenization. The corrected build produced usable streamed text and
+passed independent-request, cancellation, unload/reload, and post-reload
+inference checks. See the dated evidence in the
+[model-runner reality review](reviews/model-runner-reality-review.md).
+
+This correction supersedes the earlier inference evidence for prompt-quality
+claims; prior completion/exit-status records remain historical traceability,
+not current correctness evidence.
+
 ## Local-only release acceptance
 
 - [x] Native release binary loads the pinned local llama.cpp libraries.

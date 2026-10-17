@@ -88,5 +88,6 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0086 | Marina Training Evaluation | Baselines, evaluation, promotion gates, activation, and rollback |
 | WP-0087 | Marina Artifact Lineage | Immutable model, adapter, checkpoint, and conversion lineage |
 | WP-0088 | OID Bootable Linux Image | Reproducible image, boot lifecycle, services, and governed-operation proof |
+| WP-0089 | OID/Marina Packaged Linux Environment | Versioned Debian artifact and isolated install/upgrade/removal qualification |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

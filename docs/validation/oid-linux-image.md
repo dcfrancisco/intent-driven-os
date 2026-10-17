@@ -73,6 +73,8 @@ missing-model degraded boot, real GGUF inference, governed plan/authorization/
 execution/verification, offline startup, service restart, and evidence
 survival across reboot. `scripts/qualify-oid-image.sh` only checks boot and
 service invariants; it is not a substitute for those end-to-end tests.
+Its JSON output explicitly leaves inference, governed operation, and reboot
+persistence as `unverified` until an operator records those executed results.
 
 ## Current status
 
