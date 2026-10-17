@@ -27,17 +27,20 @@ pub type MarinaStream = TcpStream;
 /// Return the configured Marina Unix socket path.
 #[must_use]
 pub fn socket_path() -> PathBuf {
-    env::var_os("MARINA_SOCKET").map_or_else(
-        || {
-            env::var_os("MARINA_HOME")
-                .or_else(|| env::var_os("HOME"))
-                .map_or_else(
-                    || PathBuf::from(".marina/marina.sock"),
-                    |home| PathBuf::from(home).join(".marina/marina.sock"),
-                )
-        },
-        PathBuf::from,
-    )
+    env::var_os("TALVIK_SOCKET")
+        .or_else(|| env::var_os("MARINA_SOCKET"))
+        .map_or_else(
+            || {
+                env::var_os("TALVIK_HOME")
+                    .or_else(|| env::var_os("MARINA_HOME"))
+                    .or_else(|| env::var_os("HOME"))
+                    .map_or_else(
+                        || PathBuf::from(".marina/marina.sock"),
+                        |home| PathBuf::from(home).join(".marina/marina.sock"),
+                    )
+            },
+            PathBuf::from,
+        )
 }
 
 /// Return the configured local endpoint for the current platform.
@@ -49,7 +52,9 @@ pub fn endpoint() -> String {
     }
     #[cfg(windows)]
     {
-        return env::var("MARINA_TCP_ADDR").unwrap_or_else(|_| "127.0.0.1:11434".to_owned());
+        return env::var("TALVIK_TCP_ADDR")
+            .or_else(|_| env::var("MARINA_TCP_ADDR"))
+            .unwrap_or_else(|_| "127.0.0.1:11434".to_owned());
     }
 }
 

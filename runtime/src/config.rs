@@ -23,7 +23,8 @@ pub fn http_config() -> Result<HttpConfig, String> {
         .zip(values.get("server.listeners.0.port"))
         .map(|(host, port)| format!("{host}:{port}"));
     let nested_transport = values.get("server.listeners.0.transport");
-    let address = std::env::var("MARINA_HTTP_ADDR")
+    let address = std::env::var("TALVIK_HTTP_ADDR")
+        .or_else(|_| std::env::var("MARINA_HTTP_ADDR"))
         .ok()
         .or_else(|| values.get("http_address").cloned())
         .or_else(|| values.get("server_http_address").cloned())
@@ -32,8 +33,9 @@ pub fn http_config() -> Result<HttpConfig, String> {
     if let Some(address) = address.as_deref() {
         let parsed = address
             .parse::<SocketAddr>()
-            .map_err(|error| format!("invalid MARINA_HTTP_ADDR {address}: {error}"))?;
-        let allow_non_loopback = std::env::var("MARINA_HTTP_ALLOW_NON_LOOPBACK")
+            .map_err(|error| format!("invalid TALVIK_HTTP_ADDR {address}: {error}"))?;
+        let allow_non_loopback = std::env::var("TALVIK_HTTP_ALLOW_NON_LOOPBACK")
+            .or_else(|_| std::env::var("MARINA_HTTP_ALLOW_NON_LOOPBACK"))
             .ok()
             .or_else(|| values.get("http_allow_non_loopback").cloned())
             .is_some_and(|value| {
@@ -41,11 +43,12 @@ pub fn http_config() -> Result<HttpConfig, String> {
             });
         if !parsed.ip().is_loopback() && !allow_non_loopback {
             return Err(format!(
-                "HTTP address {address} is not loopback; set MARINA_HTTP_ALLOW_NON_LOOPBACK=true only for an explicitly secured deployment"
+                "HTTP address {address} is not loopback; set TALVIK_HTTP_ALLOW_NON_LOOPBACK=true only for an explicitly secured deployment"
             ));
         }
     }
-    let authentication_enabled = std::env::var("MARINA_HTTP_AUTH")
+    let authentication_enabled = std::env::var("TALVIK_HTTP_AUTH")
+        .or_else(|_| std::env::var("MARINA_HTTP_AUTH"))
         .ok()
         .or_else(|| values.get("server.authentication.enabled").cloned())
         .or_else(|| values.get("http_authentication_enabled").cloned())
@@ -61,7 +64,8 @@ pub fn http_config() -> Result<HttpConfig, String> {
 /// Return the current user's home directory across supported platforms.
 #[must_use]
 pub fn home_directory() -> Option<std::path::PathBuf> {
-    std::env::var_os("MARINA_HOME")
+    std::env::var_os("TALVIK_HOME")
+        .or_else(|| std::env::var_os("MARINA_HOME"))
         .or_else(|| std::env::var_os("HOME"))
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(std::path::PathBuf::from)
@@ -70,15 +74,17 @@ pub fn home_directory() -> Option<std::path::PathBuf> {
 /// Return the user-scoped YAML configuration path.
 #[must_use]
 pub fn config_file() -> PathBuf {
-    std::env::var_os("MARINA_CONFIG").map_or_else(
-        || {
-            home_directory().map_or_else(
-                || PathBuf::from(".marina/config.yaml"),
-                |home| home.join(".marina/config.yaml"),
-            )
-        },
-        PathBuf::from,
-    )
+    std::env::var_os("TALVIK_CONFIG")
+        .or_else(|| std::env::var_os("MARINA_CONFIG"))
+        .map_or_else(
+            || {
+                home_directory().map_or_else(
+                    || PathBuf::from(".marina/config.yaml"),
+                    |home| home.join(".marina/config.yaml"),
+                )
+            },
+            PathBuf::from,
+        )
 }
 
 /// Load the deterministic Phase 1 configuration.
@@ -89,15 +95,17 @@ pub fn config_file() -> PathBuf {
 pub fn load() -> Result<RuntimeConfig, String> {
     let mut config = RuntimeConfig::default();
     let file_values = read_config_file(&config_file())?;
-    let state = std::env::var_os("MARINA_STATE_DIR").map_or_else(
-        || {
-            file_values
-                .get("state_directory")
-                .map(|value| configured_path(value))
-                .or_else(|| home_directory().map(|home| home.join(".marina")))
-        },
-        |path| Some(std::path::PathBuf::from(path)),
-    );
+    let state = std::env::var_os("TALVIK_STATE_DIR")
+        .or_else(|| std::env::var_os("MARINA_STATE_DIR"))
+        .map_or_else(
+            || {
+                file_values
+                    .get("state_directory")
+                    .map(|value| configured_path(value))
+                    .or_else(|| home_directory().map(|home| home.join(".marina")))
+            },
+            |path| Some(std::path::PathBuf::from(path)),
+        );
     if let Some(name) = file_values.get("name") {
         config.name.clone_from(name);
     }
@@ -108,14 +116,16 @@ pub fn load() -> Result<RuntimeConfig, String> {
     // runtime then uses its complete discovery set, including the canonical
     // Marina store and compatible local caches. An explicit directory is an
     // isolation boundary used by tests and operators.
-    config.model_directory = std::env::var_os("MARINA_MODEL_DIR")
+    config.model_directory = std::env::var_os("TALVIK_MODEL_DIR")
+        .or_else(|| std::env::var_os("MARINA_MODEL_DIR"))
         .map(std::path::PathBuf::from)
         .or_else(|| {
             file_values
                 .get("model_directory")
                 .map(|value| configured_path(value))
         });
-    config.registry_path = std::env::var_os("MARINA_REGISTRY")
+    config.registry_path = std::env::var_os("TALVIK_REGISTRY")
+        .or_else(|| std::env::var_os("MARINA_REGISTRY"))
         .map(std::path::PathBuf::from)
         .or_else(|| {
             file_values

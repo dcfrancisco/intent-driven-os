@@ -60,6 +60,13 @@ backends require explicit opt-in, isolated credentials, endpoint health, and
 cost attribution. Fallback never silently changes data-handling policy or
 model identity; a changed backend is visible in the response and audit record.
 
+Routing is optional and disabled by default. The direct model-selection path
+must remain available. The first productized slice may provide explicit,
+ordered local-model fallback at the client boundary, provided it reports each
+candidate, never falls back after streaming begins, and cannot enable itself.
+Capability-aware backend/provider routing and durable route evidence remain
+gated by WP-0060.
+
 ## Alternatives considered
 
 - **Ollama as the permanent runtime:** rejected because it hides lifecycle,

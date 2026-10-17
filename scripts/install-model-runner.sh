@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install the Marina model-runner service and client without installing the
+# Install the Talvik model runner without installing the
 # interactive OID console. Native llama.cpp is installed separately under
 # $HOME/.marina/lib. Pass --native-lib-dir when installing a locally built
 # release payload; GitHub release archives already contain this directory.
@@ -36,7 +36,7 @@ if [[ -n "$NATIVE_LIB_DIR" ]]; then
   export LLAMA_CPP_REQUIRED=1
 fi
 cargo install --path "$ROOT/console" --root "$PREFIX" --locked --force \
-  --bin marina --bin marinactl
+  --bin talvik --bin marina --bin marinactl
 
 if [[ -n "$NATIVE_LIB_DIR" ]]; then
   [[ -d "$NATIVE_LIB_DIR" ]] || { echo "native library directory not found: $NATIVE_LIB_DIR" >&2; exit 1; }
@@ -51,17 +51,18 @@ if [[ -n "$NATIVE_LIB_DIR" ]]; then
   fi
 fi
 
-STATE_DIR="${MARINA_STATE_DIR:-${HOME}/.marina}"
-MODEL_DIR="${MARINA_MODEL_DIR:-$STATE_DIR/models}"
+STATE_DIR="${TALVIK_STATE_DIR:-${MARINA_STATE_DIR:-${HOME}/.marina}}"
+MODEL_DIR="${TALVIK_MODEL_DIR:-${MARINA_MODEL_DIR:-$STATE_DIR/models}}"
 mkdir -p "$STATE_DIR" "$MODEL_DIR"
 echo
-echo "Installed model-runner service: $PREFIX/bin/marina"
-echo "Installed model-runner client:  $PREFIX/bin/marinactl"
+echo "Installed model runner:         $PREFIX/bin/talvik"
+echo "Compatibility service:         $PREFIX/bin/marina"
+echo "Compatibility client:          $PREFIX/bin/marinactl"
 echo "Runtime state directory:        $STATE_DIR"
 echo "Model directory:                $MODEL_DIR"
 echo
-echo "Start the service with: marina"
-echo "Check it with: marinactl status"
+echo "Start the service with: talvik serve"
+echo "Check it with: talvik status"
 echo "Add $PREFIX/bin to PATH if needed."
 if [[ -d "$PREFIX/lib" ]] && [[ -n "$(find "$PREFIX/lib" -maxdepth 1 -type f -print -quit)" ]]; then
   echo "Native backend libraries:       $PREFIX/lib"

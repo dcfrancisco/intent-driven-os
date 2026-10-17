@@ -8,30 +8,32 @@ The product has three distinct layers:
 
 - **OID** — the Linux AI desktop/OS, policy, approvals, skills, verification,
   recovery, and evidence plane.
-- **Marina** — the standalone model runner and local AI service. Marina is the
-  cross-platform release for Linux, macOS, and Windows.
+- **Talvik** — the provisional name of the standalone model runtime and local
+  AI service. Talvik is the cross-platform release for Linux, macOS, and
+  Windows.
 - **OID OS Model** — a future specialized model for computer-management plans
-  and typed tool proposals, served by Marina but never granted direct OS
+  and typed tool proposals, served by Talvik but never granted direct OS
   authority.
 
 The Rust CA-Clipper subsystem is a separate Linux OID product track. It is not
-part of Marina and is being migrated from the legacy archive only after
+part of Talvik and is being migrated from the legacy archive only after
 inventory, provenance, licensing, and data-compatibility review.
 
 ## Status
 
-This repository contains the Rust workspace, Marina runner, OID runtime, and
+This repository contains the Rust workspace, Talvik runner, OID runtime, and
 interactive console reference client. The local runner currently supports a
 backend-neutral llama.cpp boundary, GGUF discovery, model lifecycle, tokenizer
 routing, streamed text generation, cancellation, metrics, local bearer tokens,
 and a small OpenAI-compatible IDE bridge.
 
-The current runner is still a focused CPU-first release slice: one loaded
-model, one active generation, local-first operation, and no remote provider
-routing. Chat sessions, tools, embeddings, full provider secrets, production
+The current runner is a focused CPU-first release slice: one loaded model, one
+active generation, and local-first operation. Optional ordered local-model
+fallback is available but disabled by default. Chat sessions, tools,
+embeddings, full provider secrets, capability-aware remote routing, production
 scheduling, and Linux distro packaging remain later work.
 
-For the local Marina installation, native libraries live in
+For compatibility, the local Talvik installation continues to use
 `$HOME/.marina/lib` and models live in `$HOME/.marina/models`:
 
 ```sh
@@ -52,6 +54,10 @@ Environment variables such as `MARINA_HOME`, `MARINA_CONFIG`,
 `MARINA_MODEL_DIR`, `MARINA_REGISTRY`, and `MARINA_STATE_DIR` override the YAML
 file. This keeps tests, CI, and isolated deployments explicit while normal
 user installations share one stable configuration.
+
+New deployments should use the equivalent `TALVIK_*` names; they take
+precedence over the Marina aliases. See [Talvik Model Runtime](docs/TALVIK.md)
+for commands, routing configuration, security defaults, and migration rules.
 
 The directory must contain the native `libllama` library. If it is not set or
 does not contain a usable library, the backend reports unavailable.

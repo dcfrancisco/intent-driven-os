@@ -199,6 +199,7 @@ impl RuntimeService for MarinaRuntime {
             .config
             .model_directory
             .clone()
+            .or_else(|| std::env::var_os("TALVIK_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| {
                 std::env::var_os("HOME")

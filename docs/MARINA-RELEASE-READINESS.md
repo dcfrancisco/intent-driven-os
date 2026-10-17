@@ -1,7 +1,11 @@
-# Marina Runtime Release Readiness
+# Talvik Runtime Release Readiness (Marina Compatibility)
 
 This checklist separates a local, user-scoped Marina release from a remote
 deployment. Compilation is not runtime qualification.
+
+Talvik is the provisional primary identity. This file retains its historical
+name so existing evidence links remain stable. Marina commands and the
+`$HOME/.marina` store are compatibility surfaces during migration.
 
 ## Current regression state — 2026-10-17
 
@@ -122,3 +126,51 @@ by the corrected harness and lifecycle evidence recorded below.
 The corrected final-binary lifecycle run passed independent prompts, streaming,
 real cancellation, post-cancel recovery, unload/reload, post-reload inference,
 status, and shutdown. The CPU-first Marina local-runner gate is **GO**.
+
+## Talvik productization verification — 2026-10-17
+
+The primary `talvik` release binary was built against the same pinned native
+libraries and real Qwen GGUF. The first productization lifecycle rerun exposed
+`TALVIK-F-001`: the llama.cpp adapter published its terminal event before
+clearing its private generation-admission flag. This was distinct from the
+previously corrected runtime-service slot. The adapter now restores `Ready`
+and clears its flag before publishing completed, cancelled, or failed events.
+
+The corrected lifecycle run passed:
+
+- independent prompts without context leakage: `Paris` and `4`;
+- incremental first-token delivery and `DONE\tcompleted`;
+- cancellation after one token with `DONE\tcancelled\t1`;
+- immediate post-cancellation recovery with `Jupiter`;
+- unload, empty loaded-model status, fallback-driven reload, and post-reload
+  inference with `READY`;
+- explicit fallback from `missing-model` to the Qwen model;
+- uninterrupted direct CLI inference with `Tokyo` and `DONE completed`;
+- process shutdown after acceptance, with the socket no longer accepting
+  requests.
+
+Routing remained disabled by default and required both
+`TALVIK_ROUTING_ENABLED=1` and an ordered `TALVIK_ROUTE_MODELS` list. Fallback
+was not permitted after output began.
+
+Strict workspace Clippy still reports the same 92 pre-existing diagnostics as
+the recorded baseline. A strict no-dependency comparison of the compatibility
+`marina` binary and the new `talvik` binary reports the same 17 diagnostic
+headings; there are no Talvik-specific strict findings. Four unrelated
+`oid-console` process-signal tests continue to reproduce `MARINA-F-003` while
+two SIGTERM cases pass. That finding remains tracked under WP-0056 and does not
+invalidate the standalone runtime lifecycle evidence.
+
+The CPU-first standalone Talvik runtime gate is **GO** on the qualified macOS
+x86_64 host. Cross-platform publication, public-name clearance, capability-
+aware multi-backend routing, and remote-provider qualification remain separate
+release gates.
+
+Final release artifact hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `target/release/talvik` | `0f9ffcd0c5177a0a46ccb773d3578a5e5f62191b9aac2bbc61f5bbb778258a6c` |
+| `target/release/marina` | `0722a82dfd7ba63b2d9ba1f06d521ee4554721ca6402ab7f95fd867f137dafb9` |
+| `target/release/marinactl` | `fdbc31f2d5b41124517b90514d676d1e500ccd927468a93e180e603eeb108168` |
+| Qwen acceptance GGUF | `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db` |

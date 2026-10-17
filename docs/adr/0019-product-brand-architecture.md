@@ -1,4 +1,4 @@
-# ADR-0019: OID Product Brand Architecture
+# ADR-0019: OID and Standalone Runtime Product Brand Architecture
 
 - Status: Accepted
 - Date: 2026-10-07
@@ -13,11 +13,11 @@ jobs, and release surfaces:
 | Brand | Product role | Primary promise | Release scope |
 | --- | --- | --- | --- |
 | **OID** / **Open Intelligence Desktop** | AI desktop/OS control plane | Prompt the computer; understand, plan, operate, verify, and recover | Linux-first distro/product |
-| **Marina** | Standalone model runner and local AI service | Run and expose models reliably on a developer machine | Linux, macOS, Windows |
+| **Talvik** (provisional) | Standalone model runtime and local AI service | Run and expose models reliably on a developer machine | Linux, macOS, Windows |
 | **OID OS Model** | Specialized model for computer management | Turn computer context into safe typed plans and proposals | Served through Marina |
 | **Rust CA-Clipper subsystem** | Linux business/application subsystem | Bring the CA-Clipper domain forward into the OID Linux product | Linux OID distro |
 
-Marina is not the name of the operating system. OID is not the name of the
+Talvik is not the name of the operating system. OID is not the name of the
 model runner. The OS-management model is not the agent, policy engine, or
 operating system. This separation must appear in documentation, installers,
 UI labels, API metadata, screenshots, and launch messaging.
@@ -27,7 +27,7 @@ UI labels, API metadata, screenshots, and launch messaging.
 OID: “An AI desktop that makes the computer understandable, operable, and
 recoverable—with the user in control.”
 
-Marina: “A local-first model runner for developers, assistants, and OID.”
+Talvik: “A local-first model runtime for developers, assistants, and OID.”
 
 The product story starts with a working local model, but the differentiated
 value is governed computer agency: context, plans, approvals, bounded skills,
@@ -36,7 +36,11 @@ preview, planned, and unavailable capabilities.
 
 ## Naming and messaging rules
 
-- Use **Marina model runner** or **Marina service** for the standalone runner.
+- Use **Talvik model runtime** or **Talvik service** for the standalone runner.
+- Treat Talvik as a provisional engineering identity until public-name
+  clearance is recorded. This does not block runtime development.
+- Use **Marina** only for compatibility commands, paths, historical evidence,
+  and migration documentation.
 - Use **OID AI desktop/OS** for the Linux product.
 - Use **OID OS-management model** until a model name is deliberately approved.
 - Do not call Marina an operating system, autonomous agent, or full gateway
@@ -49,14 +53,28 @@ preview, planned, and unavailable capabilities.
 
 ## Launch sequence
 
-1. Marina local model runner: install, discover, load, chat, stream, cancel,
+1. Talvik local model runtime: install, discover, load, chat, stream, cancel,
    inspect, and authenticate clients.
-2. Marina assistant edge: stable OpenAI/Ollama-compatible subset and IDE use.
+2. Talvik assistant edge: stable OpenAI/Ollama-compatible subset and IDE use.
 3. OID Linux AI desktop: governed plans, skills, approvals, verification, and
    recovery.
 4. OID OS-management model: specialized model evaluation and release.
-5. OID Linux distro: integrated Marina, OID, model variants, and Linux
+5. OID Linux distro: integrated Talvik, OID, model variants, and Linux
    subsystems such as Rust CA-Clipper.
 
 This ADR governs product language and portfolio boundaries; it does not claim
 that the later products or capabilities are implemented.
+
+## 2026-10-17 migration amendment
+
+The primary executable is consolidated as `talvik`, with service and client
+verbs on one discoverable surface. `marina` and `marinactl` remain supported
+compatibility binaries, and the existing `$HOME/.marina` store remains the
+default until a separately governed data migration is qualified. The Rust
+CA-Clipper product line is unaffected.
+
+Candidate screening favored Talvik over Brixen, Korvex, Orvik, and Veltron on
+pronounceability, product fit, command usability, and lower observed
+same-category collision risk. This is product screening, not legal clearance.
+Trademark, package, repository, and domain checks remain explicitly
+unverified under WP-0075 and the runtime backlog.

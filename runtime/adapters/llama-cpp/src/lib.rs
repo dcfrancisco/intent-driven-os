@@ -194,6 +194,13 @@ impl ModelRunner for LlamaCppModelRunner {
                 };
                 Ok(stats)
             })();
+            // A terminal event is an admission boundary: clients may issue the
+            // next request as soon as they observe it. Release the adapter's
+            // generation slot before making that event observable.
+            generating.store(false, Ordering::SeqCst);
+            if let Ok(mut lifecycle) = lifecycle_state.lock() {
+                *lifecycle = ModelState::Ready;
+            }
             match result {
                 Ok(stats) if worker_cancellation.is_cancelled() => {
                     let _ = sender.send(GenerationEvent::Cancelled(stats));
@@ -214,10 +221,6 @@ impl ModelRunner for LlamaCppModelRunner {
                         error,
                     )));
                 }
-            }
-            generating.store(false, Ordering::SeqCst);
-            if let Ok(mut lifecycle) = lifecycle_state.lock() {
-                *lifecycle = ModelState::Ready;
             }
         });
         Ok(GenerationStream::new(receiver, cancellation))

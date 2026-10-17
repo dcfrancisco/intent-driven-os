@@ -605,7 +605,8 @@ impl ModelDiscovery {
                 directories.push(directory);
             }
         };
-        if let Some(home) = std::env::var_os("MARINA_HOME")
+        if let Some(home) = std::env::var_os("TALVIK_HOME")
+            .or_else(|| std::env::var_os("MARINA_HOME"))
             .or_else(|| std::env::var_os("HOME"))
             .or_else(|| std::env::var_os("USERPROFILE"))
         {

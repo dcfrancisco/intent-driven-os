@@ -23,7 +23,7 @@ try {
         $packageRoot = Join-Path $tempPath "marina"
     }
 
-    $required = @("bin\marina.exe", "bin\marinactl.exe", "lib")
+    $required = @("bin\talvik.exe", "bin\marina.exe", "bin\marinactl.exe", "lib")
     foreach ($relativePath in $required) {
         if (-not (Test-Path -LiteralPath (Join-Path $packageRoot $relativePath))) {
             throw "Invalid Marina archive; missing $relativePath"
@@ -44,12 +44,12 @@ try {
         New-Item -ItemType Directory -Force -Path (Join-Path $prefixPath $directory) | Out-Null
     }
 
-    Write-Host "Installed Marina for the current Windows user."
+    Write-Host "Installed Talvik for the current Windows user."
     Write-Host "Binaries: $prefixPath\bin"
     Write-Host "Native libraries: $prefixPath\lib"
     Write-Host "Models: $prefixPath\models"
     Write-Host "No administrator privileges or system-wide files were required."
-    Write-Host "Add $prefixPath\bin to your user PATH, then run marina --version."
+    Write-Host "Add $prefixPath\bin to your user PATH, then run talvik --version."
 } finally {
     if (Test-Path -LiteralPath $tempPath) {
         Remove-Item -LiteralPath $tempPath -Recurse -Force
