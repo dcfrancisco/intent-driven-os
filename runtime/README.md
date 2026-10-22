@@ -55,7 +55,7 @@ not stop the process or unload the model.
 The current usable IDE path is a loopback OpenAI-compatible bridge:
 
 ```sh
-marinactl auth token create ide
+talvik auth token create ide
 python3 scripts/marina-openai-proxy.py
 ```
 

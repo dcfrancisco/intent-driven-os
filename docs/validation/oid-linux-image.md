@@ -16,8 +16,8 @@ Build native Linux Marina/OID binaries first using the WP-0078 procedure, then:
 
 ```sh
 sudo scripts/build-oid-linux-image.sh \
-  --marina target/release/marina \
-  --marinactl target/release/marinactl \
+  --talvikd target/release/talvikd \
+  --talvik target/release/talvik \
   --oid-console target/release/oid-console \
   --llama-lib-dir /path/to/llama/lib \
   --output artifacts/oid-bookworm-amd64.raw
@@ -53,7 +53,7 @@ sudo /usr/libexec/install-oid-image-model \
   --file /media/model.gguf \
   --sha256 SHA256 \
   --model-id local-model
-sudo systemctl restart marina.service oid-readiness.service
+sudo systemctl restart talvikd.service oid-readiness.service
 ```
 
 ## VM qualification

@@ -9,7 +9,7 @@ systemd units, and existing configuration templates.
 
 ## Existing capability inventory
 
-- `scripts/install-model-runner.sh`: user-scoped Marina/`marinactl` installer;
+- `scripts/install-model-runner.sh`: user-scoped Talvik daemon/client installer;
   preserves `$HOME/.marina` state and models.
 - `scripts/install-oid-user.sh`: new rootless OID console installer; it does
   not duplicate Marina installation and shares only the canonical native
@@ -31,7 +31,7 @@ does not invent or claim a nonexistent binary.
 
 - Build `oid-marina_<version>_amd64.deb` from native Linux binaries and pinned
   relocatable `libllama`/`libggml` libraries.
-- Include Marina, `marinactl`, `oid-console`, systemd units, sysusers/tmpfiles,
+- Include `talvikd`, `talvik`, `oid-console`, systemd units, sysusers/tmpfiles,
   configuration templates, and readiness helpers.
 - Preserve `/var/lib/marina/models`, `/var/lib/oid/evidence`, and conffiles on
   package removal.

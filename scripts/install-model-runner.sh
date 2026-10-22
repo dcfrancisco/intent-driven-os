@@ -36,7 +36,7 @@ if [[ -n "$NATIVE_LIB_DIR" ]]; then
   export LLAMA_CPP_REQUIRED=1
 fi
 cargo install --path "$ROOT/console" --root "$PREFIX" --locked --force \
-  --bin talvik --bin marina --bin marinactl
+  --bin talvik --bin talvikd
 
 if [[ -n "$NATIVE_LIB_DIR" ]]; then
   [[ -d "$NATIVE_LIB_DIR" ]] || { echo "native library directory not found: $NATIVE_LIB_DIR" >&2; exit 1; }
@@ -55,13 +55,12 @@ STATE_DIR="${TALVIK_STATE_DIR:-${MARINA_STATE_DIR:-${HOME}/.marina}}"
 MODEL_DIR="${TALVIK_MODEL_DIR:-${MARINA_MODEL_DIR:-$STATE_DIR/models}}"
 mkdir -p "$STATE_DIR" "$MODEL_DIR"
 echo
-echo "Installed model runner:         $PREFIX/bin/talvik"
-echo "Compatibility service:         $PREFIX/bin/marina"
-echo "Compatibility client:          $PREFIX/bin/marinactl"
+echo "Installed model runner daemon:  $PREFIX/bin/talvikd"
+echo "Installed model runner client:  $PREFIX/bin/talvik"
 echo "Runtime state directory:        $STATE_DIR"
 echo "Model directory:                $MODEL_DIR"
 echo
-echo "Start the service with: talvik serve"
+echo "Start the service with: talvikd"
 echo "Check it with: talvik status"
 echo "Add $PREFIX/bin to PATH if needed."
 if [[ -d "$PREFIX/lib" ]] && [[ -n "$(find "$PREFIX/lib" -maxdepth 1 -type f -print -quit)" ]]; then

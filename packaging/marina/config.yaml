@@ -1,4 +1,4 @@
-# System-profile defaults. Environment variables in marina.service are the
+# System-profile defaults. Environment variables in talvikd.service are the
 # explicit system-path overrides; this file remains safe to inspect offline.
 name: marina-system
 version: 0.1
@@ -13,4 +13,3 @@ server:
       port: 12434
   authentication:
     enabled: true
-

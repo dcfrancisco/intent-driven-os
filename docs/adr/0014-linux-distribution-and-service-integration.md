@@ -62,7 +62,7 @@ never requires access to another user’s home or models.
 System mode is provided by distro packages and requires explicit elevation:
 
 ```text
-/usr/bin/marina /usr/bin/marinactl
+/usr/bin/talvikd /usr/bin/talvik
 /usr/lib/marina/             backend libraries and helpers
 /etc/marina/                  administrator configuration
 /var/lib/marina/              registry and model state

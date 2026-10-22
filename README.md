@@ -33,30 +33,27 @@ fallback is available but disabled by default. Chat sessions, tools,
 embeddings, full provider secrets, capability-aware remote routing, production
 scheduling, and Linux distro packaging remain later work.
 
-For compatibility, the local Talvik installation continues to use
-`$HOME/.marina/lib` and models live in `$HOME/.marina/models`:
+The local Talvik installation retains the compatible `$HOME/.marina` home;
+native libraries use `$HOME/.marina/lib` and models use `$HOME/.marina/models`:
 
 ```sh
 export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/lib}"
 ```
 
-Marina can keep persistent user configuration in `$HOME/.marina/config.yaml`
+Talvik keeps persistent user configuration in `$HOME/.marina/config.yaml`
 (`%USERPROFILE%\.marina\config.yaml` on Windows):
 
 ```yaml
-name: Marina
+name: Talvik
 model_directory: ~/.marina/models
 registry_path: ~/.marina/models.registry
 state_directory: ~/.marina
 ```
 
-Environment variables such as `MARINA_HOME`, `MARINA_CONFIG`,
-`MARINA_MODEL_DIR`, `MARINA_REGISTRY`, and `MARINA_STATE_DIR` override the YAML
-file. This keeps tests, CI, and isolated deployments explicit while normal
-user installations share one stable configuration.
-
-New deployments should use the equivalent `TALVIK_*` names; they take
-precedence over the Marina aliases. See [Talvik Model Runtime](docs/TALVIK.md)
+Environment variables such as `TALVIK_HOME`, `TALVIK_CONFIG`,
+`TALVIK_MODEL_DIR`, `TALVIK_REGISTRY`, and `TALVIK_STATE_DIR` override the YAML
+file. The equivalent `MARINA_*` variables remain compatibility aliases. See
+[Talvik Model Runtime](docs/TALVIK.md)
 for commands, routing configuration, security defaults, and migration rules.
 
 The directory must contain the native `libllama` library. If it is not set or
@@ -64,16 +61,16 @@ does not contain a usable library, the backend reports unavailable.
 
 ## IDE access
 
-Create a local Marina access token:
+Create a local Talvik access token:
 
 ```bash
-TOKEN="$($HOME/.marina/bin/marinactl auth token create ide 2>/dev/null)"
+TOKEN="$($HOME/.marina/bin/talvik auth token create ide 2>/dev/null)"
 ```
 
-Start Marina and the dependency-free IDE bridge:
+Start Talvik and the dependency-free IDE bridge:
 
 ```bash
-$HOME/.marina/bin/marina
+$HOME/.marina/bin/talvikd
 python3 scripts/marina-openai-proxy.py
 ```
 
@@ -81,16 +78,16 @@ Configure an OpenAI-compatible IDE with:
 
 ```text
 Base URL: http://127.0.0.1:11435/v1
-API key:  the printed Marina token
+API key:  the printed Talvik token
 ```
 
 The bridge supports `/v1/models`, `/v1/chat/completions`,
 `/v1/completions`, bearer authentication, multi-turn text messages, and SSE
-stream responses. The token authorizes access to Marina; it is not a remote
+stream responses. The token authorizes access to Talvik; it is not a remote
 provider API key. Remote BYOK provider credentials are not implemented yet.
 
-Marina also has a native HTTP API. Enable it explicitly on loopback with
-`MARINA_HTTP_ADDR=127.0.0.1:11434 marina` on Linux/macOS; Windows uses
+Talvik also has a native HTTP API. Enable it explicitly on loopback with
+`TALVIK_HTTP_ADDR=127.0.0.1:11434 talvikd` on Linux/macOS; Windows uses
 `127.0.0.1:11435` because its local IPC transport uses `127.0.0.1:11434`.
 The HTTP API uses the same runtime service as the local transport and requires
 a bearer credential by default. The Python bridge is kept for migration and
@@ -98,7 +95,7 @@ compatibility testing, not as the production service boundary.
 
 ## GitHub releases
 
-Tagging a release or manually starting [the Marina release workflow](.github/workflows/marina-release.yml)
+Tagging a release or manually starting [the Talvik release workflow](.github/workflows/talvik-release.yml)
 builds native CPU artifacts on their target machines:
 
 - Linux x86_64.
@@ -106,7 +103,7 @@ builds native CPU artifacts on their target machines:
 - macOS Apple Silicon.
 - Windows x86_64.
 
-Each draft release contains `marina`, `marinactl`, the matching pinned
+Each draft release contains `talvikd`, `talvik`, the matching pinned
 llama.cpp libraries, license metadata, and SHA-256 checksums. Models are never
 bundled into releases. Windows and native llama.cpp smoke tests must run on
 their respective GitHub runners; this Mac workspace cannot validate them. A
@@ -119,13 +116,13 @@ verification or a fallback upload path.
 On Windows, extract the release ZIP and run PowerShell as the normal user:
 
 ```powershell
-.\install-model-runner.ps1 -ArchivePath .\marina-windows-x86_64.zip
+.\install-model-runner.ps1 -ArchivePath .\talvik-windows-x86_64.zip
 ```
 
 The installer uses `%USERPROFILE%\.marina` by default:
 
 ```text
-%USERPROFILE%\.marina\bin       marina.exe, marinactl.exe
+%USERPROFILE%\.marina\bin       talvikd.exe and talvik.exe
 %USERPROFILE%\.marina\lib       llama.dll and ggml*.dll
 %USERPROFILE%\.marina\models    local GGUF models
 %USERPROFILE%\.marina\state     registry and runtime state
@@ -133,9 +130,7 @@ The installer uses `%USERPROFILE%\.marina` by default:
 ```
 
 It does not require administrator privileges or install system-wide files.
-Set `MARINA_HOME` to override this complete Marina directory. For example,
-`MARINA_HOME=$env:USERPROFILE\.marina` means exactly that directory; Marina
-does not append another `.marina` component.
+Set `TALVIK_HOME` to override this complete Talvik directory.
 
 ### Windows source build
 
@@ -146,21 +141,21 @@ workload and Windows SDK available, then run:
 .\scripts\setup-llama-windows.ps1
 $env:LLAMA_CPP_LIB_DIR = "$env:USERPROFILE\.marina\lib"
 $env:LLAMA_CPP_REQUIRED = "1"
-cargo build --release -p oid-console --bin marina --bin marinactl
+cargo build --release -p oid-console --bin talvik --bin talvikd
 ```
 
-Place a GGUF model under `%USERPROFILE%\.marina\models`, then create a Marina
+Place a GGUF model under `%USERPROFILE%\.marina\models`, then create a Talvik
 token and prepare the native DLL search path:
 
 ```powershell
-$apiKey = (& .\target\release\marinactl.exe auth token create windows-smoke).Trim()
+$apiKey = (& .\target\release\talvik.exe auth token create windows-smoke).Trim()
 $env:MARINA_API_KEY = $apiKey
 $env:MARINA_TCP_ADDR = "127.0.0.1:11434"
 $env:MARINA_HTTP_ADDR = "127.0.0.1:11435"
 $env:Path = "$env:USERPROFILE\.marina\lib;$env:Path"
 ```
 
-Start `target\release\marina.exe` in that environment. In a second PowerShell
+Start `target\release\talvikd.exe` in that environment. In a second PowerShell
 window, run the basic HTTP smoke test:
 
 ```powershell
@@ -187,7 +182,7 @@ The separate model-runner installer creates the canonical model store at
 ```bash
 ./scripts/install-model-runner.sh
 export PATH="$HOME/.marina/bin:$PATH"
-marinactl model pull \
+talvik import \
   https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf \
   qwen2.5-0.5b-instruct-q4_k_m
 ```
@@ -200,49 +195,49 @@ DYLD_LIBRARY_PATH="$HOME/.marina/lib" \
 cargo run -p oid-console --bin oid-console
 ```
 
-## Marina daemon and client
+## Talvik service and client
 
 The model runner can be installed without the interactive console:
 
 ```bash
 ./scripts/install-model-runner.sh
 export PATH="$HOME/.marina/bin:$PATH"
-marina
-marinactl status
+talvikd
+talvik status
 ```
 
 For repository-local development, build the release binaries and link them to
-`./marina/bin`:
+`./talvik/bin`:
 
 ```bash
-cargo build --release -p oid-console --bin marina --bin marinactl
+cargo build --release -p oid-console --bin talvik --bin talvikd
 ./scripts/link-model-runner.sh
-./marina/bin/marina
-./marina/bin/marinactl status
+./talvik/bin/talvikd
+./talvik/bin/talvik status
 ```
 
 Use `--prefix "$HOME/.local"` only when you intentionally want the
-executables in `$HOME/.local/bin`; the canonical Marina installation is
+executables in `$HOME/.local/bin`; the canonical Talvik installation is
 `$HOME/.marina`. Release archives include the matching native libraries under
 `$HOME/.marina/lib` and the installer places them there. A source/local build
 can use `./scripts/install-model-runner.sh --native-lib-dir DIR`; without that
 payload the runner is control-plane-only and reports llama.cpp unavailable.
-`marinactl model pull` manages `$HOME/.marina/models`, while
+`talvik import` manages `$HOME/.marina/models`, while
 `setup-llama-macos.sh` is the local development helper that builds the native
 payload into `$HOME/.marina/lib`.
 
 The persistent local runtime can be started independently of clients:
 
 ```bash
-cargo run -p oid-console --bin marina
-cargo run -p oid-console --bin marinactl -- status
-cargo run -p oid-console --bin marinactl -- model list
+cargo run -p oid-console --bin talvikd
+cargo run -p oid-console --bin talvik -- status
+cargo run -p oid-console --bin talvik -- models
 ```
 
-Marina owns the `Runtime::start` composition root and keeps model state in the
-daemon process. `marinactl` communicates over the local transport: Unix socket
+Talvik owns the `Runtime::start` composition root and keeps model state in the
+daemon process. `talvik` communicates over the local transport: Unix socket
 at `$HOME/.marina/marina.sock` on Linux/macOS, or loopback TCP on Windows via
-`MARINA_TCP_ADDR`. Closing the client does not stop Marina or unload its model.
+`MARINA_TCP_ADDR`. Closing the client does not stop Talvik or unload its model.
 The native transport remains local-only; the IDE HTTP bridge is a separate
 loopback compatibility edge.
 
@@ -254,15 +249,15 @@ the active request and leaves the console available for another command.
 The standalone runner can import a local or remote GGUF artifact:
 
 ```bash
-marinactl model pull /path/to/model.gguf
-marinactl model pull https://host.example/model.gguf model-id SHA256_HEX
-marinactl model list
-marinactl model load model-id
-marinactl generate model-id "Hello from Marina"
+talvik import /path/to/model.gguf
+talvik import https://host.example/model.gguf model-id SHA256_HEX
+talvik models
+talvik load model-id
+talvik run model-id "Hello from Talvik"
 ```
 
-At startup Marina also discovers existing `.gguf` files recursively in the
-Marina store, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
+At startup Talvik also discovers existing `.gguf` files recursively in the
+compatible Marina store, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
 `TRANSFORMERS_CACHE`, `XDG_CACHE_HOME`), ModelScope caches, and common Ollama
 cache roots. Discovery registers files in place; `model pull` is the explicit
 copy/download path into `$HOME/.marina/models`.

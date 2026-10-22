@@ -1,4 +1,4 @@
-//! Minimal local IPC protocol for Marina and marinactl.
+//! Minimal local IPC protocol for Talvik.
 
 #![allow(dead_code)]
 
@@ -12,19 +12,19 @@ use std::net::{TcpListener, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 #[cfg(unix)]
-/// Marina local listener transport.
-pub type MarinaListener = UnixListener;
+/// Talvik local listener transport.
+pub type TalvikListener = UnixListener;
 #[cfg(windows)]
 /// Marina local listener transport.
-pub type MarinaListener = TcpListener;
+pub type TalvikListener = TcpListener;
 #[cfg(unix)]
-/// Marina local stream transport.
-pub type MarinaStream = UnixStream;
+/// Talvik local stream transport.
+pub type TalvikStream = UnixStream;
 #[cfg(windows)]
 /// Marina local stream transport.
-pub type MarinaStream = TcpStream;
+pub type TalvikStream = TcpStream;
 
-/// Return the configured Marina Unix socket path.
+/// Return the configured Talvik Unix socket path.
 #[must_use]
 pub fn socket_path() -> PathBuf {
     env::var_os("TALVIK_SOCKET")
@@ -62,8 +62,8 @@ pub fn endpoint() -> String {
     }
 }
 
-/// Bind Marina's local transport.
-pub fn bind_listener() -> io::Result<MarinaListener> {
+/// Bind Talvik's local transport.
+pub fn bind_listener() -> io::Result<TalvikListener> {
     #[cfg(unix)]
     {
         let socket = socket_path();
@@ -84,8 +84,8 @@ pub fn bind_listener() -> io::Result<MarinaListener> {
     }
 }
 
-/// Connect a local Marina client transport.
-pub fn connect() -> io::Result<MarinaStream> {
+/// Connect a local Talvik client transport.
+pub fn connect() -> io::Result<TalvikStream> {
     #[cfg(unix)]
     {
         return UnixStream::connect(socket_path());

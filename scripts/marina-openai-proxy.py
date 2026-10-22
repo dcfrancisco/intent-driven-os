@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency-free OpenAI-compatible edge for a local Marina daemon."""
+"""Dependency-free OpenAI-compatible edge for a local Talvik daemon."""
 
 import argparse
 import json
@@ -157,7 +157,7 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.environ.get("MARINA_HTTP_PORT", "11435")))
     args = parser.parse_args()
     if not valid_tokens():
-        raise SystemExit(f"No Marina tokens found at {token_file()}; run: marinactl auth token create ide")
+        raise SystemExit(f"No Talvik tokens found at {token_file()}; run: talvik auth token create ide")
     server = ThreadingHTTPServer((args.host, args.port), MarinaHandler)
     print(f"Marina OpenAI edge listening on http://{args.host}:{args.port}/v1", file=sys.stderr)
     server.serve_forever()

@@ -1,4 +1,4 @@
-//! Persistent Marina runtime daemon.
+//! Persistent Talvik runtime service.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -18,18 +18,7 @@ use std::thread;
 
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-fn main() {
-    if let Err(error) = run() {
-        eprintln!("model runtime failed to start: {error}");
-        std::process::exit(1);
-    }
-}
-
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::args().any(|argument| argument == "--version" || argument == "-V") {
-        println!("marina {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
     let _ = logging::initialize();
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
@@ -55,7 +44,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let runtime = Arc::clone(&runtime);
                 thread::spawn(move || {
                     if let Err(error) = handle(stream, runtime.as_ref()) {
-                        eprintln!("Marina request failed: {error}");
+                        eprintln!("Talvik request failed: {error}");
                     }
                 });
             }
@@ -65,7 +54,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn handle(mut stream: ipc::MarinaStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
+fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
     let mut request = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
     let fields: Vec<_> = request.trim_end().split('\t').collect();
@@ -192,7 +181,7 @@ fn handle(mut stream: ipc::MarinaStream, runtime: &dyn RuntimeService) -> std::i
 }
 
 fn respond_result(
-    stream: &mut ipc::MarinaStream,
+    stream: &mut ipc::TalvikStream,
     result: Result<(), oid_shared::RuntimeError>,
 ) -> std::io::Result<()> {
     match result {

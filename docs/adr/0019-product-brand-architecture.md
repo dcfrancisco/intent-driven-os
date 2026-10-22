@@ -67,11 +67,12 @@ that the later products or capabilities are implemented.
 
 ## 2026-10-17 migration amendment
 
-The primary executable is consolidated as `talvik`, with service and client
-verbs on one discoverable surface. `marina` and `marinactl` remain supported
-compatibility binaries, and the existing `$HOME/.marina` store remains the
-default until a separately governed data migration is qualified. The Rust
-CA-Clipper product line is unaffected.
+The public executable boundary is `talvikd` for the daemon and `talvik` for
+the client. The former `marina` and `marinactl` binaries are removed rather
+than maintained as a second runner identity. The existing `$HOME/.marina`
+store, socket location, and environment aliases remain compatible; this is an
+executable rebrand, not a data migration. The Rust CA-Clipper product line is
+unaffected.
 
 Candidate screening favored Talvik over Brixen, Korvex, Orvik, and Veltron on
 pronounceability, product fit, command usability, and lower observed

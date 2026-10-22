@@ -56,8 +56,8 @@ a runnable VM.
 
 ## Implemented assets
 
-- `packaging/marina/marina.service` uses the ADR-0014 system profile:
-  `/usr/bin/marina`, `/etc/marina`, `/var/lib/marina`, `/run/marina`, and
+- `packaging/marina/talvikd.service` uses the ADR-0014 system profile:
+  `/usr/bin/talvikd`, `/etc/marina`, `/var/lib/marina`, `/run/marina`, and
   loopback HTTP `127.0.0.1:12434`.
 - `packaging/oid/oid-readiness.service` records `ready` or `degraded` without
   blocking offline boot when Marina or a model is unavailable.

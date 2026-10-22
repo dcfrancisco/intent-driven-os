@@ -7,7 +7,7 @@ requiring the OID interactive console.
 
 ## Scope
 
-- User-installable binaries for `marina` and `marinactl`.
+- User-installable binaries for `talvikd` and `talvik`.
 - Optional system package/install paths.
 - OS-aware Marina home, binary, native-library, model, socket, and registry
   locations.
@@ -19,7 +19,7 @@ requiring the OID interactive console.
 ## Acceptance criteria
 
 - Fresh Linux, macOS, and Windows environments can install and run `marina`
-  plus `marinactl status` without `oid-console`.
+  plus `talvik status` without `oid-console`.
 - Reinstall upgrades binaries without deleting models or runtime state.
 - Installer selects the correct CPU/GPU variant or reports an explicit
   unsupported-machine result.

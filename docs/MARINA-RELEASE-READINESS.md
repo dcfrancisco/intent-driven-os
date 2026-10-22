@@ -4,8 +4,9 @@ This checklist separates a local, user-scoped Marina release from a remote
 deployment. Compilation is not runtime qualification.
 
 Talvik is the provisional primary identity. This file retains its historical
-name so existing evidence links remain stable. Marina commands and the
-`$HOME/.marina` store are compatibility surfaces during migration.
+name so existing evidence links remain stable. The `$HOME/.marina` store,
+socket location, and environment aliases remain compatibility surfaces; the
+old Marina executables are no longer release surfaces.
 
 ## Current regression state — 2026-10-17
 
@@ -174,3 +175,36 @@ Final release artifact hashes:
 | `target/release/marina` | `0722a82dfd7ba63b2d9ba1f06d521ee4554721ca6402ab7f95fd867f137dafb9` |
 | `target/release/marinactl` | `fdbc31f2d5b41124517b90514d676d1e500ccd927468a93e180e603eeb108168` |
 | Qwen acceptance GGUF | `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db` |
+
+## Talvik executable split verification — 2026-10-22
+
+The release surface now has two explicit processes: `talvikd` is the daemon
+and `talvik` is the client. The former `marina` and `marinactl` Cargo targets,
+installer outputs, release artifacts, systemd unit, and active qualification
+commands were removed. This does not migrate or rename persisted data:
+`$HOME/.marina`, `$HOME/.marina/marina.sock`, and `MARINA_*` aliases remain
+compatible, with `TALVIK_*` overrides taking precedence.
+
+Verification completed on macOS x86_64:
+
+- `cargo test --workspace`: passed;
+- debug daemon/client socket smoke: passed outside the restricted sandbox;
+- release `talvikd`/`talvik` socket smoke: `Healthy`, `llama.cpp`, and model
+  list completion through an explicitly isolated temporary home;
+- obsolete `cargo build -p oid-console --bin marina`: rejected, with only
+  `talvikd`, `talvik`, `oid-console`, and `oid-marina-chat` exposed;
+- strict Clippy comparison: baseline `main` and this revision each report 90
+  actual pre-existing findings (92 `error:` lines including Cargo summaries),
+  so the executable split introduces zero net findings;
+- shell and packaging script syntax checks: passed.
+
+Fresh release artifact hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `target/release/talvikd` | `c113ca23cc8feade26c6fc68fb3b1dc1fb72268e0bf3a9aab44dfb74f0996e0e` |
+| `target/release/talvik` | `52bcd6f3d61c176184d83b83e0f4bcb5e117fa43daa807f3171f2e7881b54f13` |
+
+The previously recorded real-GGUF lifecycle qualification remains applicable
+because the runtime, transport protocol, and model state paths are unchanged;
+this revision changes executable entry points and product packaging only.

@@ -1,4 +1,4 @@
-//! Marina's production runtime service and composition root.
+//! Talvik's production runtime service and composition root.
 
 use crate::{
     backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
@@ -30,7 +30,7 @@ pub struct MarinaRuntime {
 }
 
 impl MarinaRuntime {
-    /// Start Marina's production runtime and publish its startup event.
+    /// Start Talvik's production runtime and publish its startup event.
     #[must_use]
     pub fn start(config: RuntimeConfig, bus: EventBus) -> Self {
         let backends = BackendManager::new(bus.clone());
@@ -209,14 +209,9 @@ impl RuntimeService for MarinaRuntime {
             .clone()
             .or_else(|| std::env::var_os("TALVIK_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(std::path::PathBuf::from)
-                    .map(|home| home.join(".marina/models"))
-            })
             .unwrap_or_else(|| {
-                crate::config::home_directory()
-                    .map(|home| home.join(".marina/models"))
+                crate::config::talvik_home_directory()
+                    .map(|home| home.join("models"))
                     .unwrap_or_else(|| std::path::PathBuf::from(".marina/models"))
             });
         let model = ModelAcquirer::acquire(source, &directory, model_id, checksum)?;
@@ -311,7 +306,7 @@ impl RuntimeService for MarinaRuntime {
         }
         let cancellation = Arc::new(AtomicBool::new(false));
         let generation_id = format!(
-            "marina-gen-{}-{}",
+            "talvik-gen-{}-{}",
             std::process::id(),
             GENERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
@@ -513,7 +508,7 @@ impl RuntimeService for MarinaRuntime {
     }
 }
 
-/// Construct Marina's production runtime from validated configuration.
+/// Construct Talvik's production runtime from validated configuration.
 ///
 /// # Errors
 ///

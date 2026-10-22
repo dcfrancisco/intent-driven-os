@@ -7,13 +7,13 @@ set -euo pipefail
 [[ "$(uname -m)" == "x86_64" ]] || { echo "Linux x86_64 is required" >&2; exit 1; }
 
 MARINA_REPORT="${QUALIFY_REPORT:?set QUALIFY_REPORT}"
-MARINACTL="${MARINACTL:-marinactl}"
+TALVIK="${TALVIK:-talvik}"
 QUALIFY_RUNS="${QUALIFY_RUNS:-3}"
 WORK_DIR="${TMPDIR:-/tmp}/marina-linux-qualification.$RANDOM"
 mkdir -p "$WORK_DIR"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-"$MARINACTL" status >"$WORK_DIR/marinactl-status.txt"
+"$TALVIK" status >"$WORK_DIR/talvik-status.txt"
 test -S "${MARINA_SOCKET:-${HOME}/.marina/marina.sock}"
 
 invalid_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$MARINA_URL/v1/models")"
@@ -33,7 +33,7 @@ export QUALIFY_PLATFORM="linux-$(uname -m)"
 export QUALIFY_REPORT="$WORK_DIR/http-report.json"
 ./scripts/qualify-marina-http.sh
 
-python3 - "$QUALIFY_REPORT" "$MARINA_REPORT" "$WORK_DIR/marinactl-status.txt" <<'PY'
+python3 - "$QUALIFY_REPORT" "$MARINA_REPORT" "$WORK_DIR/talvik-status.txt" <<'PY'
 import json
 import os
 import pathlib

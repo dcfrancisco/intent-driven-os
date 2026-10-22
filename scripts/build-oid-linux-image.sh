@@ -5,12 +5,12 @@ set -eu
 # disk. Run in a disposable Linux build VM as root; it does not alter a host
 # installation and does not require Docker at runtime.
 
-usage() { echo "usage: $0 --marina PATH --marinactl PATH --oid-console PATH --output PATH [--llama-lib-dir DIR] [--model FILE --model-sha256 HEX --model-id ID]" >&2; exit 2; }
-marina=; marinactl=; oid_console=; output=; llama_lib_dir=; model=; model_sha=; model_id=
+usage() { echo "usage: $0 --talvikd PATH --talvik PATH --oid-console PATH --output PATH [--llama-lib-dir DIR] [--model FILE --model-sha256 HEX --model-id ID]" >&2; exit 2; }
+talvikd=; talvik=; oid_console=; output=; llama_lib_dir=; model=; model_sha=; model_id=
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --marina) marina=${2:?}; shift 2 ;;
-        --marinactl) marinactl=${2:?}; shift 2 ;;
+        --talvikd) talvikd=${2:?}; shift 2 ;;
+        --talvik) talvik=${2:?}; shift 2 ;;
         --oid-console) oid_console=${2:?}; shift 2 ;;
         --output) output=${2:?}; shift 2 ;;
         --llama-lib-dir) llama_lib_dir=${2:?}; shift 2 ;;
@@ -20,7 +20,7 @@ while [ "$#" -gt 0 ]; do
         *) usage ;;
     esac
 done
-[ -x "$marina" ] && [ -x "$marinactl" ] && [ -x "$oid_console" ] && [ -n "$output" ] || usage
+[ -x "$talvikd" ] && [ -x "$talvik" ] && [ -x "$oid_console" ] && [ -n "$output" ] || usage
 if [ -n "$model" ] && { [ -z "$model_sha" ] || [ -z "$model_id" ]; }; then usage; fi
 if [ -n "$model_id" ] && [ "$model_id" != "$(basename "$model_id")" ]; then
     echo "model ID must be a filename-safe identifier: $model_id" >&2
@@ -51,8 +51,8 @@ debootstrap --variant=minbase bookworm "$root" https://deb.debian.org/debian
 chroot "$root" apt-get update
 chroot "$root" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends systemd systemd-sysv linux-image-amd64 grub-pc curl ca-certificates util-linux coreutils procps iproute2
 
-install -D -m 0755 "$marina" "$root/usr/bin/marina"
-install -D -m 0755 "$marinactl" "$root/usr/bin/marinactl"
+install -D -m 0755 "$talvikd" "$root/usr/bin/talvikd"
+install -D -m 0755 "$talvik" "$root/usr/bin/talvik"
 install -D -m 0755 "$oid_console" "$root/usr/bin/oid-console"
 if [ -n "$llama_lib_dir" ]; then
     mkdir -p "$root/usr/lib/marina"
@@ -61,7 +61,7 @@ if [ -n "$llama_lib_dir" ]; then
     find "$llama_lib_dir" -maxdepth 1 \( -type f -o -type l \) \( -name '*.so' -o -name '*.so.*' \) -exec cp -a {} "$root/usr/lib/marina/" \;
 fi
 install -D -m 0644 packaging/marina/config.yaml "$root/etc/marina/config.yaml"
-install -D -m 0644 packaging/marina/marina.service "$root/usr/lib/systemd/system/marina.service"
+install -D -m 0644 packaging/marina/talvikd.service "$root/usr/lib/systemd/system/talvikd.service"
 install -D -m 0644 packaging/oid/oid-readiness.service "$root/usr/lib/systemd/system/oid-readiness.service"
 install -D -m 0644 packaging/oid/oid-console.service "$root/usr/lib/systemd/system/oid-console.service"
 install -D -m 0644 packaging/sysusers/marina.conf "$root/usr/lib/sysusers.d/marina.conf"
@@ -75,7 +75,7 @@ install -D -m 0640 /dev/null "$root/etc/oid/marina-client.env"
 printf '%s\n' '# Provision OID_MARINA_TOKEN after boot; never commit a token.' >"$root/etc/oid/marina-client.env"
 mkdir -p "$root/var/lib/marina/models" "$root/var/lib/oid/evidence"
 chroot "$root" systemd-sysusers; chroot "$root" systemd-tmpfiles --create
-chroot "$root" systemctl enable marina.service oid-readiness.service oid-console.service
+chroot "$root" systemctl enable talvikd.service oid-readiness.service oid-console.service
 if [ -n "$model" ]; then
     actual=$(sha256sum "$model" | awk '{print $1}')
     [ "$actual" = "$model_sha" ] || { echo "model checksum mismatch" >&2; exit 1; }
@@ -102,7 +102,7 @@ manifest="$output.manifest"
     printf '%s\n' 'schema=oid.image.manifest/v1' 'image_format=debian-bookworm-amd64-bios-raw'
     printf 'image=%s\n' "$(basename "$output")"
     printf 'image_sha256=%s\n' "$(awk '{print $1}' "$output.sha256")"
-    for input in "$marina" "$marinactl" "$oid_console"; do
+    for input in "$talvikd" "$talvik" "$oid_console"; do
         printf '%s_sha256=%s\n' "$(basename "$input")" "$(sha256sum "$input" | awk '{print $1}')"
     done
     if [ -n "$llama_lib_dir" ]; then

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$MarinaPath = (Join-Path (Get-Location) "target\release\marina.exe"),
+    [string]$TalvikdPath = (Join-Path (Get-Location) "target\release\talvikd.exe"),
     [string]$BaseUrl = "http://127.0.0.1:11435",
     [string]$Model = $env:MARINA_MODEL,
     [string]$ApiKey = $env:MARINA_API_KEY
@@ -8,14 +8,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path -LiteralPath $MarinaPath -PathType Leaf)) {
-    throw "Marina executable not found: $MarinaPath"
+if (-not (Test-Path -LiteralPath $TalvikdPath -PathType Leaf)) {
+    throw "Talvik daemon executable not found: $TalvikdPath"
 }
 if ([string]::IsNullOrWhiteSpace($Model)) { throw "Set MARINA_MODEL to a discovered GGUF model id." }
 if ([string]::IsNullOrWhiteSpace($ApiKey)) { throw "Set MARINA_API_KEY without printing it." }
 
-$version = & $MarinaPath --version
-if ($LASTEXITCODE -ne 0) { throw "Marina --version failed." }
+$version = & $TalvikdPath --version
+if ($LASTEXITCODE -ne 0) { throw "talvikd --version failed." }
 Write-Host "version: $version"
 
 $health = Invoke-RestMethod -Uri "$BaseUrl/healthz" -Method Get
@@ -39,4 +39,4 @@ $payload = @{
 $completion = Invoke-RestMethod -Uri "$BaseUrl/v1/chat/completions" -Method Post -Headers $headers -ContentType "application/json" -Body $payload
 if (-not $completion.id) { throw "Completion response did not contain a generation id." }
 Write-Host "completion: $($completion.id)"
-Write-Host "Windows Marina smoke test: PASS"
+Write-Host "Windows Talvik smoke test: PASS"

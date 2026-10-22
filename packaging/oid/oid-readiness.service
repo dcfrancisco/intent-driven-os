@@ -1,7 +1,7 @@
 [Unit]
 Description=OID Marina readiness and degraded-state check
-After=marina.service
-Wants=marina.service
+After=talvikd.service
+Wants=talvikd.service
 Before=oid-console.service
 
 [Service]

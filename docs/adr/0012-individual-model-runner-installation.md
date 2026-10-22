@@ -7,7 +7,7 @@
 ## Decision
 
 The model runner is a separately installable product surface. Users may install
-the `marina` runtime service and `marinactl` client without installing or
+the `talvikd` runtime service and `talvik` client without installing or
 starting the interactive OID console. The interactive console remains an
 optional client of the same local runtime.
 
@@ -29,7 +29,7 @@ The canonical per-user layout is:
 
 ```text
 $HOME/.marina/
-├── bin/       # marina and marinactl
+├── bin/       # talvikd daemon and talvik client
 ├── lib/       # packaged native backend libraries: libllama/libggml or DLLs
 ├── models/    # downloaded/imported GGUF artifacts
 ├── config.yaml # user-scoped Marina configuration
@@ -44,13 +44,13 @@ must resolve from a system or user bin directory.
 The distribution boundary is:
 
 ```text
-model-runner install -> marina daemon -> local API/socket -> marinactl or oid-console
+model-runner install -> talvikd daemon -> local API/socket -> talvik or oid-console
                                       `-> optional llama.cpp adapter + GGUF model
 ```
 
 The binary is linked with a relocatable runtime search path to `../lib` on
 Linux/macOS. Windows packages retain the canonical libraries in `lib` and
-also place required DLLs beside `bin/marina.exe`, because that is the native
+also place required DLLs beside `bin/talvikd.exe`, because that is the native
 Windows loader search location. No global library-path mutation is required.
 
 ## Rationale

@@ -17,12 +17,12 @@ packages:
   - iproute2
   - openssh-client
 components:
-  - name: marina
-    binary: /usr/bin/marina
-    service: packaging/marina/marina.service
+  - name: talvikd
+    binary: /usr/bin/talvikd
+    service: packaging/marina/talvikd.service
     user: marina
-  - name: marinactl
-    binary: /usr/bin/marinactl
+  - name: talvik
+    binary: /usr/bin/talvik
   - name: oid-console
     binary: /usr/bin/oid-console
     service: packaging/oid/oid-console.service
@@ -44,4 +44,3 @@ evidence:
   preserve_on_restart: true
   preserve_on_reboot: true
   raw_prompt_response_retention: false
-

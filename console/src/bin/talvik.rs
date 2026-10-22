@@ -1,12 +1,9 @@
-//! Primary Talvik local model service and client command.
+//! Talvik local model service client.
 
 #![forbid(unsafe_code)]
 
-#[allow(dead_code)]
-#[path = "marina.rs"]
-mod server;
-
-use server::ipc;
+#[path = "../ipc.rs"]
+mod ipc;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -14,7 +11,6 @@ use std::sync::Arc;
 const HELP: &str = "Talvik local model runtime
 
 Usage:
-  talvik serve
   talvik status
   talvik models
   talvik import <source> [model-id] [sha256]
@@ -45,7 +41,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match command.as_str() {
         "--help" | "-h" | "help" => println!("{HELP}"),
         "--version" | "-V" => println!("talvik {}", env!("CARGO_PKG_VERSION")),
-        "serve" => server::run()?,
         "status" => request("status")?,
         "models" => request("model_list")?,
         "import" => import(args)?,
