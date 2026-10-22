@@ -61,10 +61,18 @@ pub fn http_config() -> Result<HttpConfig, String> {
 /// Return the current user's home directory across supported platforms.
 #[must_use]
 pub fn home_directory() -> Option<std::path::PathBuf> {
-    std::env::var_os("MARINA_HOME")
-        .or_else(|| std::env::var_os("HOME"))
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(std::path::PathBuf::from)
+}
+
+/// Return Marina's canonical user-scoped home directory.
+#[must_use]
+pub fn marina_home_directory() -> Option<std::path::PathBuf> {
+    std::env::var_os("MARINA_HOME").map_or_else(
+        || home_directory().map(|home| home.join(".marina")),
+        |path| Some(std::path::PathBuf::from(path)),
+    )
 }
 
 /// Return the user-scoped YAML configuration path.
@@ -72,9 +80,9 @@ pub fn home_directory() -> Option<std::path::PathBuf> {
 pub fn config_file() -> PathBuf {
     std::env::var_os("MARINA_CONFIG").map_or_else(
         || {
-            home_directory().map_or_else(
+            marina_home_directory().map_or_else(
                 || PathBuf::from(".marina/config.yaml"),
-                |home| home.join(".marina/config.yaml"),
+                |home| home.join("config.yaml"),
             )
         },
         PathBuf::from,
@@ -94,7 +102,7 @@ pub fn load() -> Result<RuntimeConfig, String> {
             file_values
                 .get("state_directory")
                 .map(|value| configured_path(value))
-                .or_else(|| home_directory().map(|home| home.join(".marina")))
+                .or_else(marina_home_directory)
         },
         |path| Some(std::path::PathBuf::from(path)),
     );

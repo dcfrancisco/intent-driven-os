@@ -36,13 +36,17 @@ impl TokenIdentity {
 pub fn token_file() -> PathBuf {
     std::env::var_os("MARINA_TOKEN_FILE").map_or_else(
         || {
-            std::env::var_os("MARINA_HOME")
-                .or_else(|| std::env::var_os("HOME"))
-                .or_else(|| std::env::var_os("USERPROFILE"))
-                .map_or_else(
-                    || PathBuf::from(".marina/tokens"),
-                    |home| PathBuf::from(home).join(".marina/tokens"),
-                )
+            std::env::var_os("MARINA_HOME").map_or_else(
+                || {
+                    std::env::var_os("HOME")
+                        .or_else(|| std::env::var_os("USERPROFILE"))
+                        .map_or_else(
+                            || PathBuf::from(".marina/tokens"),
+                            |home| PathBuf::from(home).join(".marina/tokens"),
+                        )
+                },
+                |home| PathBuf::from(home).join("tokens"),
+            )
         },
         PathBuf::from,
     )

@@ -127,6 +127,9 @@ The installer uses `%USERPROFILE%\.marina` by default:
 ```
 
 It does not require administrator privileges or install system-wide files.
+Set `MARINA_HOME` to override this complete Marina directory. For example,
+`MARINA_HOME=$env:USERPROFILE\.marina` means exactly that directory; Marina
+does not append another `.marina` component.
 
 ### Windows source build
 

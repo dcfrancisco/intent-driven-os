@@ -29,12 +29,15 @@ pub type MarinaStream = TcpStream;
 pub fn socket_path() -> PathBuf {
     env::var_os("MARINA_SOCKET").map_or_else(
         || {
-            env::var_os("MARINA_HOME")
-                .or_else(|| env::var_os("HOME"))
-                .map_or_else(
-                    || PathBuf::from(".marina/marina.sock"),
-                    |home| PathBuf::from(home).join(".marina/marina.sock"),
-                )
+            env::var_os("MARINA_HOME").map_or_else(
+                || {
+                    env::var_os("HOME").map_or_else(
+                        || PathBuf::from(".marina/marina.sock"),
+                        |home| PathBuf::from(home).join(".marina/marina.sock"),
+                    )
+                },
+                |home| PathBuf::from(home).join("marina.sock"),
+            )
         },
         PathBuf::from,
     )
