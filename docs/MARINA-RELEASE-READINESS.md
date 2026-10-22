@@ -308,3 +308,25 @@ the qualified local macOS x86_64 CPU-first gate is **GO**, but Talvik M1 is
 **not fully qualified** and the cross-platform/product release decision is
 **NO-GO** pending those mandatory external gates. Installer and Docker
 distribution remain in the RC work package.
+
+## Cross-platform and IDE closeout — 2026-10-23
+
+Native macOS x86_64 multi-model evidence is recorded in
+`docs/qualification/macos-x86_64-talvik-m1-2026-10-23.md`. Qwen and DeepSeek
+were loaded concurrently through llama.cpp, both generated independently, Qwen
+generated again after DeepSeek unload, and restart reconciled the registry to
+two Registered models with zero residents. Native llama.cpp buffer sizes and
+artifact hashes are recorded. The host accepted the 32K probe, so native
+insufficient-memory rejection remains NOT VERIFIED.
+
+Linux has single-model native evidence only; its multi-model gate is NOT
+VERIFIED. Windows x86_64 and macOS arm64 remain BLOCKED pending native hosts.
+Continue 2.0.0 is installed, but the real UI request could not be submitted
+because macOS Accessibility denied automation (error 1002). No Cline session
+was available. The IDE gate is NOT VERIFIED; the self-contained procedure is
+`docs/qualification/continue-talvik-m1.md`. The temporary Continue config
+contained only Talvik and no Ollama or remote fallback.
+
+The M1 release decision remains **NO-GO** until native multi-model evidence is
+available for every supported platform and at least one real IDE assistant
+completes an audited Talvik-only request.
