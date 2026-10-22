@@ -7,7 +7,7 @@ interactive console.
 
 ## Scope
 
-Release artifacts for `marina` and `marinactl`, prefix selection, user-scoped
+Release artifacts for `talvikd` and `talvik`, prefix selection, user-scoped
 state/model directories, installation of the platform-matched native
 `libllama`/`libggml` payload into `lib/`, native-backend availability
 messaging, version reporting, upgrade/uninstall behavior, and later
@@ -16,7 +16,7 @@ messaging, version reporting, upgrade/uninstall behavior, and later
 ## Acceptance criteria
 
 - A clean machine can install the runner with `scripts/install-model-runner.sh`
-  and run `marina` plus `marinactl status` without `oid-console`.
+  and run `talvikd` plus `talvik status` without `oid-console`.
 - Installation does not download models.
 - A release archive installs its included native backend without rebuilding the
   console; a source/local install may explicitly provide `--native-lib-dir`.

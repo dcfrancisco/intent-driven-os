@@ -16,17 +16,16 @@ The qualified CPU-first slice supports one loaded GGUF model and one active
 generation through the llama.cpp adapter. It is not a multi-model scheduler,
 agent loop, model-training system, or unrestricted network gateway.
 
-`talvik` is the primary command. `marina` and `marinactl` remain compatibility
-binaries during migration, and existing `$HOME/.marina` installations are
-used in place. No model, token, registry, or configuration data is moved or
-deleted.
+`talvikd` is the daemon and `talvik` is its client. The former `marina` and
+`marinactl` binaries are no longer built or packaged. Existing `$HOME/.marina`
+data remains the canonical store and is not deleted or moved.
 
 ## Quick start
 
 ```sh
 ./scripts/install-model-runner.sh --native-lib-dir "$HOME/.marina/lib"
 export PATH="$HOME/.marina/bin:$PATH"
-talvik serve
+talvikd
 ```
 
 In another terminal:
@@ -65,24 +64,23 @@ WP-0060 work.
 
 ## Configuration and migration
 
-Talvik-prefixed variables take precedence over their Marina compatibility
-aliases:
+Talvik uses the following configuration variables:
 
-| Primary | Compatibility alias |
+| Variable | Purpose |
 | --- | --- |
-| `TALVIK_HOME` | `MARINA_HOME` |
-| `TALVIK_CONFIG` | `MARINA_CONFIG` |
-| `TALVIK_SOCKET` | `MARINA_SOCKET` |
-| `TALVIK_MODEL_DIR` | `MARINA_MODEL_DIR` |
-| `TALVIK_REGISTRY` | `MARINA_REGISTRY` |
-| `TALVIK_STATE_DIR` | `MARINA_STATE_DIR` |
-| `TALVIK_TOKEN_FILE` | `MARINA_TOKEN_FILE` |
-| `TALVIK_HTTP_ADDR` | `MARINA_HTTP_ADDR` |
-| `TALVIK_HTTP_AUTH` | `MARINA_HTTP_AUTH` |
+| `TALVIK_HOME` | Complete Talvik home directory |
+| `TALVIK_CONFIG` | Configuration file |
+| `TALVIK_SOCKET` | Local socket |
+| `TALVIK_MODEL_DIR` | Model store |
+| `TALVIK_REGISTRY` | Registry file |
+| `TALVIK_STATE_DIR` | Runtime state |
+| `TALVIK_TOKEN_FILE` | Token database |
+| `TALVIK_HTTP_ADDR` | Optional HTTP listener |
+| `TALVIK_HTTP_AUTH` | HTTP authentication control |
 
-Defaults continue to resolve under `$HOME/.marina` for compatibility. A future
-store rename requires an explicit migration, rollback plan, and release gate;
-it must not be performed as an incidental rebrand.
+Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
+remain compatibility aliases, while `TALVIK_*` variables take precedence.
+Talvik does not delete or silently migrate existing data.
 
 ## Security defaults
 

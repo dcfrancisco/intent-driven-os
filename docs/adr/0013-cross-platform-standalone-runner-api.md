@@ -6,7 +6,7 @@
 
 ## Decision
 
-Marina is a standalone model-runner product. It must be installable and
+Talvik is a standalone model-runner product. It must be installable and
 operable without the OID interactive console, while OID remains a first-class
 client and system integration of the same runtime service.
 
@@ -17,7 +17,7 @@ OID Console / OID system / AI assistant / application
                          |
        native local API + OpenAI-compatible API
                          |
-                 Marina runtime service
+                 Talvik runtime service
                          |
               backend router and adapters
 ```
@@ -41,7 +41,7 @@ Windows:     %USERPROFILE%\\.marina\\{bin,lib,models}
 ```
 
 Every release artifact contains the native backend payload for its target
-platform under `lib/`. An archive containing only `marina` and `marinactl` is
+platform under `lib/`. An archive containing only `talvikd` and `talvik` is
 not a runnable local-inference release. Windows packages may duplicate DLLs
 into `bin/` for the OS loader while preserving `lib/` as the canonical managed
 library store.

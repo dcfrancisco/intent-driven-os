@@ -69,7 +69,7 @@ fi
 
 mkdir -p "$LLAMA_CPP_INSTALL_DIR"
 # Preserve CMake's versioned-library symlinks (libllama.dylib -> ...). The
-# unversioned linker name is required both when Cargo links Marina and when
+# unversioned linker name is required both when Cargo links Talvik and when
 # the dynamic loader resolves the packaged library graph at runtime.
 find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
   \( -type f -o -type l \) \

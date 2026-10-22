@@ -16,7 +16,7 @@ policy, routing, and backend boundaries authoritative.
 ## Acceptance criteria
 
 - An external assistant can discover health/models and complete a streaming
-  request without using `marinactl` or OID.
+  request without using `talvik` or OID.
 - Responses identify the selected model/backend policy result and do not
   silently change provider/data-handling policy.
 - Unsupported capabilities return structured errors rather than being faked.

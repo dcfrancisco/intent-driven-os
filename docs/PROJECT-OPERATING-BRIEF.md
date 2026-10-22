@@ -31,11 +31,11 @@ Implemented or substantially present:
 - Direct opt-in llama.cpp FFI boundary and GGUF model loading.
 - Model discovery, model registry view, one active model, tokenization,
   streaming generation, cooperative cancellation, and basic statistics.
-- Marina daemon plus local `marinactl` Unix-socket boundary.
+- Talvik `talvikd` daemon plus local `talvik` Unix-socket boundary.
 - Native loopback HTTP API for health, model discovery/load, chat/completions,
   bearer authentication, streaming, and request cancellation; the Python
   bridge remains a migration edge.
-- The runner can be installed independently as `marina` plus `marinactl`; the
+- The runner can be installed independently as `talvikd` plus `talvik`; the
   interactive console is optional.
 - Governed operation lifecycle with approval, recovery, verification, rollback,
   evidence, native shell passthrough, and read-only Linux skills.

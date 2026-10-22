@@ -11,7 +11,7 @@ fn main() {
     } else {
         return;
     };
-    for binary in ["marina", "marinactl", "oid-console"] {
+    for binary in ["talvik", "talvikd", "oid-console"] {
         println!("cargo:rustc-link-arg-bin={binary}={argument}");
     }
 }

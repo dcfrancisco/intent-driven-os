@@ -69,7 +69,7 @@ test -e "$LLAMA_CPP_INSTALL_DIR/libllama.so" || {
 echo
 echo "Native Linux x86_64 llama.cpp is installed at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
-echo "Build Marina with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 cargo build -p oid-console --release --bin marina --bin marinactl"
+echo "Build Talvik with:"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 cargo build -p oid-console --release --bin talvik --bin talvikd"
 echo "Run with:"
-echo "LD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR \$HOME/.marina/bin/marina"
+echo "LD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR \$HOME/.marina/bin/talvikd"

@@ -13,7 +13,7 @@ disconnect behavior, and protocol version negotiation.
 
 ## Acceptance criteria
 
-- `marinactl` can perform the complete load-stream-cancel-unload flow through
+- `talvik` can perform the complete load-stream-cancel-unload flow through
   the service boundary.
 - A disconnected client cannot stop or corrupt another request.
 - API errors and stream terminal events are versioned and documented.
@@ -42,7 +42,7 @@ requires a stable process-test environment before that console gate closes.
 
 ## Implementation status (2026-10-07)
 
-Implemented for the local first slice: `marina` and `marinactl` communicate over
+Implemented for the local first slice: `talvikd` and `talvik` communicate over
 the user-scoped Unix socket on Unix and loopback TCP on Windows, with model
 list/pull/load/unload, streaming generation, stable request IDs, and
 request-scoped cancellation. Protocol version negotiation, framed transport,

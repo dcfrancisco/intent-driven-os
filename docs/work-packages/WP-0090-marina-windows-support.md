@@ -49,7 +49,7 @@ only a packaged Windows archive and does not download or build native DLLs.
   produces the import library and DLL set required by Marina.
 - A source build with `LLAMA_CPP_REQUIRED=1` succeeds when the native payload
   is present and fails with an actionable error when it is absent.
-- A packaged Windows archive contains `marina.exe`, `marinactl.exe`, and the
+- A packaged Windows archive contains `talvikd.exe`, `talvik.exe`, and the
   matching native DLL payload; installation requires no administrator rights
   or global PATH mutation.
 - The installed binaries can locate their bundled native DLLs from the

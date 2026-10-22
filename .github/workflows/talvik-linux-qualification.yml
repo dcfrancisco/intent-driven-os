@@ -1,4 +1,4 @@
-name: Marina Linux native qualification
+name: Talvik Linux native qualification
 
 on:
   workflow_dispatch:
@@ -41,17 +41,17 @@ jobs:
         env:
           LLAMA_CPP_INSTALL_DIR: ${{ runner.temp }}/native
         run: ./scripts/setup-llama-linux.sh
-      - name: Build Marina and OID client
+      - name: Build Talvik and OID client
         env:
           LLAMA_CPP_LIB_DIR: ${{ runner.temp }}/native
           LLAMA_CPP_REQUIRED: "1"
         run: |
-          cargo build --release -p oid-console --bin marina --bin marinactl --bin oid-marina-chat
+          cargo build --release -p oid-console --bin talvikd --bin talvik --bin oid-marina-chat
           mkdir -p "$RUNNER_TEMP/marina/bin" "$RUNNER_TEMP/marina/lib"
-          cp target/release/marina target/release/marinactl target/release/oid-marina-chat "$RUNNER_TEMP/marina/bin/"
+          cp target/release/talvikd target/release/talvik target/release/oid-marina-chat "$RUNNER_TEMP/marina/bin/"
           cp "$RUNNER_TEMP"/native/libllama.so* "$RUNNER_TEMP/marina/lib/"
           cp "$RUNNER_TEMP"/native/libggml*.so* "$RUNNER_TEMP/marina/lib/"
-          ldd "$RUNNER_TEMP/marina/bin/marina" | tee "$RUNNER_TEMP/marina-ldd.txt"
+          ldd "$RUNNER_TEMP/marina/bin/talvikd" | tee "$RUNNER_TEMP/marina-ldd.txt"
       - name: Download and verify GGUF
         env:
           MODEL_URL: ${{ inputs.model_url }}
@@ -61,7 +61,7 @@ jobs:
           curl --fail --location --silent --show-error "$MODEL_URL" \
             -o "$RUNNER_TEMP/marina-home/.marina/models/${{ inputs.model_id }}.gguf"
           printf '%s  %s\n' "$MODEL_SHA256" "$RUNNER_TEMP/marina-home/.marina/models/${{ inputs.model_id }}.gguf" | sha256sum -c -
-      - name: Start Marina and qualify native runtime
+      - name: Start Talvik and qualify native runtime
         env:
           HOME: ${{ runner.temp }}/marina-home
           MARINA_HOME: ${{ runner.temp }}/marina-home
@@ -75,27 +75,27 @@ jobs:
           LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
           MARINA_MODEL: ${{ inputs.model_id }}
           MARINA_MODEL_SHA256: ${{ inputs.model_sha256 }}
-          MARINA_BINARY: ${{ runner.temp }}/marina/bin/marina
+          MARINA_BINARY: ${{ runner.temp }}/marina/bin/talvikd
           MARINA_SOCKET: ${{ runner.temp }}/marina-home/.marina/marina.sock
           QUALIFY_REPORT: ${{ runner.temp }}/linux-qualification.json
         run: |
           export PATH="$RUNNER_TEMP/marina/bin:$PATH"
           export LD_LIBRARY_PATH="$RUNNER_TEMP/marina/lib"
-          TOKEN="$(marinactl auth token create ci --scopes=models:read,inference,inference:cancel:self)"
+          TOKEN="$(talvik auth token create ci --scopes=models:read,inference,inference:cancel:self)"
           export MARINA_API_KEY="$TOKEN"
-          marina >"$RUNNER_TEMP/marina.log" 2>&1 &
+          talvikd >"$RUNNER_TEMP/marina.log" 2>&1 &
           echo $! >"$RUNNER_TEMP/marina.pid"
           trap 'kill "$(cat "$RUNNER_TEMP/marina.pid")" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
             curl --fail --silent http://127.0.0.1:11434/healthz >/dev/null && break
             sleep 1
           done
-          marinactl model load "$MARINA_MODEL"
-          export MARINACTL="$RUNNER_TEMP/marina/bin/marinactl"
+          talvik load "$MARINA_MODEL"
+          export TALVIK="$RUNNER_TEMP/marina/bin/talvik"
           ./scripts/qualify-marina-linux.sh
           OID_MARINA_URL=http://127.0.0.1:11434 OID_MARINA_TOKEN="$MARINA_API_KEY" OID_MARINA_MODEL="$MARINA_MODEL" \
             "$RUNNER_TEMP/marina/bin/oid-marina-chat" "Reply with exactly QUALIFIED"
-          ldd "$RUNNER_TEMP/marina/bin/marina" >"$RUNNER_TEMP/marina-ldd-final.txt"
+          ldd "$RUNNER_TEMP/marina/bin/talvikd" >"$RUNNER_TEMP/marina-ldd-final.txt"
       - name: Upload qualification evidence
         if: always()
         uses: actions/upload-artifact@v4

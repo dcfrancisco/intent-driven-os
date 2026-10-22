@@ -4,14 +4,14 @@ set -euo pipefail
 # Expose locally built release binaries through a stable, repository-local path.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT/target/release"
-LINK_DIR="$ROOT/marina/bin"
-BINARIES=(talvik marina marinactl)
+LINK_DIR="$ROOT/talvik/bin"
+BINARIES=(talvik talvikd)
 
 for binary in "${BINARIES[@]}"; do
   source_path="$RELEASE_DIR/$binary"
   if [[ ! -x "$source_path" ]]; then
     echo "Missing release binary: $source_path" >&2
-    echo "Build it with: cargo build --release -p oid-console --bin talvik --bin marina --bin marinactl" >&2
+    echo "Build it with: cargo build --release -p oid-console --bin talvik --bin talvikd" >&2
     exit 1
   fi
 done

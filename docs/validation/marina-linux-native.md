@@ -1,6 +1,6 @@
-# Marina Native Linux Qualification
+# Talvik Native Linux Qualification
 
-This procedure qualifies the Marina model runner on a real Linux x86_64 host.
+This procedure qualifies the Talvik model runner on a real Linux x86_64 host.
 It is distinct from Docker workspace validation and from cross-compilation.
 No result may be marked qualified unless the daemon loads a GGUF model and
 serves real inference on the Linux host.
@@ -21,7 +21,7 @@ From the repository root:
 ./scripts/setup-llama-linux.sh
 export LLAMA_CPP_LIB_DIR="$HOME/.marina/lib"
 export LLAMA_CPP_REQUIRED=1
-cargo build -p oid-console --release --bin marina --bin marinactl
+cargo build -p oid-console --release --bin talvikd --bin talvik
 ```
 
 The default build disables optional accelerators and conservative x86 SIMD

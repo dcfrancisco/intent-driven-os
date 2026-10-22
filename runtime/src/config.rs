@@ -11,7 +11,7 @@ use std::path::PathBuf;
 pub struct HttpConfig {
     /// Optional loopback address. `None` keeps HTTP disabled.
     pub address: Option<String>,
-    /// Require a valid Marina bearer token for API routes.
+    /// Require a valid Talvik bearer token for API routes.
     pub authentication_enabled: bool,
 }
 
@@ -69,9 +69,9 @@ pub fn home_directory() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// Return Marina's canonical user-scoped home directory.
+/// Return Talvik's canonical user-scoped home directory.
 #[must_use]
-pub fn marina_home_directory() -> Option<std::path::PathBuf> {
+pub fn talvik_home_directory() -> Option<std::path::PathBuf> {
     std::env::var_os("TALVIK_HOME")
         .or_else(|| std::env::var_os("MARINA_HOME"))
         .map_or_else(
@@ -87,7 +87,7 @@ pub fn config_file() -> PathBuf {
         .or_else(|| std::env::var_os("MARINA_CONFIG"))
         .map_or_else(
             || {
-                marina_home_directory().map_or_else(
+                talvik_home_directory().map_or_else(
                     || PathBuf::from(".marina/config.yaml"),
                     |home| home.join("config.yaml"),
                 )
@@ -111,7 +111,7 @@ pub fn load() -> Result<RuntimeConfig, String> {
                 file_values
                     .get("state_directory")
                     .map(|value| configured_path(value))
-                    .or_else(marina_home_directory)
+                    .or_else(talvik_home_directory)
             },
             |path| Some(std::path::PathBuf::from(path)),
         );
@@ -123,7 +123,7 @@ pub fn load() -> Result<RuntimeConfig, String> {
     }
     // Leave the model directory unset unless explicitly configured. The
     // runtime then uses its complete discovery set, including the canonical
-    // Marina store and compatible local caches. An explicit directory is an
+    // Talvik store and compatible local caches. An explicit directory is an
     // isolation boundary used by tests and operators.
     config.model_directory = std::env::var_os("TALVIK_MODEL_DIR")
         .or_else(|| std::env::var_os("MARINA_MODEL_DIR"))
@@ -184,7 +184,7 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
             }
             let line = item;
             let Some((key, value)) = line.split_once(':') else {
-                return Err(format!("invalid Marina config at line {}", line_number + 1));
+                return Err(format!("invalid Talvik config at line {}", line_number + 1));
             };
             let mut prefix = sections
                 .iter()
@@ -196,12 +196,12 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
             continue;
         }
         let Some((key, value)) = line.split_once(':') else {
-            return Err(format!("invalid Marina config at line {}", line_number + 1));
+            return Err(format!("invalid Talvik config at line {}", line_number + 1));
         };
         let key = key.trim();
         if key.is_empty() {
             return Err(format!(
-                "empty Marina config key at line {}",
+                "empty Talvik config key at line {}",
                 line_number + 1
             ));
         }
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn reads_small_yaml_key_value_config() {
         let path = std::env::temp_dir().join(format!(
-            "marina-config-{}-{}.yaml",
+            "talvik-config-{}-{}.yaml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -246,25 +246,25 @@ mod tests {
 
     #[test]
     fn rejects_non_loopback_http_without_explicit_override() {
-        let previous = std::env::var_os("MARINA_HTTP_ADDR");
-        let previous_override = std::env::var_os("MARINA_HTTP_ALLOW_NON_LOOPBACK");
-        std::env::set_var("MARINA_HTTP_ADDR", "0.0.0.0:11434");
-        std::env::remove_var("MARINA_HTTP_ALLOW_NON_LOOPBACK");
+        let previous = std::env::var_os("TALVIK_HTTP_ADDR");
+        let previous_override = std::env::var_os("TALVIK_HTTP_ALLOW_NON_LOOPBACK");
+        std::env::set_var("TALVIK_HTTP_ADDR", "0.0.0.0:11434");
+        std::env::remove_var("TALVIK_HTTP_ALLOW_NON_LOOPBACK");
         assert!(http_config().is_err());
         match previous {
-            Some(value) => std::env::set_var("MARINA_HTTP_ADDR", value),
-            None => std::env::remove_var("MARINA_HTTP_ADDR"),
+            Some(value) => std::env::set_var("TALVIK_HTTP_ADDR", value),
+            None => std::env::remove_var("TALVIK_HTTP_ADDR"),
         }
         match previous_override {
-            Some(value) => std::env::set_var("MARINA_HTTP_ALLOW_NON_LOOPBACK", value),
-            None => std::env::remove_var("MARINA_HTTP_ALLOW_NON_LOOPBACK"),
+            Some(value) => std::env::set_var("TALVIK_HTTP_ALLOW_NON_LOOPBACK", value),
+            None => std::env::remove_var("TALVIK_HTTP_ALLOW_NON_LOOPBACK"),
         }
     }
 
     #[test]
     fn reads_nested_listener_schema_and_flattens_listener_fields() {
         let path = std::env::temp_dir().join(format!(
-            "marina-nested-config-{}-{}.yaml",
+            "talvik-nested-config-{}-{}.yaml",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

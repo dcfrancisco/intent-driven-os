@@ -1,4 +1,4 @@
-//! Local bearer-token management for Marina clients.
+//! Local bearer-token management for Talvik clients.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -38,7 +38,7 @@ pub fn token_file() -> PathBuf {
         .or_else(|| std::env::var_os("MARINA_TOKEN_FILE"))
         .map_or_else(
             || {
-                crate::config::marina_home_directory().map_or_else(
+                crate::config::talvik_home_directory().map_or_else(
                     || PathBuf::from(".marina/tokens"),
                     |home| home.join("tokens"),
                 )

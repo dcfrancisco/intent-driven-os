@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$LlamaRoot = (Join-Path $env:TEMP "marina-llama.cpp"),
-    [string]$LlamaBuild = (Join-Path $env:TEMP "marina-llama-windows-cpu-build"),
-    [string]$NativeLibDir = (Join-Path $(if ($env:MARINA_HOME) { $env:MARINA_HOME } else { Join-Path $env:USERPROFILE ".marina" }) "lib"),
+    [string]$LlamaRoot = (Join-Path $env:TEMP "talvik-llama.cpp"),
+    [string]$LlamaBuild = (Join-Path $env:TEMP "talvik-llama-windows-cpu-build"),
+    [string]$NativeLibDir = (Join-Path $(if ($env:TALVIK_HOME) { $env:TALVIK_HOME } elseif ($env:MARINA_HOME) { $env:MARINA_HOME } else { Join-Path $env:USERPROFILE ".marina" }) "lib"),
     [string]$Repository = "https://github.com/ggml-org/llama.cpp.git",
     [string]$Commit = "18443257a30c884d5332abb8e7dc43c7ffe42fda"
 )
@@ -70,7 +70,7 @@ foreach ($nativeFile in $nativeFiles) {
 }
 
 Write-Host "Native Windows x86_64 llama.cpp is installed at: $NativeLibDir"
-Write-Host "Build Marina with:"
+Write-Host "Build Talvik with:"
 Write-Host "`$env:LLAMA_CPP_LIB_DIR = '$NativeLibDir'"
 Write-Host "`$env:LLAMA_CPP_REQUIRED = '1'"
-Write-Host "cargo build --release -p oid-console --bin marina --bin marinactl"
+Write-Host "cargo build --release -p oid-console --bin talvik --bin talvikd"

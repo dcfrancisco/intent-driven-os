@@ -1,10 +1,10 @@
-# OID/Marina image packaging
+# OID/Talvik image packaging
 
 These files implement the first system-profile image composition described by
 ADR-0023. Marina packaging remains governed by ADR-0014 and WP-0069.
 
 WP-0089 packages these same assets into a versioned Debian artifact with
-`scripts/package-oid-deb.sh`. It includes the existing Marina, `marinactl`,
+`scripts/package-oid-deb.sh`. It includes the `talvikd` daemon, `talvik` client,
 and `oid-console` binaries plus relocatable native libraries; it does not
 include model files. Run `scripts/qualify-oid-deb.sh` against the resulting
 package to test dpkg lifecycle behavior in an isolated root.
@@ -14,8 +14,8 @@ Build the system package on native Linux from qualified artifacts:
 ```sh
 ./scripts/package-oid-deb.sh \
   --version 0.1.0 \
-  --marina target/release/marina \
-  --marinactl target/release/marinactl \
+  --talvikd target/release/talvikd \
+  --talvik target/release/talvik \
   --oid-console target/release/oid-console \
   --native-lib-dir /path/to/qualified/llama/lib
 ```
@@ -32,7 +32,7 @@ It installs only `oid-console`; Marina remains managed by
 
 The two services intentionally have different identities:
 
-- `marina.service` runs the model runner as `marina`, owns `/var/lib/marina`,
+- `talvikd.service` runs the model runner as `marina`, owns `/var/lib/marina`,
   and exposes the Unix socket at `/run/marina/marina.sock` plus loopback HTTP
   at `127.0.0.1:12434`.
 - `oid-readiness.service` and `oid-console.service` run as `oid`. OID may

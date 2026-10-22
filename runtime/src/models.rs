@@ -605,8 +605,8 @@ impl ModelDiscovery {
                 directories.push(directory);
             }
         };
-        if let Some(marina_home) = crate::config::marina_home_directory() {
-            add_directory(marina_home.join("models"));
+        if let Some(talvik_home) = crate::config::talvik_home_directory() {
+            add_directory(talvik_home.join("models"));
             let user_home = crate::config::home_directory().unwrap_or_default();
             add_directory(user_home.join(".local/share/intelligent-runtime/models"));
             add_directory(user_home.join("Models"));

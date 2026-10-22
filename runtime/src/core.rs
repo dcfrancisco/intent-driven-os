@@ -8,7 +8,7 @@ use oid_shared::EventBus;
 pub struct Runtime;
 
 impl Runtime {
-    /// Start Marina through the authoritative production composition root.
+    /// Start Talvik through the authoritative production composition root.
     ///
     /// # Errors
     ///
@@ -18,7 +18,7 @@ impl Runtime {
         Self::start_with_bus(config, EventBus::new())
     }
 
-    /// Start Marina with a caller-owned event bus for an in-process client.
+    /// Start Talvik with a caller-owned event bus for an in-process client.
     ///
     /// # Errors
     ///
