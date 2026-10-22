@@ -38,3 +38,9 @@ normalized OpenAI `tool_calls`. The repeatable standard-client procedure is
 `scripts/qualify-openai-client.py`; it covers model discovery, non-streaming,
 SSE streaming, tool invocation, and a tool-result round trip. It requires the
 optional `openai` Python package and a real GGUF daemon.
+
+Final macOS x86_64 verification on 2026-10-23 used an isolated Python 3.11
+environment and a fresh release daemon. The procedure returned
+`OPENAI_CLIENT_ACCEPTED`; no IDE-specific client session was available. The
+Windows and macOS arm64 procedures remain pending in the platform qualification
+bundle.

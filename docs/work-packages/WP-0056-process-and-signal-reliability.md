@@ -2,7 +2,12 @@
 
 ## Status
 
-Implemented — macOS and Ubuntu 24.04 Docker validation complete; real-TTY/host validation remains.
+Implemented for the tested process harness — macOS and Ubuntu 24.04 Docker
+validation complete; real-TTY/host validation remains. The four previously
+reported startup-marker failures were reproduced only in the earlier loaded
+workspace run. A fresh standalone run passed all six tests serially and with
+the default test-thread setting. The required qualification command is the
+serial form below because these tests start and signal real child processes.
 
 ## Purpose
 
@@ -76,3 +81,17 @@ the process terminates abnormally.
 
 When this package passes, proceed directly to State and Corruption Resilience.
 Do not add product capabilities between the two stabilization packages.
+
+## Qualification disposition — 2026-10-23
+
+```text
+cargo test -p oid-console --test process_signals -- --test-threads=1 --nocapture
+```
+
+Result: **6 passed**. A standalone default-thread rerun also returned **6
+passed**. The earlier four failures stopped in
+`wait_for_text("✓ Console ready")`, before signal delivery or governed-operation
+creation; they did not produce a runtime, transport, or child-cleanup failure.
+No implementation fix was required. Keep the serial command as the
+deterministic gate and retain real-host TTY qualification as a separate
+platform obligation.

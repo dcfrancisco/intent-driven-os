@@ -284,3 +284,27 @@ separate limitations.
 The previously recorded real-GGUF lifecycle qualification remains applicable
 because the runtime, transport protocol, and model state paths are unchanged;
 this revision changes executable entry points and product packaging only.
+
+## Talvik M1 final product qualification — 2026-10-23
+
+Fresh release binaries and a fresh daemon passed the isolated standard OpenAI
+Python client procedure with `OPENAI_CLIENT_ACCEPTED`. This covered model
+discovery, non-streaming chat, SSE streaming, embeddings, tool invocation, and
+the tool-result round trip. The same daemon passed the real-GGUF lifecycle
+suite with `ACCEPTED`, independent responses, `DONE completed`,
+`DONE cancelled`, cancellation recovery, and clean shutdown.
+
+The four earlier process-signal startup-marker failures were re-run. All six
+tests passed with `--test-threads=1`, and a standalone default-thread rerun
+also passed all six. The earlier failures stopped before signal delivery in a
+loaded workspace run; no Marina implementation or transport defect was
+reproduced. The serial command remains the deterministic release gate and the
+finding is resolved in WP-0056.
+
+No supported authenticated IDE assistant session was available for a genuine
+IDE interoperability run. Windows x86_64 and macOS arm64 are also unverified;
+reproducible procedures are checked in under `docs/qualification/`. Therefore
+the qualified local macOS x86_64 CPU-first gate is **GO**, but Talvik M1 is
+**not fully qualified** and the cross-platform/product release decision is
+**NO-GO** pending those mandatory external gates. Installer and Docker
+distribution remain in the RC work package.
