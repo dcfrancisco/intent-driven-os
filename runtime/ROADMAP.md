@@ -61,7 +61,9 @@ Exit criteria: authorized clients can reason about placement, resource use, fail
 
 Goal: broaden integration without weakening the common boundary.
 
-- Add OpenAI-compatible request and streaming translation.
+- Add OpenAI-compatible request and streaming translation; the initial Talvik
+  edge and standard-client qualification procedure are now implemented under
+  WP-0067.
 - Add a second local or managed backend after capability-gap review.
 - Define plugin discovery, versioning, signing/trust, isolation, and lifecycle.
 - Add policy profiles for shell, desktop, background service, and application callers.

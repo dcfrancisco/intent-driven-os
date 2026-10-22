@@ -109,6 +109,28 @@ successful container build check, but not a passing end-to-end Docker
 validation. Native Linux host qualification remains separate and is not
 claimed from this container run.
 
+## Product M1 follow-up verification — 2026-10-23
+
+- Model acquisition now retains a stable `.part` file across interrupted
+  attempts, resumes local and HTTP transfers, reports byte progress, retries
+  transient curl failures, verifies a supplied trusted SHA-256, and records the
+  observed digest in registry metadata. A real local HTTP server test
+  interrupted the first transfer, exhausted curl retries, and passed a second
+  acquisition using a `Range` request.
+- GGUF templates advertising tool support now pass tool definitions and tool
+  results through the native prompt boundary. A real Qwen GGUF emitted an
+  OpenAI-shaped `get_weather` call, and a second real request carrying that
+  call plus `Clear, 29 degrees Celsius.` returned a relevant summary.
+- The standard OpenAI Python client procedure is checked in at
+  `scripts/qualify-openai-client.py`; it could not execute here because the
+  `openai` package is not installed. Native OpenAI-shaped HTTP wire checks did
+  pass for model listing, plain completion, SSE streaming, embeddings, and
+  tool round-trip behavior.
+- The existing lifecycle harness passed again on the rebuilt daemon. The full
+  workspace suite still reproduces the four pre-existing console
+  process-signal startup-marker failures; the two SIGTERM cases pass. Strict
+  Clippy remains blocked by the recorded pre-existing workspace baseline.
+
 ## CPU-first closeout audit — 2026-10-17
 
 Final native inputs were macOS x86_64, the Qwen GGUF

@@ -14,10 +14,11 @@ WP-0075 and `runtime/BACKLOG.md`.
 
 The qualified CPU-first slice supports multiple resident GGUF models, one
 active generation, streaming, cancellation, embeddings, and OpenAI-compatible
-chat/completions translation through the llama.cpp adapter. It is not a model
+chat/completions translation through the llama.cpp adapter, including tool
+calls for GGUF templates that advertise tool support. It is not a model
 scheduler with concurrent generations, an agent loop, a training system, or an
-unrestricted network gateway. Tool calls are capability-reported and rejected
-explicitly until a backend implements them.
+unrestricted network gateway. Tool calls remain capability-gated and are
+rejected explicitly for unsupported templates.
 
 `talvikd` is the daemon and `talvik` is its client. The former `marina` and
 `marinactl` binaries are no longer built or packaged. Existing `$HOME/.marina`

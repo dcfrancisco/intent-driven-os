@@ -28,6 +28,16 @@ using native Windows execution.
 WP-0077, ADR-0021, WP-0065, and a Windows x86_64 host or GitHub Windows
 runner with the native DLL build environment.
 
+## Reproducible procedure
+
+In a Visual Studio Developer PowerShell, run `scripts/setup-llama-windows.ps1`,
+build `talvik` and `talvikd` with the installed DLL directory, then run the
+Windows smoke script plus the HTTP lifecycle qualification and
+`scripts/qualify-openai-client.py`. Record `Get-ComputerInfo`,
+`dumpbin /DEPENDENTS` for the binaries/DLLs, model SHA-256, loopback TCP/auth
+results, and the full cancel/recovery report before marking this package
+qualified.
+
 ## Status
 
 Blocked: no Windows runtime host or runner is currently available.

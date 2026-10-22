@@ -70,11 +70,12 @@ sampling-controlled qualification concern, not a process-exit assertion.
 - [x] CLI help, JSON status/model output, and actionable request errors.
 - [x] Native embeddings path and OpenAI-compatible `/v1/embeddings` edge.
 - [x] Multi-turn role preservation through the embedded GGUF chat template.
-- [x] Explicit tool-capability rejection; no silent acceptance of unsupported
-  tool requests.
+- [x] Capability-gated GGUF tool calls with normalized OpenAI `tool_calls` and
+  assistant/tool-result round trips.
 - [x] Fresh real-GGUF lifecycle validation with release binaries.
-- [ ] Resumable remote acquisition with client-visible progress remains WP-0058.
-- [ ] Actual backend tool execution remains WP-0063.
+- [x] Resumable acquisition retains `.part` files, reports progress, retries
+  HTTP transfers, verifies trusted SHA-256 values, and records observed
+  checksums in the registry.
 - [ ] Windows and macOS arm64 native qualification remain WP-0079/WP-0080.
 
 ## v0.1 — Contracts and local foundation

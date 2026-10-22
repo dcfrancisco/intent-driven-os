@@ -25,6 +25,15 @@ Silicon without treating Intel compilation as evidence.
 
 WP-0077, ADR-0021, WP-0065, and an Apple Silicon runtime host.
 
+## Reproducible procedure
+
+On an Apple Silicon host, run `scripts/setup-llama-macos.sh`, build the
+release binaries with `LLAMA_CPP_LIB_DIR="$HOME/.marina/lib"` and
+`LLAMA_CPP_REQUIRED=1`, then execute the native HTTP lifecycle qualification
+and `scripts/qualify-openai-client.py` against a real GGUF. Record `uname -a`,
+`file` output for both binaries and native libraries, model SHA-256, and the
+complete lifecycle report before marking this package qualified.
+
 ## Status
 
 Blocked: no Apple Silicon host is currently available.
