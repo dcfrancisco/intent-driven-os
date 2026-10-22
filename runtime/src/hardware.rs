@@ -88,6 +88,8 @@ fn detect_snapshot() -> HardwareSnapshot {
         linux_cpu_details().unwrap_or_else(|| ("unknown CPU".to_owned(), None));
     let (installed_ram_bytes, available_ram_bytes) = if std::env::consts::OS == "macos" {
         mac_memory_details()
+    } else if std::env::consts::OS == "windows" {
+        windows_memory_details()
     } else {
         linux_memory_details()
     };
@@ -223,6 +225,20 @@ fn mac_memory_details() -> (Option<u64>, Option<u64>) {
         (pages > 0).then_some(pages.saturating_mul(page_size))
     });
     (installed, available)
+}
+
+#[cfg(windows)]
+fn windows_memory_details() -> (Option<u64>, Option<u64>) {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let total = (system.total_memory() > 0).then_some(system.total_memory());
+    let available = (system.available_memory() > 0).then_some(system.available_memory());
+    (total, available)
+}
+
+#[cfg(not(windows))]
+fn windows_memory_details() -> (Option<u64>, Option<u64>) {
+    (None, None)
 }
 
 fn simd_capabilities() -> Vec<String> {

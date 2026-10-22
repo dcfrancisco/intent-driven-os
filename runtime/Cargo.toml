@@ -12,6 +12,7 @@ repository.workspace = true
 oid-shared = { path = "../shared" }
 oid-model-runner = { path = "../crates/model-runner" }
 oid-llama-cpp-adapter = { path = "adapters/llama-cpp" }
+sysinfo = "0.33"
 
 [lints]
 workspace = true
