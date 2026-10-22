@@ -7,12 +7,19 @@ coupling OID to Windows. This work package covers reproducible native build
 inputs, local prerequisite guidance, self-contained release packaging, and the
 documentation needed before Windows support can be claimed.
 
+The current repository has native llama.cpp setup scripts for Linux and
+macOS, but no Windows equivalent. `scripts/install-model-runner.ps1` installs
+only a packaged Windows archive and does not download or build native DLLs.
+
 ## Scope
 
 - Define supported Rust, MSVC, Windows SDK, Microsoft C/C++ runtime, CMake,
   Git, and llama.cpp versions or compatibility ranges.
 - Provide a Windows-native prerequisite and toolchain check for developers and
   release operators.
+- Add the Windows equivalent of the existing Linux/macOS native llama.cpp
+  setup path, or document an approved replacement that produces the required
+  `.lib` and `.dll` payload.
 - Provide a reproducible PowerShell path for building the pinned llama.cpp
   revision and placing its `.lib` and `.dll` outputs in `LLAMA_CPP_LIB_DIR`.
 - Verify that Windows builds fail clearly when required native inputs are
@@ -36,6 +43,8 @@ documentation needed before Windows support can be claimed.
 ## Acceptance criteria
 
 - A documented Windows environment can check prerequisites before building.
+- The documentation clearly distinguishes the Linux/macOS setup scripts from
+  the Windows packaged-release installer and source-build requirements.
 - The pinned llama.cpp revision builds with the supported MSVC toolchain and
   produces the import library and DLL set required by Marina.
 - A source build with `LLAMA_CPP_REQUIRED=1` succeeds when the native payload

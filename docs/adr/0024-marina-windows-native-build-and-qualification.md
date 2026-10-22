@@ -17,7 +17,11 @@ Windows artifact from a qualified Windows runtime.
 The repository can currently build a Windows x86_64 release in GitHub Actions
 using MSVC and a pinned llama.cpp revision. Local Windows setup guidance,
 native dependency checks, and end-to-end Windows runtime evidence remain
-incomplete.
+incomplete. Native llama.cpp setup scripts currently exist for Linux and
+macOS (`scripts/setup-llama-linux.sh` and `scripts/setup-llama-macos.sh`), but
+there is no Windows equivalent. The Windows PowerShell script is an installer
+for a package that already contains the native DLLs; it does not acquire or
+build them.
 
 ## Decision
 
@@ -33,6 +37,11 @@ The native build contract SHALL make these inputs explicit:
 - `LLAMA_CPP_REQUIRED=1` makes missing native inputs a fatal build error.
 - The llama.cpp revision, toolchain, runtime-library assumptions, and CPU
   baseline are recorded with release evidence.
+
+The platform setup boundary SHALL remain explicit: Linux and macOS may use
+their native llama.cpp setup scripts, while Windows source builds currently
+require manually installed MSVC/CMake/Git tooling and a manually prepared
+llama.cpp native payload until a Windows setup path is delivered.
 
 Windows release archives SHALL bundle the matching llama.cpp and ggml DLLs.
 Consumers must not need Ollama, a system-wide llama.cpp installation, a
