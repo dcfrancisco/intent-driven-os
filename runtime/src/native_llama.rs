@@ -1,7 +1,7 @@
 //! Compatibility bridge from the legacy runtime backend API to `ModelRunner`.
 
 use crate::backends::{Backend, BackendDescriptor, BackendHealth, GenerationRequest, LoadedModel};
-use crate::generation::GenerationStatistics;
+use crate::generation::{GenerationStatistics, GenerationTermination};
 use crate::models::ModelMetadata;
 use oid_llama_cpp_adapter::LlamaCppModelRunner;
 use oid_model_runner::{
@@ -199,6 +199,17 @@ impl Backend for LlamaCppAdapter {
                         inference_time_ms: stats.generation_time.unwrap_or_default().as_millis(),
                         context_tokens: prompt_tokens + stats.generated_tokens,
                         metrics_known: true,
+                        termination: match stats.termination {
+                            oid_model_runner::GenerationTermination::Stop => {
+                                GenerationTermination::Stop
+                            }
+                            oid_model_runner::GenerationTermination::Length => {
+                                GenerationTermination::Length
+                            }
+                            oid_model_runner::GenerationTermination::ContextLength => {
+                                GenerationTermination::ContextLength
+                            }
+                        },
                         ..GenerationStatistics::default()
                     });
                 }

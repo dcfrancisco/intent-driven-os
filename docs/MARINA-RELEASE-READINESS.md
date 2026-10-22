@@ -330,3 +330,16 @@ contained only Talvik and no Ollama or remote fallback.
 The M1 release decision remains **NO-GO** until native multi-model evidence is
 available for every supported platform and at least one real IDE assistant
 completes an audited Talvik-only request.
+
+## Inference termination qualification — 2026-10-23
+
+The inference investigation did not reproduce token corruption, prompt leakage,
+or unexplained early termination on the available Qwen and DeepSeek GGUFs.
+Small-model arithmetic errors and verbose DeepSeek responses are classified as
+model/configuration behavior. A confirmed API defect was corrected: successful
+generation previously reported `finish_reason:"stop"` even when the native
+token budget was exhausted. Native termination now propagates through the
+runtime; OpenAI responses report standard `stop` or `length` and include the
+precise `termination_reason`. Streaming emits the final finish chunk before
+`[DONE]`. Native post-fix checks and affected unit tests passed; platform and
+IDE qualification status is unchanged.

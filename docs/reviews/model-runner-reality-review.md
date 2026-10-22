@@ -760,3 +760,22 @@ console process-signal startup-marker finding MARINA-F-003.
 | TALVIK-F-007 | Ubuntu 24.04 Docker validation stopped before tests | Rust 1.99 strict Clippy reports the existing workspace lint baseline before the script reaches `cargo test` | Keep the lint baseline disposition explicit; do not weaken or skip the gate; re-run after baseline cleanup | ADR-0013 | WP-0078 | `scripts/validate-linux.sh` on 2026-10-23 built the image and workspace, then reported 94 pre-existing diagnostics | DOCUMENTED |
 | TALVIK-F-008 | Remote acquisition discarded interrupted transfers | Acquisition used a unique temporary file and removed it after curl failure | Retain a stable `.part`, resume with curl ranges/retries, show progress, verify trusted SHA-256, and atomically register the observed digest | ADR-0014 | WP-0058 | Local partial-resume and checksum tests pass; HTTP behavior uses curl `--continue-at -` and was code-checked | RESOLVED |
 | TALVIK-F-009 | OpenAI tool requests had no backend execution path | The edge rejected every tool request even when the GGUF template advertised tool support | Detect template capability, translate tool definitions/results, parse model tool calls, and return normalized OpenAI responses | ADR-0011, ADR-0013 | WP-0063, WP-0067 | Real Qwen GGUF emitted `get_weather`; real multi-turn tool-result request returned the weather summary | RESOLVED |
+
+### Inference output correctness investigation — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-010 | Qwen and DeepSeek produced coherent code and Fibonacci output, but small-model arithmetic answers were wrong or overly verbose; long responses ended at 128 tokens | Model capability and default sampling/output budget; no prompt leakage, token corruption, or premature native stop was reproduced | Preserve model behavior; expose native EOS, max-token, and context exhaustion through backend-neutral statistics and OpenAI metadata | ADR-0011, ADR-0013 | WP-0061, WP-0067 | Native two-model matrix; one-token HTTP request returned `finish_reason=length`, `termination_reason=max_tokens`; streaming emitted a final finish event | RESOLVED |
+
+The investigation used the installed Qwen 2.5 0.5B Instruct Q4_K_M and
+DeepSeek Coder 1.3B GGUFs. Chat-template metadata was present in Qwen and the
+native adapter applied it through llama.cpp. Each request created a fresh native
+context, and alternating resident-model requests produced the expected model-
+specific output. The incorrect arithmetic results are classified as model
+limitations/configuration behavior, not runtime defects.
+
+The native adapter now carries a termination enum from llama.cpp through the
+runtime statistics. The OpenAI-compatible endpoint maps EOS to `stop`, token
+budget and context exhaustion to standard `length`, and adds the precise
+`termination_reason` (`stop`, `max_tokens`, or `context_length`). Streaming
+responses now include the final finish chunk before `[DONE]`.

@@ -29,7 +29,7 @@ pub use backends::{
 pub use core::Runtime;
 pub use generation::{
     GenerationMessage, GenerationOptions, GenerationRequest, GenerationResult,
-    GenerationStatistics, GenerationStream,
+    GenerationStatistics, GenerationStream, GenerationTermination,
 };
 pub use hardware::{HardwareService, HardwareSnapshot};
 pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};

@@ -278,6 +278,20 @@ pub struct NativeGenerationStatistics {
     pub generated_tokens: u64,
     /// Context tokens consumed.
     pub context_tokens: u64,
+    /// Why successful generation terminated.
+    pub termination: NativeGenerationTermination,
+}
+
+/// Native reason a generation reached its successful terminal boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NativeGenerationTermination {
+    /// The model emitted an end-of-generation token or stop marker.
+    #[default]
+    Stop,
+    /// The requested completion token budget was exhausted.
+    Length,
+    /// The requested context window was exhausted.
+    ContextLength,
 }
 
 #[cfg(native_llama_cpp)]
@@ -737,6 +751,7 @@ impl NativeModel {
             let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
+            let mut termination = NativeGenerationTermination::Stop;
             for _ in 0..max_tokens {
                 if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
                     cancelled_result = true;
@@ -769,6 +784,11 @@ impl NativeModel {
                     ffi::llama_sampler_accept(sampler, token);
                 }
                 if generated >= u64::from(max_tokens) {
+                    termination = NativeGenerationTermination::Length;
+                    break;
+                }
+                if prompt_count + generated >= u64::from(context_size) {
+                    termination = NativeGenerationTermination::ContextLength;
                     break;
                 }
                 let mut next = [token];
@@ -813,6 +833,7 @@ impl NativeModel {
                 prompt_tokens: prompt_count,
                 generated_tokens: generated,
                 context_tokens: prompt_count + generated,
+                termination,
             })
         }
     }

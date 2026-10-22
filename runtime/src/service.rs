@@ -443,6 +443,7 @@ impl RuntimeService for MarinaRuntime {
                 inference_time_ms: latency_ms,
                 context_tokens: statistics.context_tokens,
                 metrics_known: true,
+                termination: statistics.termination,
             };
             let result = GenerationResult {
                 request_id: request.request_id.clone(),

@@ -5,8 +5,8 @@
 use oid_llama_cpp_sys as native;
 use oid_model_runner::{
     CancellationToken, GenerationEvent, GenerationRequest, GenerationStats, GenerationStream,
-    LoadModelRequest, LoadedModel, ModelId, ModelRunner, ModelRunnerError, ModelRuntimeStats,
-    ModelState,
+    GenerationTermination, LoadModelRequest, LoadedModel, ModelId, ModelRunner, ModelRunnerError,
+    ModelRuntimeStats, ModelState,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -201,6 +201,15 @@ impl ModelRunner for LlamaCppModelRunner {
                     generation_time: Some(elapsed),
                     tokens_per_second: (elapsed.as_secs_f64() > 0.0)
                         .then_some(native_stats.generated_tokens as f64 / elapsed.as_secs_f64()),
+                    termination: match native_stats.termination {
+                        native::NativeGenerationTermination::Stop => GenerationTermination::Stop,
+                        native::NativeGenerationTermination::Length => {
+                            GenerationTermination::Length
+                        }
+                        native::NativeGenerationTermination::ContextLength => {
+                            GenerationTermination::ContextLength
+                        }
+                    },
                 };
                 Ok(stats)
             })();

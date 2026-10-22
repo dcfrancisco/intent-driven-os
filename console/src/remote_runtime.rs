@@ -404,6 +404,7 @@ fn statistics_from_metrics(
             && metrics.tokens_per_second.is_some()
             && metrics.latency_ms.is_some()
             && metrics.inference_time_ms.is_some(),
+        ..GenerationStatistics::default()
     }
 }
 

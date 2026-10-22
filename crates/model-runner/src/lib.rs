@@ -177,6 +177,18 @@ pub enum GenerationEvent {
     Error(ModelRunnerError),
 }
 
+/// Reason a generation reached its successful terminal boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GenerationTermination {
+    /// The model emitted an end-of-generation token or configured stop marker.
+    #[default]
+    Stop,
+    /// The requested completion token budget was exhausted.
+    Length,
+    /// The requested context window was exhausted.
+    ContextLength,
+}
+
 /// Measurements for one generation request.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GenerationStats {
@@ -190,6 +202,8 @@ pub struct GenerationStats {
     pub generation_time: Option<Duration>,
     /// Generated tokens per second, when calculable.
     pub tokens_per_second: Option<f64>,
+    /// Why successful generation terminated.
+    pub termination: GenerationTermination,
 }
 
 /// Runtime-level model statistics.

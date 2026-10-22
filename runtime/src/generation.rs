@@ -67,6 +67,20 @@ pub struct GenerationStatistics {
     /// Whether the numeric measurements are available and trustworthy.
     /// When false, consumers must display the measurements as unknown.
     pub metrics_known: bool,
+    /// Why successful generation terminated.
+    pub termination: GenerationTermination,
+}
+
+/// Reason a generation reached its successful terminal boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GenerationTermination {
+    /// The model emitted an end-of-generation token or stop marker.
+    #[default]
+    Stop,
+    /// The requested completion token budget was exhausted.
+    Length,
+    /// The requested context window was exhausted.
+    ContextLength,
 }
 
 /// Completed generation result.

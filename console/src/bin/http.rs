@@ -1,8 +1,8 @@
 //! Native loopback HTTP API for Marina.
 
 use oid_runtime::{
-    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream, MarinaRuntime,
-    RuntimeService,
+    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
+    GenerationTermination, MarinaRuntime, RuntimeService,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -446,6 +446,9 @@ fn generate(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
+                let finish_reason = completion_finish_reason(result.statistics.termination);
+                let termination_reason =
+                    completion_termination_reason(result.statistics.termination);
                 if streaming {
                     if let Some(tool_calls) = parse_tool_calls(&output) {
                         let event = json!({
@@ -453,6 +456,15 @@ fn generate(
                             "object": "chat.completion.chunk",
                             "model": model,
                             "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": "tool_calls"}]
+                        });
+                        write!(stream, "data: {event}\n\n")?;
+                    } else {
+                        let event = json!({
+                            "id": result.request_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                            "termination_reason": termination_reason
                         });
                         write!(stream, "data: {event}\n\n")?;
                     }
@@ -467,7 +479,7 @@ fn generate(
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {"stop"}}], "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -504,6 +516,21 @@ fn generate(
                 return respond_error(stream, 500, "generation stream closed".to_owned());
             }
         }
+    }
+}
+
+fn completion_finish_reason(termination: GenerationTermination) -> &'static str {
+    match termination {
+        GenerationTermination::Stop => "stop",
+        GenerationTermination::Length | GenerationTermination::ContextLength => "length",
+    }
+}
+
+fn completion_termination_reason(termination: GenerationTermination) -> &'static str {
+    match termination {
+        GenerationTermination::Stop => "stop",
+        GenerationTermination::Length => "max_tokens",
+        GenerationTermination::ContextLength => "context_length",
     }
 }
 
@@ -602,7 +629,9 @@ fn unique_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_tool_calls, request_body_size_is_allowed, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES,
+        completion_finish_reason, completion_termination_reason, parse_tool_calls,
+        request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
+        MAX_REQUEST_BODY_BYTES,
     };
 
     #[test]
@@ -625,5 +654,29 @@ mod tests {
         assert_eq!(calls[0]["type"], "function");
         assert_eq!(calls[0]["function"]["name"], "get_weather");
         assert_eq!(calls[0]["function"]["arguments"], r#"{"city":"Manila"}"#);
+    }
+
+    #[test]
+    fn reports_successful_termination_without_collapsing_length_into_stop() {
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::Stop),
+            "stop"
+        );
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::Length),
+            "length"
+        );
+        assert_eq!(
+            completion_termination_reason(GenerationTermination::Length),
+            "max_tokens"
+        );
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::ContextLength),
+            "length"
+        );
+        assert_eq!(
+            completion_termination_reason(GenerationTermination::ContextLength),
+            "context_length"
+        );
     }
 }
