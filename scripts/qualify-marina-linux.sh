@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Linux-native qualification wrapper. The daemon must already be running and
-# the caller must provide a non-printing MARINA_TOKEN and MARINA_MODEL.
+# the caller must provide a non-printing MARINA_API_KEY and MARINA_MODEL.
 [[ "$(uname -s)" == "Linux" ]] || { echo "Linux is required" >&2; exit 1; }
 [[ "$(uname -m)" == "x86_64" ]] || { echo "Linux x86_64 is required" >&2; exit 1; }
 
@@ -19,11 +19,11 @@ test -S "${MARINA_SOCKET:-${HOME}/.marina/marina.sock}"
 invalid_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$MARINA_URL/v1/models")"
 test "$invalid_status" = 401
 admin_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
-  -H "Authorization: Bearer $MARINA_TOKEN" -X POST \
+    -H "Authorization: Bearer $MARINA_API_KEY" -X POST \
   "$MARINA_URL/v1/models/$MARINA_MODEL/load")"
 test "$admin_status" = 403
 context_status="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
-  -H "Authorization: Bearer $MARINA_TOKEN" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $MARINA_API_KEY" -H 'Content-Type: application/json' \
   -d "{\"model\":\"$MARINA_MODEL\",\"request_id\":\"linux-context-rejection\",\"prompt\":\"test\",\"context_size\":32769}" \
   "$MARINA_URL/v1/chat/completions")"
 test "$context_status" = 429

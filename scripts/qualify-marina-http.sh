@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
 # Repeatable local release-qualification checks for a running Marina daemon.
-# The caller supplies the secret through MARINA_TOKEN; this script never prints
+# The caller supplies the secret through MARINA_API_KEY; this script never prints
 # it. It intentionally uses only curl and standard shell utilities.
 
 set -euo pipefail
 
 MARINA_URL="${MARINA_URL:-http://127.0.0.1:11434}"
-MARINA_TOKEN="${MARINA_TOKEN:?set MARINA_TOKEN without printing it}"
+MARINA_API_KEY="${MARINA_API_KEY:?set MARINA_API_KEY without printing it}"
 MARINA_MODEL="${MARINA_MODEL:?set MARINA_MODEL}"
 QUALIFY_RUNS="${QUALIFY_RUNS:-3}"
 QUALIFY_PLATFORM="${QUALIFY_PLATFORM:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}"
@@ -19,7 +19,7 @@ success_ids=()
 cancel_ids=()
 recovery_ids=()
 
-auth=(-H "Authorization: Bearer $MARINA_TOKEN")
+auth=(-H "Authorization: Bearer $MARINA_API_KEY")
 json=(-H 'Content-Type: application/json')
 
 generation_id() {

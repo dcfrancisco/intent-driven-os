@@ -46,7 +46,7 @@ scoped bearer authentication remain governed by the existing configuration.
 Run the existing HTTP qualification suite against the native daemon:
 
 ```sh
-export MARINA_TOKEN='use-a-test-token-without-committing-it'
+export MARINA_API_KEY='use-a-test-api-key-without-committing-it'
 export MARINA_MODEL='your-local-model-id'
 export QUALIFY_PLATFORM="linux-$(uname -m)"
 export QUALIFY_REPORT="$PWD/docs/qualification/linux-x86_64-wp-0078.json"
