@@ -101,13 +101,13 @@ jobs:
       - name: Build Marina (Unix)
         if: runner.os != 'Windows'
         run: |
-          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/marina/lib" LLAMA_CPP_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/marina" --locked --force --bin marina --bin marinactl
+          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/marina/lib" LLAMA_CPP_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/marina" --locked --force --bin talvik --bin marina --bin marinactl
       - name: Build Marina (Windows)
         if: runner.os == 'Windows'
         run: |
           $env:LLAMA_CPP_LIB_DIR = "$env:RUNNER_TEMP/marina/lib"
           $env:LLAMA_CPP_REQUIRED = "1"
-          cargo install --path console --root "$env:RUNNER_TEMP/marina" --locked --force --bin marina --bin marinactl
+          cargo install --path console --root "$env:RUNNER_TEMP/marina" --locked --force --bin talvik --bin marina --bin marinactl
       - name: Package Unix
         if: runner.os != 'Windows'
         run: |

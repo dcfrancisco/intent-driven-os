@@ -1,6 +1,19 @@
-# Intelligent Runtime Backlog
+# Talvik / Intelligent Runtime Backlog
 
 Items are intentionally written as design and implementation slices for future work. Nothing in this backlog is implemented by this documentation module.
+
+## Non-blocking product identity clearance
+
+- [ ] `TALVIK-NAME-001` (P2, owner: product/legal): perform legal trademark,
+  package-registry, source-repository, social-handle, and domain clearance for
+  **Talvik** in intended release regions. Dependencies: WP-0075 and a defined
+  launch-region list. Acceptance: dated evidence and an approve/rename
+  disposition are linked from ADR-0019 before a public stable-name release.
+  This finding does **not** block engineering, CPU-first qualification, or use
+  of Talvik as the provisional internal/product-development identity.
+- [ ] Define the eventual `$HOME/.talvik` migration only after name clearance.
+  Preserve `$HOME/.marina` in place until an atomic migration, rollback, and
+  compatibility window are specified and tested.
 
 ## Current execution sequence
 
@@ -39,6 +52,12 @@ Lifecycle follow-up 2026-10-17: `MARINA-F-001` (harness newline framing) and
 by `scripts/accept-marina-lifecycle.py`. `MARINA-F-003` remains open under
 WP-0056 for four process-signal tests that timed out before the console-ready
 marker.
+
+Productization follow-up 2026-10-17: `TALVIK-F-001` reproduced a second
+terminal-ordering race in the llama.cpp adapter's private admission flag. It
+is RESOLVED by releasing adapter admission before terminal publication; the
+corrected release binary passed the full checked-in lifecycle harness. Evidence
+is linked from the model-runner reality review.
 
 The acceptance evidence and the original failed output are retained in
 `docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a

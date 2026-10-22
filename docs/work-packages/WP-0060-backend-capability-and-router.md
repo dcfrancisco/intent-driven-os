@@ -19,6 +19,20 @@ decisions. No autonomous agent planning.
 - A backend failure can trigger only policy-allowed fallback and records the
   changed backend explicitly.
 - Existing llama.cpp behavior remains the reference local path.
+- Routing can be disabled globally; disabled is the default.
+- Direct model selection remains available when routing is enabled.
+- Fallback is explicit and observable, and is suppressed after any streamed
+  output to avoid combining responses from different models.
+
+## Implemented first slice — 2026-10-17
+
+The primary `talvik` CLI implements opt-in, ordered fallback among local model
+IDs through the existing public runtime protocol. It records route decisions
+to the invoking terminal and falls through only on load failure or generation
+failure before output. This is a bounded operational slice, not completion of
+the backend capability router. Persistent route evidence, policy snapshots,
+cross-backend selection, remote providers, health scoring, and circuit
+breaking remain open in this WP.
 
 ## Dependencies
 

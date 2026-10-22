@@ -695,6 +695,36 @@ and broader production-service work remain separate gates.
 | MARINA-F-001 | The prior inline probe sent a literal `\\n`; Marina waited in `read_line`. A corrected frame reached `TOKEN\\tParis` after 50.0 seconds. | Harness escaping error plus a 30-second timeout below CPU first-token latency. | Added `scripts/accept-marina-lifecycle.py` with explicit `"\\t"`/`"\\n"` framing and 240-second bounds. | ADR-0011 | WP-0059 | Corrected harness returned terminal responses and cancellation. | RESOLVED |
 | MARINA-F-002 | After `DONE\\tcompleted`, the next request returned `model is busy`. | Marina sent the terminal message before clearing `active_generation`. | Clear the active slot before terminal completion, cancellation, or failure delivery. | ADR-0011 | WP-0059 | Final lifecycle run passed independent requests, cancellation, recovery, and no busy race. | RESOLVED |
 | MARINA-F-003 | Four console process-signal tests timed out waiting for `✓ Console ready`; two SIGTERM tests passed. | Not isolated; treated as process-test environment instability, not Marina IPC. | Keep open under WP-0056; rerun on a stable process-test environment. | ADR-0011 | WP-0056 | Native Marina lifecycle passed independently. | OPEN |
+| TALVIK-F-001 | The productization lifecycle rerun received `DONE\tcompleted\t2`, then the immediate independent request failed with `model is busy`; cancellation recovery reproduced the same failure. | The runtime slot was released before `DONE`, but the llama.cpp adapter cleared its separate `generating` flag after sending its terminal event. | Clear adapter admission and restore `Ready` before publishing completed, cancelled, or failed terminal events. | ADR-0011 | WP-0059 | Corrected final-binary run passed immediate independent requests, cancellation/recovery, unload/reload, and post-reload inference. | RESOLVED |
+
+### Talvik productization closeout — 2026-10-17
+
+The primary `talvik` command uses the existing versioned runtime boundary and
+preserves `marina`, `marinactl`, and `$HOME/.marina` as compatibility surfaces.
+Talvik-prefixed environment variables take precedence. The release packaging
+now includes all three binaries.
+
+The final real-GGUF lifecycle evidence was:
+
+| Gate | Evidence | Result |
+| --- | --- | --- |
+| Uninterrupted direct generation | Japan prompt returned `Tokyo` and `DONE completed` | PASS |
+| Independent requests | France returned `Paris`; arithmetic returned `4` without prior-answer leakage | PASS |
+| Streaming | Each lifecycle request emitted `TOKEN` before `DONE` | PASS |
+| Cancellation | Long request cancelled after first token, `DONE\tcancelled\t1` | PASS |
+| Recovery | Immediate next request returned `Jupiter` | PASS |
+| Unload/reload | Status showed no model after unload; routed load restored Qwen | PASS |
+| Post-reload inference | Returned `READY` and `DONE completed` | PASS |
+| Optional fallback | Missing model was reported, then Qwen selected; routing defaults off | PASS |
+| Embedded template | Environment-gated real-GGUF template test passed | PASS |
+| Shutdown | Acceptance daemon exited and ceased accepting socket connections | PASS |
+
+Strict workspace Clippy reported 92 diagnostics, matching the recorded baseline
+count and diagnostic headings. Strict binary-only lint comparison found 17
+headings for both `marina` and `talvik`; the only initially new duplicate-module
+finding was removed by sharing the server's IPC module. `MARINA-F-003` remains
+OPEN under WP-0056 after the workspace run again produced four startup-marker
+timeouts and two passing SIGTERM tests.
 
 The corrected final lifecycle run passed two independent prompts (`Paris` and
 `4`), incremental streaming, real cancellation after the first token

@@ -3,9 +3,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[path = "http.rs"]
 mod http;
 #[path = "../ipc.rs"]
-mod ipc;
+pub(crate) mod ipc;
 
 use oid_runtime::{config, logging, Runtime, RuntimeService};
 use oid_runtime::{GenerationMessage, GenerationRequest};
@@ -19,12 +20,12 @@ static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("Marina failed to start: {error}");
+        eprintln!("model runtime failed to start: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|argument| argument == "--version" || argument == "-V") {
         println!("marina {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -41,13 +42,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let http_address = address.clone();
         thread::spawn(move || {
             if let Err(error) = http::serve(&http_address, http_runtime, authentication_enabled) {
-                eprintln!("Marina HTTP server failed: {error}");
+                eprintln!("Model runtime HTTP server failed: {error}");
             }
         });
-        eprintln!("Marina HTTP listening on {address}");
+        eprintln!("Model runtime HTTP listening on {address}");
     }
     let listener = ipc::bind_listener()?;
-    eprintln!("Marina listening on {}", ipc::endpoint());
+    eprintln!("Model runtime listening on {}", ipc::endpoint());
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
@@ -58,7 +59,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             }
-            Err(error) => eprintln!("Marina accept failed: {error}"),
+            Err(error) => eprintln!("Model runtime accept failed: {error}"),
         }
     }
     Ok(())

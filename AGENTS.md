@@ -7,7 +7,8 @@ the task is covered here.
 ## Mission
 
 OID (Open Intelligence Desktop) is a Linux-first, Rust-based AI desktop/OS and
-keyboard-first console. Marina is the cross-platform standalone model-runner
+keyboard-first console. Talvik (provisional name; Marina compatibility surface)
+is the cross-platform standalone model-runner
 service for Linux, macOS, and Windows; OID is one client of its public API.
 The product goal is a computer users can prompt to inspect, plan, operate,
 verify, recover, and maintain itself under explicit policy and human approval
@@ -34,16 +35,17 @@ policy, health, and resource fit.
   rollback, evidence) is a separate foundation and must remain intact.
 - Ollama is an interoperability target and reference UX, not OID's internal
   architectural boundary. OID must not require Ollama to run local models.
-- The model runner is independently installable: `marina` and `marinactl` are
-  the service/client product surface; `oid-console` is an optional client.
+- The model runner is independently installable: `talvik` is the primary
+  product surface; `marina` and `marinactl` are migration aliases; `oid-console`
+  is an optional client.
 - The canonical user installation is `$HOME/.marina` on Linux/macOS and the
   equivalent per-user Marina home on Windows; binaries, native libraries, and
   models do not belong in the source repository.
-- Marina must expose a versioned API usable by OID, AI assistants, and other
+- Talvik must expose a versioned API usable by OID, AI assistants, and other
   system clients; OpenAI-compatible HTTP is an edge, not the internal API.
-- Only Marina is a cross-platform release for Linux, macOS, and Windows. OID
+- Only Talvik is a cross-platform release for Linux, macOS, and Windows. OID
   and the AI desktop/OS are Linux-first; a dedicated OID model may be served
-  by Marina but must never bypass OID policy, approval, evidence, or skills.
+  by Talvik but must never bypass OID policy, approval, evidence, or skills.
 
 ## Working rules
 

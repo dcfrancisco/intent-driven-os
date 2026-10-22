@@ -52,7 +52,10 @@ impl MarinaRuntime {
         let discovery = ModelDiscovery::new(discovery_directories);
         let _ = discovery.discover(&models, "llama.cpp");
         for model in models.list() {
-            if !matches!(model.status, ModelStatus::Registered | ModelStatus::Unavailable) {
+            if !matches!(
+                model.status,
+                ModelStatus::Registered | ModelStatus::Unavailable
+            ) {
                 let _ = models.set_status(&model.id, &ModelStatus::Registered);
             }
         }
@@ -204,6 +207,7 @@ impl RuntimeService for MarinaRuntime {
             .config
             .model_directory
             .clone()
+            .or_else(|| std::env::var_os("TALVIK_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| {
                 std::env::var_os("HOME")

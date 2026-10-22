@@ -5,13 +5,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT/target/release"
 LINK_DIR="$ROOT/marina/bin"
-BINARIES=(marina marinactl)
+BINARIES=(talvik marina marinactl)
 
 for binary in "${BINARIES[@]}"; do
   source_path="$RELEASE_DIR/$binary"
   if [[ ! -x "$source_path" ]]; then
     echo "Missing release binary: $source_path" >&2
-    echo "Build it with: cargo build --release -p oid-console --bin marina --bin marinactl" >&2
+    echo "Build it with: cargo build --release -p oid-console --bin talvik --bin marina --bin marinactl" >&2
     exit 1
   fi
 done

@@ -19,6 +19,10 @@ name = "marina"
 path = "src/bin/marina.rs"
 
 [[bin]]
+name = "talvik"
+path = "src/bin/talvik.rs"
+
+[[bin]]
 name = "marinactl"
 path = "src/bin/marinactl.rs"
 

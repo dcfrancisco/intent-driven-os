@@ -1,4 +1,4 @@
-# Intelligent Runtime Roadmap
+# Talvik / Intelligent Runtime Roadmap
 
 This roadmap sequences the control plane from the current local runner to an
 Ollama-like service and OID-owned multi-backend router. Milestones are
@@ -36,6 +36,14 @@ the active-generation admission slot before exposing terminal generation
 events. The final native lifecycle sequence passed; console process-signal
 startup-marker instability remains tracked separately under WP-0056.
 
+The 2026-10-17 productization slice introduces `talvik` as the primary command
+while preserving Marina commands and `$HOME/.marina` data in place. Optional
+ordered local-model fallback is implemented and disabled by default. A fresh
+real-GGUF rerun found and corrected a second terminal-ordering race in the
+llama.cpp adapter itself. This does not complete the capability-aware
+multi-backend router: policy snapshots, route evidence, remote providers,
+health scoring, and circuit breaking remain WP-0060 work.
+
 ## v0.2 — Resource and policy control
 
 Goal: make model execution predictable under resource contention.
@@ -62,9 +70,9 @@ Goal: broaden integration without weakening the common boundary.
 
 Exit criteria: at least two backend classes can implement the same caller workflow, and extension/compatibility behavior is versioned and documented.
 
-## v0.4 — Standalone cross-platform Marina service
+## v0.4 — Standalone cross-platform Talvik service
 
-Goal: ship Marina as an independently installable service that works on Linux,
+Goal: ship Talvik as an independently installable service that works on Linux,
 macOS, and Windows and can be consumed by OID, AI assistants, and other
 applications.
 
@@ -77,7 +85,7 @@ applications.
 - Add runtime security, resource isolation, crash recovery, and provider/model
   provenance controls (WP-0071).
 
-Exit criteria: a clean machine can install Marina without OID, a non-OID
+Exit criteria: a clean machine can install Talvik without OID, a non-OID
 assistant can make a streaming request, and OID can use the same service
 without reading model files or constructing backend handles. Cross-platform
 user installation and standalone service behavior must be stable before distro
@@ -114,7 +122,7 @@ Goal: provide a stable, secure, and operable model resource service.
 
 Exit criteria: production readiness review passes for security, reliability, observability, API compatibility, and documented backend support.
 
-## Parallel product track — Marina training and model lifecycle
+## Parallel product track — Talvik training and model lifecycle
 
 Training is a governed lifecycle capability layered after the inference
 contracts, native service API, request lifecycle, and resource admission; it

@@ -34,22 +34,17 @@ impl TokenIdentity {
 /// Return the local token database path.
 #[must_use]
 pub fn token_file() -> PathBuf {
-    std::env::var_os("MARINA_TOKEN_FILE").map_or_else(
-        || {
-            std::env::var_os("MARINA_HOME").map_or_else(
-                || {
-                    std::env::var_os("HOME")
-                        .or_else(|| std::env::var_os("USERPROFILE"))
-                        .map_or_else(
-                            || PathBuf::from(".marina/tokens"),
-                            |home| PathBuf::from(home).join(".marina/tokens"),
-                        )
-                },
-                |home| PathBuf::from(home).join("tokens"),
-            )
-        },
-        PathBuf::from,
-    )
+    std::env::var_os("TALVIK_TOKEN_FILE")
+        .or_else(|| std::env::var_os("MARINA_TOKEN_FILE"))
+        .map_or_else(
+            || {
+                crate::config::marina_home_directory().map_or_else(
+                    || PathBuf::from(".marina/tokens"),
+                    |home| home.join("tokens"),
+                )
+            },
+            PathBuf::from,
+        )
 }
 
 /// Create a new opaque bearer token and return it once to the caller.
