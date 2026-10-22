@@ -51,6 +51,14 @@ impl MarinaRuntime {
             });
         let discovery = ModelDiscovery::new(discovery_directories);
         let _ = discovery.discover(&models, "llama.cpp");
+        for model in models.list() {
+            if !matches!(
+                model.status,
+                ModelStatus::Registered | ModelStatus::Unavailable
+            ) {
+                let _ = models.set_status(&model.id, &ModelStatus::Registered);
+            }
+        }
         bus.publish(&RuntimeEvent::RuntimeStarted);
         bus.publish(&RuntimeEvent::HealthUpdated("Healthy".to_owned()));
         Self {
@@ -521,7 +529,7 @@ pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, Runt
 #[cfg(test)]
 mod tests {
     use super::{admit_memory, MarinaRuntime};
-    use crate::RuntimeService;
+    use crate::{ModelMetadata, ModelRegistry, ModelStatus, RuntimeService};
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
     #[test]
@@ -547,6 +555,49 @@ mod tests {
         assert!(receiver
             .try_iter()
             .any(|event| matches!(event, RuntimeEvent::RuntimeStarted)));
+    }
+
+    #[test]
+    fn startup_clears_persisted_transient_model_statuses() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-runtime-status-reset-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create root");
+        let registry_path = root.join("registry.db");
+        let registry = ModelRegistry::open(&registry_path, EventBus::new()).expect("open registry");
+        registry
+            .register(ModelMetadata {
+                id: "stale-model".to_owned(),
+                name: "stale-model.gguf".to_owned(),
+                family: "unknown".to_owned(),
+                backend: "llama.cpp".to_owned(),
+                quantization: "unknown".to_owned(),
+                context_window: 0,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Loaded,
+                checksum: None,
+                location: root.join("stale-model.gguf").display().to_string(),
+            })
+            .expect("register stale model");
+        drop(registry);
+
+        let runtime = MarinaRuntime::start(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(registry_path),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+        );
+
+        assert_eq!(runtime.model_list()[0].status, ModelStatus::Registered);
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 
     #[test]

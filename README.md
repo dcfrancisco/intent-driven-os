@@ -90,10 +90,11 @@ stream responses. The token authorizes access to Marina; it is not a remote
 provider API key. Remote BYOK provider credentials are not implemented yet.
 
 Marina also has a native HTTP API. Enable it explicitly on loopback with
-`MARINA_HTTP_ADDR=127.0.0.1:11434 marina`; it uses the same runtime service as
-the Unix socket and requires a bearer token by default. The Python bridge is
-kept for migration and compatibility testing, not as the production service
-boundary.
+`MARINA_HTTP_ADDR=127.0.0.1:11434 marina` on Linux/macOS; Windows uses
+`127.0.0.1:11435` because its local IPC transport uses `127.0.0.1:11434`.
+The HTTP API uses the same runtime service as the local transport and requires
+a bearer credential by default. The Python bridge is kept for migration and
+compatibility testing, not as the production service boundary.
 
 ## GitHub releases
 
@@ -132,6 +133,45 @@ The installer uses `%USERPROFILE%\.marina` by default:
 ```
 
 It does not require administrator privileges or install system-wide files.
+Set `MARINA_HOME` to override this complete Marina directory. For example,
+`MARINA_HOME=$env:USERPROFILE\.marina` means exactly that directory; Marina
+does not append another `.marina` component.
+
+### Windows source build
+
+For a source build, open a Visual Studio Developer PowerShell with the C++
+workload and Windows SDK available, then run:
+
+```powershell
+.\scripts\setup-llama-windows.ps1
+$env:LLAMA_CPP_LIB_DIR = "$env:USERPROFILE\.marina\lib"
+$env:LLAMA_CPP_REQUIRED = "1"
+cargo build --release -p oid-console --bin marina --bin marinactl
+```
+
+Place a GGUF model under `%USERPROFILE%\.marina\models`, then create a Marina
+token and prepare the native DLL search path:
+
+```powershell
+$apiKey = (& .\target\release\marinactl.exe auth token create windows-smoke).Trim()
+$env:MARINA_API_KEY = $apiKey
+$env:MARINA_TCP_ADDR = "127.0.0.1:11434"
+$env:MARINA_HTTP_ADDR = "127.0.0.1:11435"
+$env:Path = "$env:USERPROFILE\.marina\lib;$env:Path"
+```
+
+Start `target\release\marina.exe` in that environment. In a second PowerShell
+window, run the basic HTTP smoke test:
+
+```powershell
+$env:MARINA_MODEL = "your-model-id"
+.\scripts\smoke-marina-windows.ps1
+```
+
+The setup script builds the pinned llama.cpp revision and produces the native
+`.lib` and `.dll` files. The smoke test requires a running daemon and does not
+replace the full native qualification in WP-0079. The API key is sent as a
+Bearer credential to Marina's local HTTP API.
 
 ## Local model bring-up on macOS Intel or Apple Silicon
 

@@ -605,19 +605,15 @@ impl ModelDiscovery {
                 directories.push(directory);
             }
         };
-        if let Some(home) = std::env::var_os("TALVIK_HOME")
-            .or_else(|| std::env::var_os("MARINA_HOME"))
-            .or_else(|| std::env::var_os("HOME"))
-            .or_else(|| std::env::var_os("USERPROFILE"))
-        {
-            let home = PathBuf::from(home);
-            add_directory(home.join(".marina/models"));
-            add_directory(home.join(".local/share/intelligent-runtime/models"));
-            add_directory(home.join("Models"));
-            add_directory(home.join(".cache/huggingface/hub"));
-            add_directory(home.join(".cache/modelscope/hub"));
-            add_directory(home.join(".ollama/models"));
-            add_directory(home.join(".cache/ollama/models"));
+        if let Some(marina_home) = crate::config::marina_home_directory() {
+            add_directory(marina_home.join("models"));
+            let user_home = crate::config::home_directory().unwrap_or_default();
+            add_directory(user_home.join(".local/share/intelligent-runtime/models"));
+            add_directory(user_home.join("Models"));
+            add_directory(user_home.join(".cache/huggingface/hub"));
+            add_directory(user_home.join(".cache/modelscope/hub"));
+            add_directory(user_home.join(".ollama/models"));
+            add_directory(user_home.join(".cache/ollama/models"));
         }
         if let Some(hf_home) = std::env::var_os("HF_HOME") {
             add_directory(PathBuf::from(hf_home).join("hub"));

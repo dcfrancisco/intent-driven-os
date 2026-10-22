@@ -87,8 +87,8 @@ or from compilation of the image builder.
 | Windows x86_64 | No Windows host or GitHub Windows runner available | Not executed | Blocked: requires Windows runtime host and native DLL payload |
 
 The qualification script is [`scripts/qualify-marina-http.sh`](../scripts/qualify-marina-http.sh).
-It assumes a running daemon and requires `MARINA_URL`, `MARINA_TOKEN`, and
-`MARINA_MODEL`; it does not print the token. Set `QUALIFY_REPORT` to write a
+It assumes a running daemon and requires `MARINA_URL`, `MARINA_API_KEY`, and
+`MARINA_MODEL`; it does not print the API key. Set `QUALIFY_REPORT` to write a
 machine-readable `marina.runtime.qualification/v1` JSON report.
 
 For Linux x86_64, use `scripts/setup-llama-linux.sh` and follow

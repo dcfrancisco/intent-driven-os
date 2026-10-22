@@ -38,14 +38,10 @@ pub fn token_file() -> PathBuf {
         .or_else(|| std::env::var_os("MARINA_TOKEN_FILE"))
         .map_or_else(
             || {
-                std::env::var_os("TALVIK_HOME")
-                    .or_else(|| std::env::var_os("MARINA_HOME"))
-                    .or_else(|| std::env::var_os("HOME"))
-                    .or_else(|| std::env::var_os("USERPROFILE"))
-                    .map_or_else(
-                        || PathBuf::from(".marina/tokens"),
-                        |home| PathBuf::from(home).join(".marina/tokens"),
-                    )
+                crate::config::marina_home_directory().map_or_else(
+                    || PathBuf::from(".marina/tokens"),
+                    |home| home.join("tokens"),
+                )
             },
             PathBuf::from,
         )
