@@ -240,6 +240,45 @@ fn respond_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::Result<(
     )
 }
 
+fn parse_tool_calls(output: &str) -> Option<Vec<Value>> {
+    let mut calls = Vec::new();
+    let mut remainder = output;
+    while let Some(start) = remainder.find("<tool_call>") {
+        let after_start = &remainder[start + "<tool_call>".len()..];
+        let end = after_start.find("</tool_call>")?;
+        let value: Value = serde_json::from_str(after_start[..end].trim()).ok()?;
+        calls.push(normalize_tool_call(&value, calls.len()));
+        remainder = &after_start[end + "</tool_call>".len()..];
+    }
+    if !calls.is_empty() {
+        return Some(calls);
+    }
+    let value: Value = serde_json::from_str(output.trim()).ok()?;
+    if value.get("name").is_some() && value.get("arguments").is_some() {
+        return Some(vec![normalize_tool_call(&value, 0)]);
+    }
+    None
+}
+
+fn normalize_tool_call(value: &Value, index: usize) -> Value {
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let arguments = value.get("arguments").map_or_else(
+        || "{}".to_owned(),
+        |arguments| match arguments {
+            Value::String(arguments) => arguments.clone(),
+            arguments => arguments.to_string(),
+        },
+    );
+    json!({
+        "id": format!("call_{index}"),
+        "type": "function",
+        "function": {"name": name, "arguments": arguments}
+    })
+}
+
 fn generate(
     stream: &mut TcpStream,
     runtime: &dyn RuntimeService,
@@ -247,39 +286,54 @@ fn generate(
     identity: &auth::TokenIdentity,
     owners: &Arc<Mutex<HashMap<String, String>>>,
 ) -> std::io::Result<()> {
-    if body
-        .get("tools")
-        .and_then(Value::as_array)
-        .is_some_and(|tools| !tools.is_empty())
-    {
-        let support = runtime.tool_support();
-        if !support.supported {
-            return respond_error(
-                stream,
-                501,
-                format!("tool calls are unavailable: {}", support.reason),
-            );
-        }
-    }
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| invalid_data("model is required"))?;
-    let prompt = if let Some(messages) = body.get("messages").and_then(Value::as_array) {
+    let tool_definitions = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .filter(|tools| !tools.is_empty());
+    let mut prompt = if let Some(messages) = body.get("messages").and_then(Value::as_array) {
         let mut prompt = String::new();
         for message in messages {
             let role = message
                 .get("role")
                 .and_then(Value::as_str)
                 .unwrap_or("user");
-            let content = message
-                .get("content")
-                .and_then(Value::as_str)
-                .ok_or_else(|| invalid_data("message content must be a string"))?;
+            let content = if role == "assistant" {
+                message
+                    .get("tool_calls")
+                    .filter(|calls| !calls.is_null())
+                    .map(|calls| format!("<tool_calls>{calls}</tool_calls>"))
+                    .or_else(|| {
+                        message
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .ok_or_else(|| {
+                        invalid_data("assistant message requires content or tool_calls")
+                    })?
+            } else {
+                let content = message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_data("message content must be a string"))?;
+                if role == "tool" {
+                    let name = message
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tool");
+                    format!("Tool result for {name}: {content}")
+                } else {
+                    content.to_owned()
+                }
+            };
             prompt.push('\u{001e}');
             prompt.push_str(role);
             prompt.push('\n');
-            prompt.push_str(content);
+            prompt.push_str(&content);
         }
         prompt
     } else {
@@ -288,6 +342,12 @@ fn generate(
             .unwrap_or_default()
             .to_owned()
     };
+    if let Some(tools) = tool_definitions {
+        prompt.insert_str(
+            0,
+            &format!("\u{001e}__talvik_tools\n{}", Value::Array(tools.clone())),
+        );
+    }
     if prompt.is_empty() {
         return respond_error(stream, 400, "prompt or messages is required".to_owned());
     }
@@ -317,6 +377,16 @@ fn generate(
     }
     if let Err(error) = runtime.model_load(model) {
         return respond_error(stream, 409, error.to_string());
+    }
+    if tool_definitions.is_some() {
+        let support = runtime.tool_support();
+        if !support.supported {
+            return respond_error(
+                stream,
+                501,
+                format!("tool calls are unavailable: {}", support.reason),
+            );
+        }
     }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
@@ -363,7 +433,7 @@ fn generate(
         match message {
             Ok(GenerationMessage::Token(token)) => {
                 output.push_str(&token);
-                if streaming {
+                if streaming && tool_definitions.is_none() {
                     let event = json!({
                         "id": request_id.clone(),
                         "object": "chat.completion.chunk",
@@ -377,13 +447,27 @@ fn generate(
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
                 if streaming {
+                    if let Some(tool_calls) = parse_tool_calls(&output) {
+                        let event = json!({
+                            "id": result.request_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": "tool_calls"}]
+                        });
+                        write!(stream, "data: {event}\n\n")?;
+                    }
                     write!(stream, "data: [DONE]\n\n")?;
                     return stream.flush();
                 }
+                let tool_calls = parse_tool_calls(&output);
+                let message = tool_calls.as_ref().map_or_else(
+                    || json!({"role":"assistant","content":output}),
+                    |calls| json!({"role":"assistant","content":Value::Null,"tool_calls":calls}),
+                );
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": {"role": "assistant", "content": output}, "finish_reason": "stop"}], "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {"stop"}}], "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -517,7 +601,9 @@ fn unique_request_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{request_body_size_is_allowed, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES};
+    use super::{
+        parse_tool_calls, request_body_size_is_allowed, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES,
+    };
 
     #[test]
     fn rejects_oversized_http_bodies() {
@@ -528,5 +614,16 @@ mod tests {
     #[test]
     fn exposes_a_bounded_context_policy() {
         assert_eq!(MAX_CONTEXT_TOKENS, 32_768);
+    }
+
+    #[test]
+    fn normalizes_template_tool_calls_to_openai_shape() {
+        let calls = parse_tool_calls(
+            r#"<tool_call>{"name":"get_weather","arguments":{"city":"Manila"}}</tool_call>"#,
+        )
+        .expect("tool call");
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "get_weather");
+        assert_eq!(calls[0]["function"]["arguments"], r#"{"city":"Manila"}"#);
     }
 }

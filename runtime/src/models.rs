@@ -2,14 +2,11 @@
 
 use oid_shared::{EventBus, RuntimeError, RuntimeEvent};
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-
-static ACQUISITION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Model lifecycle status represented by metadata only.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -316,27 +313,22 @@ impl ModelAcquirer {
         fs::create_dir_all(destination)
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
         let target = destination.join(&source_name);
-        let sequence = ACQUISITION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temporary = destination.join(format!(
-            ".{}.{}.{}.part",
-            source_name,
-            std::process::id(),
-            sequence
-        ));
+        let temporary = destination.join(format!(".{source_name}.part"));
 
         let result = (|| {
             acquire_to(source, &temporary)?;
-            let actual_checksum = if let Some(expected) = checksum {
+            let actual_checksum = {
                 let actual = sha256_file(&temporary)?;
-                let expected = normalize_checksum(expected)?;
-                if actual != expected {
-                    return Err(RuntimeError::InvalidModel(format!(
+                if let Some(expected) = checksum {
+                    let expected = normalize_checksum(expected)?;
+                    if actual != expected {
+                        let _ = fs::remove_file(&temporary);
+                        return Err(RuntimeError::InvalidModel(format!(
                         "SHA-256 checksum mismatch for {source_name}: expected {expected}, got {actual}"
                     )));
+                    }
                 }
                 Some(actual)
-            } else {
-                None
             };
             fs::rename(&temporary, &target)
                 .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
@@ -357,9 +349,6 @@ impl ModelAcquirer {
                 location: target.display().to_string(),
             })
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
         result
     }
 }
@@ -370,7 +359,12 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
             .args([
                 "--fail",
                 "--location",
-                "--silent",
+                "--retry",
+                "3",
+                "--retry-all-errors",
+                "--continue-at",
+                "-",
+                "--progress-bar",
                 "--show-error",
                 "--output",
             ])
@@ -380,7 +374,8 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
             .map_err(|error| RuntimeError::Persistence(format!("failed to start curl: {error}")))?;
         if !status.success() {
             return Err(RuntimeError::Persistence(format!(
-                "curl failed for {source} with status {status}"
+                "curl failed for {source} with status {status}; partial download retained at {} for recovery",
+                temporary.display()
             )));
         }
         return Ok(());
@@ -398,8 +393,60 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
     } else {
         PathBuf::from(source)
     };
-    fs::copy(&path, temporary).map(|_| ()).map_err(|error| {
-        RuntimeError::Persistence(format!("failed to copy {}: {error}", path.display()))
+    let source_size = fs::metadata(&path)
+        .map_err(|error| {
+            RuntimeError::Persistence(format!("failed to inspect {}: {error}", path.display()))
+        })?
+        .len();
+    let partial_size = temporary
+        .metadata()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if partial_size > source_size {
+        fs::remove_file(temporary).map_err(|error| {
+            RuntimeError::Persistence(format!("failed to reset partial model: {error}"))
+        })?;
+    }
+    let mut input = File::open(&path).map_err(|error| {
+        RuntimeError::Persistence(format!("failed to open {}: {error}", path.display()))
+    })?;
+    let partial_size = temporary
+        .metadata()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    input.seek(SeekFrom::Start(partial_size)).map_err(|error| {
+        RuntimeError::Persistence(format!("failed to seek model source: {error}"))
+    })?;
+    let mut output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(temporary)
+        .map_err(|error| {
+            RuntimeError::Persistence(format!("failed to open partial model: {error}"))
+        })?;
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(|error| {
+            RuntimeError::Persistence(format!("failed to read {}: {error}", path.display()))
+        })?;
+        if read == 0 {
+            break;
+        }
+        output.write_all(&buffer[..read]).map_err(|error| {
+            RuntimeError::Persistence(format!("failed to write partial model: {error}"))
+        })?;
+        eprint!(
+            "\rmodel download: {}/{} bytes",
+            output
+                .metadata()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0),
+            source_size
+        );
+    }
+    eprintln!();
+    output.flush().map_err(|error| {
+        RuntimeError::Persistence(format!("failed to flush partial model: {error}"))
     })
 }
 
@@ -811,6 +858,7 @@ fn decode_registry(contents: &str) -> Result<BTreeMap<String, ModelMetadata>, Ru
 mod tests {
     use super::{
         sha256_file, ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus,
+        Sha256,
     };
     use oid_shared::{EventBus, RuntimeEvent};
     use std::path::PathBuf;
@@ -821,6 +869,12 @@ mod tests {
             .expect("clock")
             .as_nanos();
         std::env::temp_dir().join(format!("oid-{label}-{}-{timestamp}", std::process::id()))
+    }
+
+    fn sha256_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::default();
+        hasher.update(bytes);
+        hasher.finish()
     }
 
     fn model() -> ModelMetadata {
@@ -938,9 +992,104 @@ mod tests {
         assert_eq!(metadata.id, "custom-id");
         assert_eq!(metadata.name, "model.GGUF");
         assert!(destination.join("model.GGUF").is_file());
-        assert_eq!(metadata.checksum, None);
+        assert_eq!(
+            metadata.checksum.as_deref(),
+            Some("9cb7487000bc86ac36ce83c4acfabe8878552be99572a6770f65ab1d048a5c48")
+        );
 
         std::fs::remove_dir_all(source_directory).expect("remove source directory");
+        std::fs::remove_dir_all(destination).expect("remove destination directory");
+    }
+
+    #[test]
+    fn resumes_local_partial_artifact_and_records_observed_checksum() {
+        let source_directory = temporary_directory("resume-source");
+        let destination = temporary_directory("resume-destination");
+        std::fs::create_dir_all(&source_directory).expect("create source directory");
+        let source = source_directory.join("resume.gguf");
+        std::fs::write(&source, b"GGUF-resumable-model").expect("write source");
+        std::fs::create_dir_all(&destination).expect("create destination directory");
+        std::fs::write(destination.join(".resume.gguf.part"), b"GGUF-resumable-")
+            .expect("write partial artifact");
+
+        let metadata = ModelAcquirer::acquire(
+            source.to_str().expect("source path"),
+            &destination,
+            None,
+            None,
+        )
+        .expect("resume local model");
+
+        assert_eq!(
+            std::fs::read(destination.join("resume.gguf")).expect("read target"),
+            b"GGUF-resumable-model"
+        );
+        assert!(metadata.checksum.is_some());
+        assert!(!destination.join(".resume.gguf.part").exists());
+
+        std::fs::remove_dir_all(source_directory).expect("remove source directory");
+        std::fs::remove_dir_all(destination).expect("remove destination directory");
+    }
+
+    #[test]
+    fn resumes_interrupted_http_transfer_with_range_request() {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let bytes = b"GGUF-http-resumable-model".to_vec();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("server address");
+        let server_bytes = bytes.clone();
+        let server = thread::spawn(move || {
+            for attempt in 0..5 {
+                let (mut stream, _) = listener.accept().expect("accept download");
+                let mut request = [0_u8; 1024];
+                let size = stream.read(&mut request).expect("read request");
+                let request = String::from_utf8_lossy(&request[..size]);
+                if attempt < 4 {
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        server_bytes.len()
+                    )
+                    .expect("write initial headers");
+                    stream
+                        .write_all(&server_bytes[..4])
+                        .expect("write interrupted body");
+                } else {
+                    assert!(request.contains("Range: bytes=4-"));
+                    write!(
+                        stream,
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 4-{}/{}\r\nConnection: close\r\n\r\n",
+                        server_bytes.len() - 4,
+                        server_bytes.len() - 1,
+                        server_bytes.len()
+                    )
+                    .expect("write range headers");
+                    stream
+                        .write_all(&server_bytes[4..])
+                        .expect("write range body");
+                }
+            }
+        });
+
+        let destination = temporary_directory("http-resume-destination");
+        let source = format!("http://{address}/resume.gguf");
+        let expected = sha256_bytes(&bytes);
+        let interrupted = ModelAcquirer::acquire(&source, &destination, None, Some(&expected))
+            .expect_err("first HTTP attempt should be interrupted");
+        assert!(interrupted
+            .to_string()
+            .contains("partial download retained"));
+        let metadata = ModelAcquirer::acquire(&source, &destination, None, Some(&expected))
+            .expect("resume interrupted HTTP model");
+        server.join().expect("server thread");
+        assert_eq!(metadata.checksum.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            std::fs::read(destination.join("resume.gguf")).expect("read HTTP target"),
+            bytes
+        );
         std::fs::remove_dir_all(destination).expect("remove destination directory");
     }
 

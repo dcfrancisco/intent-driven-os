@@ -380,6 +380,11 @@ pub trait ModelRunner: Send + Sync {
     ) -> Result<Vec<f32>, ModelRunnerError> {
         Err(ModelRunnerError::NotImplemented("embeddings".to_owned()))
     }
+    /// Report whether the selected resident model exposes tool-capable chat.
+    #[must_use]
+    fn tool_support(&self) -> bool {
+        false
+    }
     /// Tokenize text with the currently loaded model.
     ///
     /// # Errors

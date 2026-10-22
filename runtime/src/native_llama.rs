@@ -248,8 +248,8 @@ impl Backend for LlamaCppAdapter {
     }
     fn tool_support(&self) -> crate::backends::ToolSupport {
         crate::backends::ToolSupport {
-            supported: false,
-            reason: "not implemented".to_owned(),
+            supported: self.runner.tool_support(),
+            reason: "the loaded GGUF chat template does not advertise tool calls".to_owned(),
         }
     }
     fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
