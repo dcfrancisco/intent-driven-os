@@ -43,9 +43,10 @@ fn stream_can_cancel_without_backend_types() {
 
 #[test]
 fn generation_request_rejects_invalid_controls() {
-    use oid_model_runner::{GenerationRequest, ModelRunnerError};
+    use oid_model_runner::{GenerationRequest, ModelId, ModelRunnerError};
 
     let request = GenerationRequest {
+        model_id: ModelId::new("model").expect("model id"),
         prompt: "hello".to_owned(),
         max_tokens: 0,
         temperature: 0.8,
@@ -64,9 +65,10 @@ fn generation_request_rejects_invalid_controls() {
 
 #[test]
 fn generation_request_accepts_default_controls() {
-    use oid_model_runner::GenerationRequest;
+    use oid_model_runner::{GenerationRequest, ModelId};
 
     let request = GenerationRequest {
+        model_id: ModelId::new("model").expect("model id"),
         prompt: "hello".to_owned(),
         max_tokens: 128,
         temperature: 0.8,
@@ -80,9 +82,10 @@ fn generation_request_accepts_default_controls() {
 
 #[test]
 fn generation_request_rejects_empty_prompts() {
-    use oid_model_runner::{GenerationRequest, ModelRunnerError};
+    use oid_model_runner::{GenerationRequest, ModelId, ModelRunnerError};
 
     let request = GenerationRequest {
+        model_id: ModelId::new("model").expect("model id"),
         prompt: "  ".to_owned(),
         max_tokens: 1,
         temperature: 0.0,

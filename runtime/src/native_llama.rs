@@ -103,9 +103,11 @@ impl Backend for LlamaCppAdapter {
         })
     }
 
-    fn unload_model(&self, _model_id: &str) -> Result<(), RuntimeError> {
+    fn unload_model(&self, model_id: &str) -> Result<(), RuntimeError> {
+        let model_id = ModelId::new(model_id.to_owned())
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
         self.runner
-            .unload()
+            .unload_model(&model_id)
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
     }
 
@@ -143,6 +145,8 @@ impl Backend for LlamaCppAdapter {
         cancellation: &AtomicBool,
     ) -> Result<GenerationStatistics, RuntimeError> {
         let stream_request = oid_model_runner::GenerationRequest {
+            model_id: ModelId::new(request.model_id.clone())
+                .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?,
             prompt: request.input.clone(),
             max_tokens: request.options.max_tokens,
             temperature: request.options.temperature,
@@ -232,9 +236,15 @@ impl Backend for LlamaCppAdapter {
     }
     fn embeddings(
         &self,
-        _request: &crate::backends::EmbeddingsRequest,
+        request: &crate::backends::EmbeddingsRequest,
     ) -> Result<crate::backends::EmbeddingsResult, RuntimeError> {
-        Err(RuntimeError::NotImplemented("embeddings"))
+        let model_id = ModelId::new(request.model_id.clone())
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
+        let values = self
+            .runner
+            .embeddings(&model_id, &request.input, 4096)
+            .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
+        Ok(crate::backends::EmbeddingsResult { values })
     }
     fn tool_support(&self) -> crate::backends::ToolSupport {
         crate::backends::ToolSupport {

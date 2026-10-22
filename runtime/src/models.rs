@@ -135,12 +135,16 @@ impl ModelRegistry {
     ///
     /// # Errors
     ///
-    /// Returns an error for duplicate IDs, unavailable registry state, or
-    /// persistence failure.
+    /// Re-registering identical metadata is idempotent, which lets discovery
+    /// safely scan overlapping cache directories. A conflicting definition for
+    /// an existing ID remains an error.
     pub fn register(&self, model: ModelMetadata) -> Result<(), RuntimeError> {
         let id = model.id.clone();
         let mut models = self.lock_models()?;
-        if models.contains_key(&id) {
+        if let Some(existing) = models.get(&id) {
+            if existing == &model {
+                return Ok(());
+            }
             return Err(RuntimeError::ModelAlreadyRegistered(id));
         }
         models.insert(id.clone(), model);

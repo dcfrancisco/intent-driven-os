@@ -9,11 +9,12 @@ contract without leaking native engine details.
 
 Request IDs, model manifests, capability descriptors, lifecycle invariants,
 stream terminal semantics, cancellation, timeout/error taxonomy, and metrics.
-Keep one active GGUF model and one active generation in this WP.
+Support multiple resident GGUF models while retaining one active generation in
+this WP.
 
 ## Acceptance criteria
 
-- Contract tests cover list, inspect, load, generate, stream, cancel, unload,
+- Contract tests cover list, inspect, multi-model load/switch/unload, generate, stream, cancel, unload,
   unavailable backend, malformed request, and missing model.
 - Every stream has exactly one terminal outcome and a stable request ID.
 - Native handles/types remain inside the adapter.

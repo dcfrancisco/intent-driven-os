@@ -105,6 +105,8 @@ pub struct LoadedModel {
 /// Minimum generation controls for the first inference slice.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GenerationRequest {
+    /// Explicit resident model identity.
+    pub model_id: ModelId,
     /// Prompt text.
     pub prompt: String,
     /// Maximum number of generated tokens.
@@ -193,8 +195,10 @@ pub struct GenerationStats {
 /// Runtime-level model statistics.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelRuntimeStats {
-    /// Currently loaded model, if any.
+    /// One loaded model retained for compatibility with older consumers.
     pub loaded_model: Option<ModelId>,
+    /// All resident models, in stable identifier order.
+    pub loaded_models: Vec<ModelId>,
     /// Model memory reported by the backend, when available.
     pub memory_bytes: Option<u64>,
     /// Current lifecycle state.
@@ -238,6 +242,8 @@ pub enum ModelRunnerError {
     ModelBusy(String),
     /// A backend rejected loading or generation.
     BackendFailure(String),
+    /// The backend does not expose the requested capability.
+    NotImplemented(String),
     /// Resources are insufficient for the requested operation.
     ResourceExhausted(String),
     /// Generation was cancelled before completion.
@@ -259,6 +265,7 @@ impl fmt::Display for ModelRunnerError {
             Self::ModelNotLoaded => formatter.write_str("model is not loaded"),
             Self::ModelBusy(value) => write!(formatter, "model is busy: {value}"),
             Self::BackendFailure(value) => write!(formatter, "backend failure: {value}"),
+            Self::NotImplemented(value) => write!(formatter, "capability not implemented: {value}"),
             Self::ResourceExhausted(value) => write!(formatter, "resources exhausted: {value}"),
             Self::Cancelled => formatter.write_str("generation cancelled"),
             Self::UnloadFailure(value) => write!(formatter, "unload failed: {value}"),
@@ -343,18 +350,36 @@ impl GenerationStream {
 
 /// Stable model-runtime contract implemented by inference adapters.
 pub trait ModelRunner: Send + Sync {
-    /// Load one local model.
+    /// Load one local model while preserving other resident models.
     ///
     /// # Errors
     ///
     /// Returns a typed model or backend lifecycle error.
     fn load(&self, request: LoadModelRequest) -> Result<LoadedModel, ModelRunnerError>;
-    /// Start streaming generation from the currently loaded model.
+    /// Start streaming generation from the explicitly selected resident model.
     ///
     /// # Errors
     ///
     /// Returns a typed model or backend lifecycle error.
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, ModelRunnerError>;
+
+    /// Compute an embedding vector for one resident model.
+    ///
+    /// Backends that do not expose embeddings return `NotImplemented` rather
+    /// than fabricating a vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed backend or capability error when embeddings are not
+    /// available.
+    fn embeddings(
+        &self,
+        _model_id: &ModelId,
+        _text: &str,
+        _context_size: u32,
+    ) -> Result<Vec<f32>, ModelRunnerError> {
+        Err(ModelRunnerError::NotImplemented("embeddings".to_owned()))
+    }
     /// Tokenize text with the currently loaded model.
     ///
     /// # Errors
@@ -373,6 +398,15 @@ pub trait ModelRunner: Send + Sync {
     ///
     /// Returns a typed lifecycle or cleanup error.
     fn unload(&self) -> Result<(), ModelRunnerError>;
+    /// Unload one resident model safely.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed lifecycle or cleanup error.
+    fn unload_model(&self, model_id: &ModelId) -> Result<(), ModelRunnerError> {
+        let _ = model_id;
+        self.unload()
+    }
 }
 
 /// Identifies the model boundary.

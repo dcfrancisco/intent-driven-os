@@ -116,6 +116,14 @@ fn handle(
                 .collect::<Vec<_>>();
             respond_json(&mut stream, 200, json!({"object": "list", "data": data}))
         }
+        ("POST", "/v1/embeddings") => {
+            if !scope_allowed(&identity, auth::INFERENCE) {
+                return respond_scope_error(&mut stream, auth::INFERENCE);
+            }
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            embeddings(&mut stream, runtime, &request)
+        }
         ("POST", "/v1/chat/completions") | ("POST", "/v1/completions") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
@@ -173,6 +181,53 @@ fn handle(
     }
 }
 
+fn embeddings(
+    stream: &mut TcpStream,
+    runtime: &dyn RuntimeService,
+    body: &Value,
+) -> std::io::Result<()> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_data("model is required"))?;
+    let inputs = match body.get("input") {
+        Some(Value::String(value)) => vec![value.clone()],
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid_data("input array values must be strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return respond_error(stream, 400, "input is required".to_owned()),
+    };
+    if inputs.is_empty() || inputs.iter().any(|value| value.trim().is_empty()) {
+        return respond_error(stream, 400, "input must contain non-empty text".to_owned());
+    }
+    if let Err(error) = runtime.model_load(model) {
+        return respond_error(stream, 409, error.to_string());
+    }
+    let mut data = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+        let result = runtime.embeddings(&oid_runtime::backends::EmbeddingsRequest {
+            model_id: model.to_owned(),
+            input: input.clone(),
+        });
+        let values = match result {
+            Ok(result) => result.values,
+            Err(error) => return respond_error(stream, 501, error.to_string()),
+        };
+        data.push(json!({"object":"embedding","embedding":values,"index":index}));
+    }
+    respond_json(
+        stream,
+        200,
+        json!({"object":"list","data":data,"model":model,"usage":{"prompt_tokens":0,"total_tokens":0}}),
+    )
+}
+
 fn scope_allowed(identity: &auth::TokenIdentity, scope: &str) -> bool {
     identity.allows(scope)
 }
@@ -192,23 +247,41 @@ fn generate(
     identity: &auth::TokenIdentity,
     owners: &Arc<Mutex<HashMap<String, String>>>,
 ) -> std::io::Result<()> {
+    if body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| !tools.is_empty())
+    {
+        let support = runtime.tool_support();
+        if !support.supported {
+            return respond_error(
+                stream,
+                501,
+                format!("tool calls are unavailable: {}", support.reason),
+            );
+        }
+    }
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| invalid_data("model is required"))?;
     let prompt = if let Some(messages) = body.get("messages").and_then(Value::as_array) {
-        messages
-            .iter()
-            .filter_map(|message| {
-                let role = message
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("user");
-                let content = message.get("content").and_then(Value::as_str)?;
-                Some(format!("<{role}>\n{content}"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut prompt = String::new();
+        for message in messages {
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("user");
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_data("message content must be a string"))?;
+            prompt.push('\u{001e}');
+            prompt.push_str(role);
+            prompt.push('\n');
+            prompt.push_str(content);
+        }
+        prompt
     } else {
         body.get("prompt")
             .and_then(Value::as_str)

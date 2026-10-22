@@ -8,13 +8,14 @@ turning either external protocol into the internal architecture.
 ## Scope
 
 Explicitly supported subset of model list/show, generate/chat streaming,
-stop/cancel, health, errors, and capability discovery. Document unsupported
+multi-turn messages, embeddings, stop/cancel, health, errors, and capability discovery. Document unsupported
 semantics and preserve OID request IDs, policy, routing, and audit metadata.
 
 ## Acceptance criteria
 
 - Golden fixtures cover request/response and streaming translation.
-- Provider-native options are rejected or mapped explicitly, never ignored.
+- Provider-native options are rejected or mapped explicitly, never ignored;
+  unsupported tool calls return a capability error.
 - Compatibility endpoints cannot bypass local policy, admission, or audit.
 - Remote credentials, endpoint health, and cost attribution are isolated from
   local model state.

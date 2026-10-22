@@ -1,7 +1,10 @@
 //! Talvik's production runtime service and composition root.
 
 use crate::{
-    backends::{BackendHealth, BackendManager, BackendSummary, LoadedModel},
+    backends::{
+        Backend, BackendHealth, BackendManager, BackendSummary, EmbeddingsRequest,
+        EmbeddingsResult, LoadedModel,
+    },
     hardware::{HardwareService, HardwareSnapshot},
     models::{ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
@@ -9,6 +12,7 @@ use crate::{
     RuntimeStatus,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -25,7 +29,7 @@ pub struct MarinaRuntime {
     models: ModelRegistry,
     hardware: HardwareService,
     started_at: Instant,
-    loaded: Arc<Mutex<Option<LoadedModel>>>,
+    loaded: Arc<Mutex<BTreeMap<String, LoadedModel>>>,
     active_generation: Arc<Mutex<Option<(String, String, Arc<AtomicBool>)>>>,
 }
 
@@ -33,10 +37,14 @@ impl MarinaRuntime {
     /// Start Talvik's production runtime and publish its startup event.
     #[must_use]
     pub fn start(config: RuntimeConfig, bus: EventBus) -> Self {
+        Self::start_with_backend(config, bus, Box::new(LlamaCppAdapter::new()))
+    }
+
+    fn start_with_backend(config: RuntimeConfig, bus: EventBus, backend: Box<dyn Backend>) -> Self {
         let backends = BackendManager::new(bus.clone());
-        let llama = LlamaCppAdapter::new();
-        let _ = backends.register(Box::new(llama));
-        let _ = backends.enable("llama.cpp");
+        let backend_id = backend.descriptor().id;
+        let _ = backends.register(backend);
+        let _ = backends.enable(&backend_id);
         let hardware = HardwareService::detect(&bus);
         let models = config
             .registry_path
@@ -50,7 +58,7 @@ impl MarinaRuntime {
                 vec![directory]
             });
         let discovery = ModelDiscovery::new(discovery_directories);
-        let _ = discovery.discover(&models, "llama.cpp");
+        let _ = discovery.discover(&models, &backend_id);
         for model in models.list() {
             if !matches!(
                 model.status,
@@ -68,7 +76,7 @@ impl MarinaRuntime {
             models,
             hardware,
             started_at: Instant::now(),
-            loaded: Arc::new(Mutex::new(None)),
+            loaded: Arc::new(Mutex::new(BTreeMap::new())),
             active_generation: Arc::new(Mutex::new(None)),
         }
     }
@@ -91,14 +99,15 @@ impl RuntimeApi for MarinaRuntime {
 
 fn admit_generation(
     hardware: &HardwareService,
-    loaded: &Arc<Mutex<Option<LoadedModel>>>,
+    loaded: &Arc<Mutex<BTreeMap<String, LoadedModel>>>,
     request: &GenerationRequest,
 ) -> Result<(), RuntimeError> {
     let model_bytes = loaded
         .lock()
         .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-        .as_ref()
-        .map_or(0, |model| model.memory_bytes);
+        .values()
+        .map(|model| model.memory_bytes)
+        .sum();
     admit_memory(
         hardware.snapshot().available_ram_bytes,
         model_bytes,
@@ -148,21 +157,27 @@ impl RuntimeService for MarinaRuntime {
                 .active_backend()
                 .unwrap_or_else(|| "None".to_owned()),
             models: self.models.list().len(),
-            memory: self
-                .loaded
-                .lock()
-                .ok()
-                .and_then(|loaded| {
-                    loaded
-                        .as_ref()
-                        .map(|model| format!("{} MB", model.memory_bytes / 1_048_576))
-                })
-                .unwrap_or_else(|| "--".to_owned()),
+            memory: self.loaded.lock().ok().map_or_else(
+                || "--".to_owned(),
+                |loaded| {
+                    let bytes: u64 = loaded.values().map(|model| model.memory_bytes).sum();
+                    if loaded.is_empty() {
+                        "--".to_owned()
+                    } else {
+                        format!("{} MB", bytes / 1_048_576)
+                    }
+                },
+            ),
             loaded_model: self
                 .loaded
                 .lock()
                 .ok()
-                .and_then(|loaded| loaded.as_ref().map(|model| model.model_id.clone())),
+                .and_then(|loaded| loaded.keys().next().cloned()),
+            loaded_models: self
+                .loaded
+                .lock()
+                .map(|loaded| loaded.keys().cloned().collect())
+                .unwrap_or_default(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
             backend_version: self
                 .backends
@@ -170,12 +185,13 @@ impl RuntimeService for MarinaRuntime {
                 .into_iter()
                 .find(|backend| backend.active)
                 .and_then(|backend| backend.descriptor.library_version),
-            model_memory_bytes: self
-                .loaded
+            model_memory_bytes: self.loaded.lock().ok().and_then(|loaded| {
+                (!loaded.is_empty()).then(|| loaded.values().map(|model| model.memory_bytes).sum())
+            }),
+            generating: self
+                .active_generation
                 .lock()
-                .ok()
-                .and_then(|loaded| loaded.as_ref().map(|model| model.memory_bytes)),
-            generating: false,
+                .is_ok_and(|active| active.is_some()),
             current_tokens_per_second: None,
             loaded_context: None,
         }
@@ -220,19 +236,13 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
-        if let Some(loaded) = self
+        if self
             .loaded
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-            .as_ref()
+            .contains_key(id)
         {
-            if loaded.model_id == id {
-                return Ok(());
-            }
-            return Err(RuntimeError::ModelLifecycle(format!(
-                "model {} is already loaded",
-                loaded.model_id
-            )));
+            return Ok(());
         }
         let model = self
             .models
@@ -243,11 +253,10 @@ impl RuntimeService for MarinaRuntime {
         match self.backends.load_model(&model) {
             Ok(loaded) => {
                 self.models.set_status(id, &ModelStatus::Loaded)?;
-                *self
-                    .loaded
+                self.loaded
                     .lock()
-                    .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))? =
-                    Some(loaded);
+                    .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+                    .insert(id.to_owned(), loaded);
                 Ok(())
             }
             Err(error) => {
@@ -260,15 +269,24 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_unload(&self, id: &str) -> Result<(), RuntimeError> {
+        if self
+            .active_generation
+            .lock()
+            .is_ok_and(|active| active.is_some())
+        {
+            return Err(RuntimeError::ModelLifecycle(
+                "cannot unload a model while generation is active".to_owned(),
+            ));
+        }
         self.bus
             .publish(&RuntimeEvent::ModelUnloading(id.to_owned()));
         self.models.set_status(id, &ModelStatus::Unloading)?;
         self.backends.unload_model(id)?;
         self.models.set_status(id, &ModelStatus::Registered)?;
-        *self
-            .loaded
+        self.loaded
             .lock()
-            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))? = None;
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .remove(id);
         Ok(())
     }
 
@@ -279,31 +297,28 @@ impl RuntimeService for MarinaRuntime {
         Ok(count)
     }
 
+    fn embeddings(&self, request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError> {
+        self.backends.embeddings(request)
+    }
+
+    fn tool_support(&self) -> crate::backends::ToolSupport {
+        self.backends.tool_support()
+    }
+
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
-        if self
+        if !self
             .loaded
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-            .is_none()
+            .contains_key(&request.model_id)
         {
             return Err(RuntimeError::ModelLifecycle(
-                "load a model before generating".to_owned(),
+                "requested model is not loaded".to_owned(),
             ));
         }
         admit_generation(&self.hardware, &self.loaded, &request)?;
-        if self
-            .loaded
-            .lock()
-            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-            .as_ref()
-            .is_some_and(|loaded| loaded.model_id != request.model_id)
-        {
-            return Err(RuntimeError::ModelLifecycle(
-                "requested model is not the loaded model".to_owned(),
-            ));
-        }
         let cancellation = Arc::new(AtomicBool::new(false));
         let generation_id = format!(
             "talvik-gen-{}-{}",
@@ -524,7 +539,9 @@ pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, Runt
 #[cfg(test)]
 mod tests {
     use super::{admit_memory, MarinaRuntime};
-    use crate::{ModelMetadata, ModelRegistry, ModelStatus, RuntimeService};
+    use crate::{
+        LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry, ModelStatus, RuntimeService,
+    };
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
     #[test]
@@ -544,7 +561,12 @@ mod tests {
             ..RuntimeConfig::default()
         };
         let runtime = MarinaRuntime::start(config, bus);
-        assert_eq!(runtime.snapshot().backend, "None");
+        let expected_backend = if LlamaCppAdapter::native_available() {
+            "llama.cpp"
+        } else {
+            "None"
+        };
+        assert_eq!(runtime.snapshot().backend, expected_backend);
         assert_eq!(runtime.snapshot().models, 0);
         let _ = runtime.execute_command("status");
         assert!(receiver
@@ -634,5 +656,56 @@ mod tests {
         assert!(admit_memory(None, 0, 1).is_err());
         assert!(admit_memory(Some(512 * 1_048_576), 256 * 1_048_576, 32_768).is_err());
         assert!(admit_memory(Some(2 * 1_073_741_824), 256 * 1_048_576, 4_096).is_ok());
+    }
+
+    #[test]
+    fn multiple_resident_models_are_independently_loadable_and_unloadable() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-runtime-multi-model-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create root");
+        let bus = EventBus::new();
+        let runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            bus,
+            Box::new(MockBackend),
+        );
+        for id in ["alpha", "beta"] {
+            runtime
+                .models
+                .register(ModelMetadata {
+                    id: id.to_owned(),
+                    name: format!("{id}.gguf"),
+                    family: "test".to_owned(),
+                    backend: "mock".to_owned(),
+                    quantization: "test".to_owned(),
+                    context_window: 4096,
+                    memory_requirement_mb: 1,
+                    capabilities: vec!["chat".to_owned()],
+                    status: ModelStatus::Registered,
+                    checksum: None,
+                    location: root.join(format!("{id}.gguf")).display().to_string(),
+                })
+                .expect("register model");
+            runtime.model_load(id).expect("load model");
+        }
+        assert_eq!(
+            runtime.snapshot().loaded_models,
+            vec!["alpha".to_owned(), "beta".to_owned()]
+        );
+        runtime.model_unload("alpha").expect("unload alpha");
+        assert_eq!(runtime.snapshot().loaded_models, vec!["beta".to_owned()]);
+        runtime.model_unload("beta").expect("unload beta");
+        assert!(runtime.snapshot().loaded_models.is_empty());
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 }

@@ -4,6 +4,7 @@
 
 #[path = "../ipc.rs"]
 mod ipc;
+use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,16 +12,22 @@ use std::sync::Arc;
 const HELP: &str = "Talvik local model runtime
 
 Usage:
-  talvik status
-  talvik models
-  talvik import <source> [model-id] [sha256]
-  talvik load <model-id>
-  talvik unload <model-id>
-  talvik run <model-id> <prompt>
-  talvik run --route <prompt>
-  talvik cancel <request-id>
-  talvik auth token create [label] [--scopes=a,b]
-  talvik routing status
+  talvik [--json] <command> [arguments]
+
+Commands:
+  status                         Show daemon health and resident models
+  models                         List discovered models and lifecycle state
+  import <source> [id] [sha256]  Acquire and verify a GGUF artifact
+  load <model-id>                Load a model into residency
+  unload <model-id>              Unload one resident model
+  run <model-id> <prompt>        Stream a prompt through a model
+  run --route <prompt>           Use explicitly enabled ordered fallback
+  cancel <request-id>            Request cancellation of a generation
+  auth token create [label]      Create a scoped local API token
+  routing status                 Show routing configuration
+
+Use `talvik <command> --help` for command-specific usage. JSON output is
+available for status, models, import, load, and unload with --json.
 
 Routing is off by default. Enable ordered fallback with
 TALVIK_ROUTING_ENABLED=1 and TALVIK_ROUTE_MODELS=model-a,model-b.";
@@ -33,7 +40,12 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
+    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let json_output = arguments.first().is_some_and(|value| value == "--json");
+    if json_output {
+        arguments.remove(0);
+    }
+    let mut args = arguments.into_iter();
     let Some(command) = args.next() else {
         println!("{HELP}");
         return Ok(());
@@ -41,24 +53,53 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match command.as_str() {
         "--help" | "-h" | "help" => println!("{HELP}"),
         "--version" | "-V" => println!("talvik {}", env!("CARGO_PKG_VERSION")),
-        "status" => request("status")?,
-        "models" => request("model_list")?,
-        "import" => import(args)?,
-        "load" => request(&format!(
-            "model_load\t{}",
-            ipc::encode_field(&required(&mut args, "model id")?)
-        ))?,
-        "unload" => request(&format!(
-            "model_unload\t{}",
-            ipc::encode_field(&required(&mut args, "model id")?)
-        ))?,
+        "status" if args.next().is_none() => request_formatted("status", json_output, "status")?,
+        "models" if args.next().is_none() => {
+            request_formatted("model_list", json_output, "models")?
+        }
+        "import" => {
+            if args.next().as_deref() == Some("--help") {
+                println!("Usage: talvik import <source> [model-id] [sha256]");
+            } else {
+                import(args, json_output)?;
+            }
+        }
+        "load" => {
+            let first = required(&mut args, "model id")?;
+            if first == "--help" {
+                println!("Usage: talvik load <model-id>");
+            } else {
+                request_formatted(
+                    &format!("model_load\t{}", ipc::encode_field(&first)),
+                    json_output,
+                    "load",
+                )?;
+            }
+        }
+        "unload" => {
+            let first = required(&mut args, "model id")?;
+            if first == "--help" {
+                println!("Usage: talvik unload <model-id>");
+            } else {
+                request_formatted(
+                    &format!("model_unload\t{}", ipc::encode_field(&first)),
+                    json_output,
+                    "unload",
+                )?;
+            }
+        }
         "cancel" => request(&format!(
             "cancel\t{}",
             ipc::encode_field(&required(&mut args, "request id")?)
         ))?,
         "run" => run_prompt(args)?,
-        "routing" if args.next().as_deref() == Some("status") => routing_status(),
+        "routing" if args.next().as_deref() == Some("status") && args.next().is_none() => {
+            routing_status()
+        }
         "auth" => auth(args)?,
+        "status" | "models" if args.next().as_deref() == Some("--help") => {
+            println!("Usage: talvik {} [--json]", command)
+        }
         _ => return Err(format!("unknown command `{command}`\n\n{HELP}").into()),
     }
     Ok(())
@@ -71,7 +112,10 @@ fn required(
     args.next().ok_or_else(|| format!("{name} required").into())
 }
 
-fn import(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+fn import(
+    mut args: impl Iterator<Item = String>,
+    json_output: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let source = required(&mut args, "model source")?;
     let mut line = format!("model_pull\t{}", ipc::encode_field(&source));
     if let Some(id) = args.next() {
@@ -85,11 +129,15 @@ fn import(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::err
     if args.next().is_some() {
         return Err("import accepts source, optional model id, and optional sha256".into());
     }
-    request(&line)
+    request_formatted(&line, json_output, "import")
 }
 
 fn run_prompt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
     let target = required(&mut args, "model id or --route")?;
+    if target == "--help" {
+        println!("Usage: talvik run <model-id> <prompt> | talvik run --route <prompt>");
+        return Ok(());
+    }
     let prompt = args.collect::<Vec<_>>().join(" ");
     if prompt.is_empty() {
         return Err("prompt required".into());
@@ -242,6 +290,73 @@ fn request(line: &str) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
     }
+    Ok(())
+}
+
+fn request_formatted(
+    line: &str,
+    json_output: bool,
+    operation: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !json_output
+        || !matches!(
+            operation,
+            "status" | "models" | "import" | "load" | "unload"
+        )
+    {
+        return request(line);
+    }
+    let mut stream = ipc::connect()?;
+    writeln!(stream, "{line}")?;
+    let mut values = Vec::new();
+    for line in BufReader::new(stream).lines() {
+        let line = line?;
+        if let Some(error) = line.strip_prefix("ERROR\t") {
+            let message = error
+                .split_once('\t')
+                .map_or(error.to_owned(), |(_, message)| ipc::decode_field(message));
+            return Err(format!("TALVIK-E-REQUEST: {message}").into());
+        }
+        if line == "END"
+            || line == "OK"
+            || line == "OK cancelled"
+            || line.starts_with("OK\t")
+            || line.starts_with("OK ")
+        {
+            if line.starts_with("OK") {
+                values.push(line.clone());
+            }
+            if line == "END" || line == "OK" || line.starts_with("OK\t") || line.starts_with("OK ")
+            {
+                break;
+            }
+        } else if line.starts_with("MODEL\t") {
+            values.push(line);
+        }
+    }
+    let value = match operation {
+        "status" => {
+            let fields = values
+                .first()
+                .map(|line| line.split('\t').collect::<Vec<_>>())
+                .unwrap_or_default();
+            let loaded_models = fields
+                .get(4)
+                .map(|value| {
+                    value
+                        .split(',')
+                        .filter(|item| !item.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            json!({"object":"status","health":fields.get(1).copied().unwrap_or("unknown"),"backend":fields.get(2).copied().unwrap_or("unknown"),"loaded_model":fields.get(3).copied().unwrap_or(""),"loaded_models":loaded_models})
+        }
+        "models" => {
+            json!({"object":"list","data":values.iter().filter_map(|line| { let fields = line.split('\t').collect::<Vec<_>>(); (fields.len() >= 4).then(|| json!({"id":ipc::decode_field(fields[1]),"name":ipc::decode_field(fields[2]),"status":fields[3]})) }).collect::<Vec<_>>() })
+        }
+        _ => json!({"object":operation,"response":values.first().cloned().unwrap_or_default()}),
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }
 

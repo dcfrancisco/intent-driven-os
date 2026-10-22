@@ -447,6 +447,46 @@ impl BackendManager {
             .generate_streaming(request, callback, cancellation)
     }
 
+    /// Compute embeddings through the active backend.
+    pub fn embeddings(
+        &self,
+        request: &EmbeddingsRequest,
+    ) -> Result<EmbeddingsResult, RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .embeddings(request)
+    }
+
+    /// Return the active backend's tool-call capability.
+    pub fn tool_support(&self) -> ToolSupport {
+        let Ok(state) = self.state.lock() else {
+            return ToolSupport {
+                supported: false,
+                reason: "backend manager unavailable".to_owned(),
+            };
+        };
+        let Some(id) = state.active.as_deref() else {
+            return ToolSupport {
+                supported: false,
+                reason: "no active backend".to_owned(),
+            };
+        };
+        state.backends.get(id).map_or_else(
+            || ToolSupport {
+                supported: false,
+                reason: format!("backend {id} is unavailable"),
+            },
+            |backend| backend.tool_support(),
+        )
+    }
+
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, BackendManagerState>, RuntimeError> {
         self.state
             .lock()
@@ -518,7 +558,7 @@ impl Backend for MockBackend {
     }
 
     fn embeddings(&self, _request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError> {
-        Ok(EmbeddingsResult { values: Vec::new() })
+        Err(RuntimeError::NotImplemented("mock embeddings"))
     }
 
     fn tool_support(&self) -> ToolSupport {

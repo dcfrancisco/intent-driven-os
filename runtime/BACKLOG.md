@@ -63,6 +63,20 @@ The acceptance evidence and the original failed output are retained in
 `docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
 sampling-controlled qualification concern, not a process-exit assertion.
 
+### Talvik M1 implementation completion — 2026-10-23
+
+- [x] Multi-model resident map with explicit model selection, aggregate memory
+  admission, independent unload, and post-unload recovery.
+- [x] CLI help, JSON status/model output, and actionable request errors.
+- [x] Native embeddings path and OpenAI-compatible `/v1/embeddings` edge.
+- [x] Multi-turn role preservation through the embedded GGUF chat template.
+- [x] Explicit tool-capability rejection; no silent acceptance of unsupported
+  tool requests.
+- [x] Fresh real-GGUF lifecycle validation with release binaries.
+- [ ] Resumable remote acquisition with client-visible progress remains WP-0058.
+- [ ] Actual backend tool execution remains WP-0063.
+- [ ] Windows and macOS arm64 native qualification remain WP-0079/WP-0080.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

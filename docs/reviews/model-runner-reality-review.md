@@ -747,3 +747,13 @@ independent socket/lifecycle harness did not receive its first token and was
 stopped. That result was superseded by the corrected checked-in harness and the
 final lifecycle run recorded below; the remaining open item is the separate
 console process-signal startup-marker finding MARINA-F-003.
+
+## Talvik M1 implementation closeout — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-002 | Qwen emitted `|im_end|` after an otherwise correct answer | llama.cpp detokenized the special end token without angle brackets | Recognize bracketed and unbracketed terminal markers before callback delivery | ADR-0011 | WP-0057 | Fresh release generation and lifecycle harness returned clean decoded text and terminal `DONE` | RESOLVED |
+| TALVIK-F-003 | A second real GGUF had no resident-state representation | Runtime and adapter stored one loaded model in an `Option` | Use ordered model maps, explicit model selection, and aggregate admission memory | ADR-0010, ADR-0011 | WP-0057, WP-0058 | Two real GGUFs loaded, generated independently, one unloaded, remaining model recovered | RESOLVED |
+| TALVIK-F-004 | Embeddings endpoint was absent and backend returned an empty vector | Embeddings existed only as a placeholder contract | Add native llama.cpp embedding context and `/v1/embeddings` delegation | ADR-0010, ADR-0013 | WP-0061 | Real Qwen request returned a non-empty 896-dimensional vector | RESOLVED |
+| TALVIK-F-005 | Tool requests were accepted and silently ignored | HTTP edge did not consult backend capability | Return explicit 501 capability error when tools are unsupported | ADR-0003, ADR-0013 | WP-0061, WP-0063 | Real HTTP tool request returned `tool calls are unavailable` | RESOLVED |
+| TALVIK-F-006 | Debug native tests require a library search path | Test executables run from `target/debug`; managed library is in `$HOME/.marina/lib` | Preserve installed-binary rpath; run native tests with `DYLD_LIBRARY_PATH` or the managed prefix | ADR-0013 | WP-0065 | Release binaries ran from isolated managed-layout validation; workspace suite passed with explicit path | DOCUMENTED |

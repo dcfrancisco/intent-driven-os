@@ -205,6 +205,47 @@ Fresh release artifact hashes:
 | `target/release/talvikd` | `c113ca23cc8feade26c6fc68fb3b1dc1fb72268e0bf3a9aab44dfb74f0996e0e` |
 | `target/release/talvik` | `52bcd6f3d61c176184d83b83e0f4bcb5e117fa43daa807f3171f2e7881b54f13` |
 
+## Talvik M1 feature-branch verification — 2026-10-23
+
+This entry supersedes the stale single-model wording above for the current
+feature branch. Fresh release binaries were built with the pinned
+`$HOME/.marina/lib` llama.cpp library and tested with the Qwen
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` and DeepSeek `deepseek-coder-1.3b.gguf`
+artifacts, without changing `$HOME/.marina`.
+
+- Multi-model residency: PASS. Both real GGUFs loaded concurrently; each was
+  addressed by model ID; unloading Qwen left DeepSeek runnable; unloading the
+  final model returned an empty resident set.
+- Uninterrupted and isolated generation: PASS. Qwen returned `Paris` and `4`
+  for independent prompts; the lifecycle harness returned `Paris`, `4`, and
+  `Jupiter` after cancellation recovery with `DONE completed`.
+- Streaming/cancellation/recovery: PASS. First-token delivery occurred before
+  terminal events; cancellation returned `DONE cancelled`; the next request
+  completed immediately afterward.
+- Chat templates: PASS. Multi-turn HTTP messages were passed as distinct role
+  records to the embedded GGUF template; raw prompt fallback remains limited
+  to models without a template, and template application errors remain errors.
+- Embeddings: PASS. `/v1/embeddings` returned a real non-empty 896-value vector from the
+  native model. Tool requests are explicitly rejected with a capability error
+  because llama.cpp tool execution is not implemented in this milestone.
+- Workspace tests: PASS with `DYLD_LIBRARY_PATH=$HOME/.marina/lib`; a native
+  debug test launch without that path fails at dynamic linking before test
+  execution. Installed release binaries use the managed-prefix rpath.
+- Strict Clippy: current default-feature run reports 92 findings, matching
+  baseline revision `6034903`; the findings are pre-existing. Native
+  all-features linting also retains existing FFI lint findings.
+
+Fresh M1 release artifact hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `target/release/talvik` | `200008190efff0c6d19ff09350dc9527268dfc931d287c8b7137532187564a95` |
+| `target/release/talvikd` | `ad3464490db08629cdbdd56f0beb112f96160902edd40b340e690e75f848cb28` |
+
+The CPU-first Talvik M1 implementation gate is **GO** for the qualified macOS
+x86_64 environment, with cross-platform publication and tool execution still
+separate limitations.
+
 The previously recorded real-GGUF lifecycle qualification remains applicable
 because the runtime, transport protocol, and model state paths are unchanged;
 this revision changes executable entry points and product packaging only.

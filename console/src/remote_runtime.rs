@@ -109,6 +109,7 @@ impl RuntimeService for RemoteRuntimeService {
         snapshot.loaded_model = std::env::var("OID_MARINA_MODEL")
             .ok()
             .or_else(|| models.first().map(|model| model.id.clone()));
+        snapshot.loaded_models = snapshot.loaded_model.clone().into_iter().collect();
         snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
         snapshot
     }

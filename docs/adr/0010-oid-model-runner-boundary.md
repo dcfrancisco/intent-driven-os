@@ -16,11 +16,11 @@ The dependency direction is:
 OID Console → Intelligent Runtime → ModelRunner → llama.cpp adapter → GGUF
 ```
 
-The current slice supports one active local GGUF model and CPU-first execution.
-It includes streamed text generation and cooperative cancellation, but does
-not yet provide verified artifact download/cache management, scheduling,
-multi-model residency, tools, RAG, chat/session state, or distributed
-inference. ADR-0011 extends this boundary into the product strategy: the OID
+The current slice supports multiple resident local GGUF models, one active
+generation, and CPU-first execution. It includes streamed text generation,
+cooperative cancellation, native embeddings, and model-template handling, but
+does not yet provide concurrent scheduling, tool execution, RAG, chat/session
+state, or distributed inference. ADR-0011 extends this boundary into the product strategy: the OID
 API should feel Ollama-like for local users, while a future router selects
 among adapters without making Ollama a control-plane dependency.
 
@@ -44,6 +44,6 @@ The adapter can later be replaced without changing OID clients.
 
 The native C shim is intentionally opt-in because the repository does not
 vendor llama.cpp. Its FFI declarations must be validated against the exact
-llama.cpp build used on the Ubuntu target. The current host is macOS and has no
-configured native llama.cpp library, so live inference and performance claims
-remain pending Linux validation.
+llama.cpp build used on each target. CPU-first live inference is qualified on
+the recorded macOS x86_64 host; Linux, Windows, and macOS arm64 remain separate
+platform gates.

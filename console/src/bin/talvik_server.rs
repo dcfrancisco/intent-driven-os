@@ -63,10 +63,11 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
             let snapshot = runtime.snapshot();
             writeln!(
                 stream,
-                "OK status\t{}\t{}\t{}",
+                "OK status\t{}\t{}\t{}\t{}",
                 snapshot.health,
                 snapshot.backend,
-                snapshot.loaded_model.unwrap_or_default()
+                snapshot.loaded_model.clone().unwrap_or_default(),
+                snapshot.loaded_models.join(",")
             )?;
         }
         "model_list" => {

@@ -33,5 +33,5 @@ WP-0022, WP-0023, WP-0026; ADR-0003, ADR-0008.
 Lifecycle, GGUF loading, streaming generation, cooperative cancellation, and
 basic metrics have been implemented and validated in the retained native
 acceptance evidence at `docs/reviews/model-runner-reality-review.md`. The
-implementation remains CPU-first and one-model; verified cache/admission,
+implementation remains CPU-first with one active generation; verified cache/admission,
 scheduling, and routing are separate in WP-0058 through WP-0060.

@@ -94,7 +94,12 @@ mod tests {
         let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
         let line = StatusBar::line(&runtime, "12:34:56");
         assert!(line.contains("Runtime: Healthy"));
-        assert!(line.contains("Active backend: None"));
+        let backend = if oid_runtime::LlamaCppAdapter::native_available() {
+            "llama.cpp"
+        } else {
+            "None"
+        };
+        assert!(line.contains(&format!("Active backend: {backend}")));
         assert!(line.contains("Backend version: --"));
         assert!(line.contains("Model memory: --"));
         assert!(line.contains("Loaded model: None"));
