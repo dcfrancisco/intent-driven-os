@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$MarinaPath = (Join-Path (Get-Location) "target\release\marina.exe"),
-    [string]$BaseUrl = "http://127.0.0.1:11434",
+    [string]$BaseUrl = "http://127.0.0.1:11435",
     [string]$Model = $env:MARINA_MODEL,
     [string]$ApiKey = $env:MARINA_API_KEY
 )

@@ -84,10 +84,11 @@ stream responses. The token authorizes access to Marina; it is not a remote
 provider API key. Remote BYOK provider credentials are not implemented yet.
 
 Marina also has a native HTTP API. Enable it explicitly on loopback with
-`MARINA_HTTP_ADDR=127.0.0.1:11434 marina`; it uses the same runtime service as
-the Unix socket and requires a bearer token by default. The Python bridge is
-kept for migration and compatibility testing, not as the production service
-boundary.
+`MARINA_HTTP_ADDR=127.0.0.1:11434 marina` on Linux/macOS; Windows uses
+`127.0.0.1:11435` because its local IPC transport uses `127.0.0.1:11434`.
+The HTTP API uses the same runtime service as the local transport and requires
+a bearer credential by default. The Python bridge is kept for migration and
+compatibility testing, not as the production service boundary.
 
 ## GitHub releases
 
@@ -145,7 +146,8 @@ token and prepare the native DLL search path:
 ```powershell
 $apiKey = (& .\target\release\marinactl.exe auth token create windows-smoke).Trim()
 $env:MARINA_API_KEY = $apiKey
-$env:MARINA_HTTP_ADDR = "127.0.0.1:11434"
+$env:MARINA_TCP_ADDR = "127.0.0.1:11434"
+$env:MARINA_HTTP_ADDR = "127.0.0.1:11435"
 $env:Path = "$env:USERPROFILE\.marina\lib;$env:Path"
 ```
 
