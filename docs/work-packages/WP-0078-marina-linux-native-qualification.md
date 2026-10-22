@@ -33,7 +33,7 @@ The preferred native target for this checkpoint is the Phenom II X6 host at
 `192.168.1.112`, accessed through the approved SSH workflow. GitHub Actions
 Ubuntu x86_64 qualification is a separate repeatable baseline and does not
 substitute for Phenom execution. Docker is a reproducible build/test option,
-but Docker-only output remains unverified for native-host qualification.
+but Docker-only output does not replace native-host qualification.
 
 ## Reproducible procedure
 
@@ -84,6 +84,16 @@ replace the Phenom evidence.
   the tested Phenom II CPU remain unverified.
 - GitHub Actions Ubuntu runner execution and broader Linux distribution
   qualification remain unverified.
+
+### Container verification record — 2026-10-23
+
+With Docker Desktop running, `scripts/validate-linux.sh` built the Ubuntu
+24.04 image and completed formatting and workspace compilation. It stopped at
+strict Clippy under Rust 1.99.1 with 94 diagnostics from the existing
+workspace lint baseline, so the script did not reach its container test phase.
+This is a documented verification limitation, not a native runtime failure;
+the recovery action is to resolve or explicitly baseline the existing strict-
+Clippy findings, then rerun the complete script.
 
 ## Checkpoint 10 execution paths
 

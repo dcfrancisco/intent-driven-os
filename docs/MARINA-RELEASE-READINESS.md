@@ -96,6 +96,19 @@ For Linux x86_64, use `scripts/setup-llama-linux.sh` and follow
 `docs/validation/marina-linux-native.md`. The portable baseline disables
 optional x86 SIMD extensions; optimized builds require separate qualification.
 
+## Containerized Linux verification — 2026-10-23
+
+With Docker Desktop running, `scripts/validate-linux.sh` was executed from
+the final source revision. The Ubuntu 24.04 image built successfully and the
+container completed `cargo fmt --all -- --check` and `cargo build --workspace`.
+The script then stopped at strict Clippy with 94 diagnostics under Rust
+1.99.1, before its test phase. The diagnostics are in the existing workspace
+lint baseline (not a Talvik runtime failure); the host comparison remains the
+authoritative source/baseline comparison recorded below. This is therefore a
+successful container build check, but not a passing end-to-end Docker
+validation. Native Linux host qualification remains separate and is not
+claimed from this container run.
+
 ## CPU-first closeout audit — 2026-10-17
 
 Final native inputs were macOS x86_64, the Qwen GGUF
