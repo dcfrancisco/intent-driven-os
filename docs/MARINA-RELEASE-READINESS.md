@@ -96,6 +96,41 @@ For Linux x86_64, use `scripts/setup-llama-linux.sh` and follow
 `docs/validation/marina-linux-native.md`. The portable baseline disables
 optional x86 SIMD extensions; optimized builds require separate qualification.
 
+## Containerized Linux verification — 2026-10-23
+
+With Docker Desktop running, `scripts/validate-linux.sh` was executed from
+the final source revision. The Ubuntu 24.04 image built successfully and the
+container completed `cargo fmt --all -- --check` and `cargo build --workspace`.
+The script then stopped at strict Clippy with 94 diagnostics under Rust
+1.99.1, before its test phase. The diagnostics are in the existing workspace
+lint baseline (not a Talvik runtime failure); the host comparison remains the
+authoritative source/baseline comparison recorded below. This is therefore a
+successful container build check, but not a passing end-to-end Docker
+validation. Native Linux host qualification remains separate and is not
+claimed from this container run.
+
+## Product M1 follow-up verification — 2026-10-23
+
+- Model acquisition now retains a stable `.part` file across interrupted
+  attempts, resumes local and HTTP transfers, reports byte progress, retries
+  transient curl failures, verifies a supplied trusted SHA-256, and records the
+  observed digest in registry metadata. A real local HTTP server test
+  interrupted the first transfer, exhausted curl retries, and passed a second
+  acquisition using a `Range` request.
+- GGUF templates advertising tool support now pass tool definitions and tool
+  results through the native prompt boundary. A real Qwen GGUF emitted an
+  OpenAI-shaped `get_weather` call, and a second real request carrying that
+  call plus `Clear, 29 degrees Celsius.` returned a relevant summary.
+- The standard OpenAI Python client procedure is checked in at
+  `scripts/qualify-openai-client.py`; it could not execute here because the
+  `openai` package is not installed. Native OpenAI-shaped HTTP wire checks did
+  pass for model listing, plain completion, SSE streaming, embeddings, and
+  tool round-trip behavior.
+- The existing lifecycle harness passed again on the rebuilt daemon. The full
+  workspace suite still reproduces the four pre-existing console
+  process-signal startup-marker failures; the two SIGTERM cases pass. Strict
+  Clippy remains blocked by the recorded pre-existing workspace baseline.
+
 ## CPU-first closeout audit — 2026-10-17
 
 Final native inputs were macOS x86_64, the Qwen GGUF
@@ -205,6 +240,146 @@ Fresh release artifact hashes:
 | `target/release/talvikd` | `c113ca23cc8feade26c6fc68fb3b1dc1fb72268e0bf3a9aab44dfb74f0996e0e` |
 | `target/release/talvik` | `52bcd6f3d61c176184d83b83e0f4bcb5e117fa43daa807f3171f2e7881b54f13` |
 
+## Talvik M1 feature-branch verification — 2026-10-23
+
+This entry supersedes the stale single-model wording above for the current
+feature branch. Fresh release binaries were built with the pinned
+`$HOME/.marina/lib` llama.cpp library and tested with the Qwen
+`qwen2.5-0.5b-instruct-q4_k_m.gguf` and DeepSeek `deepseek-coder-1.3b.gguf`
+artifacts, without changing `$HOME/.marina`.
+
+- Multi-model residency: PASS. Both real GGUFs loaded concurrently; each was
+  addressed by model ID; unloading Qwen left DeepSeek runnable; unloading the
+  final model returned an empty resident set.
+- Uninterrupted and isolated generation: PASS. Qwen returned `Paris` and `4`
+  for independent prompts; the lifecycle harness returned `Paris`, `4`, and
+  `Jupiter` after cancellation recovery with `DONE completed`.
+- Streaming/cancellation/recovery: PASS. First-token delivery occurred before
+  terminal events; cancellation returned `DONE cancelled`; the next request
+  completed immediately afterward.
+- Chat templates: PASS. Multi-turn HTTP messages were passed as distinct role
+  records to the embedded GGUF template; raw prompt fallback remains limited
+  to models without a template, and template application errors remain errors.
+- Embeddings: PASS. `/v1/embeddings` returned a real non-empty 896-value vector from the
+  native model. Tool requests are explicitly rejected with a capability error
+  because llama.cpp tool execution is not implemented in this milestone.
+- Workspace tests: PASS with `DYLD_LIBRARY_PATH=$HOME/.marina/lib`; a native
+  debug test launch without that path fails at dynamic linking before test
+  execution. Installed release binaries use the managed-prefix rpath.
+- Strict Clippy: current default-feature run reports 92 findings, matching
+  baseline revision `6034903`; the findings are pre-existing. Native
+  all-features linting also retains existing FFI lint findings.
+
+Fresh M1 release artifact hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `target/release/talvik` | `200008190efff0c6d19ff09350dc9527268dfc931d287c8b7137532187564a95` |
+| `target/release/talvikd` | `ad3464490db08629cdbdd56f0beb112f96160902edd40b340e690e75f848cb28` |
+
+The CPU-first Talvik M1 implementation gate is **GO** for the qualified macOS
+x86_64 environment, with cross-platform publication and tool execution still
+separate limitations.
+
 The previously recorded real-GGUF lifecycle qualification remains applicable
 because the runtime, transport protocol, and model state paths are unchanged;
 this revision changes executable entry points and product packaging only.
+
+## Talvik M1 final product qualification — 2026-10-23
+
+Fresh release binaries and a fresh daemon passed the isolated standard OpenAI
+Python client procedure with `OPENAI_CLIENT_ACCEPTED`. This covered model
+discovery, non-streaming chat, SSE streaming, embeddings, tool invocation, and
+the tool-result round trip. The same daemon passed the real-GGUF lifecycle
+suite with `ACCEPTED`, independent responses, `DONE completed`,
+`DONE cancelled`, cancellation recovery, and clean shutdown.
+
+The four earlier process-signal startup-marker failures were re-run. All six
+tests passed with `--test-threads=1`, and a standalone default-thread rerun
+also passed all six. The earlier failures stopped before signal delivery in a
+loaded workspace run; no Marina implementation or transport defect was
+reproduced. The serial command remains the deterministic release gate and the
+finding is resolved in WP-0056.
+
+No supported authenticated IDE assistant session was available for a genuine
+IDE interoperability run. Windows x86_64 and macOS arm64 are also unverified;
+reproducible procedures are checked in under `docs/qualification/`. Therefore
+the qualified local macOS x86_64 CPU-first gate is **GO**, but Talvik M1 is
+**not fully qualified** and the cross-platform/product release decision is
+**NO-GO** pending those mandatory external gates. Installer and Docker
+distribution remain in the RC work package.
+
+## Cross-platform and IDE closeout — 2026-10-23
+
+Native macOS x86_64 multi-model evidence is recorded in
+`docs/qualification/macos-x86_64-talvik-m1-2026-10-23.md`. Qwen and DeepSeek
+were loaded concurrently through llama.cpp, both generated independently, Qwen
+generated again after DeepSeek unload, and restart reconciled the registry to
+two Registered models with zero residents. Native llama.cpp buffer sizes and
+artifact hashes are recorded. The host accepted the 32K probe, so native
+insufficient-memory rejection remains NOT VERIFIED.
+
+Linux has single-model native evidence only; its multi-model gate is NOT
+VERIFIED. Windows x86_64 and macOS arm64 remain BLOCKED pending native hosts.
+Continue 2.0.0 is installed, but the real UI request could not be submitted
+because macOS Accessibility denied automation (error 1002). No Cline session
+was available. The IDE gate is NOT VERIFIED; the self-contained procedure is
+`docs/qualification/continue-talvik-m1.md`. The temporary Continue config
+contained only Talvik and no Ollama or remote fallback.
+
+The M1 release decision remains **NO-GO** until native multi-model evidence is
+available for every supported platform and at least one real IDE assistant
+completes an audited Talvik-only request.
+
+## Memory admission investigation — 2026-10-23
+
+Finding `TALVIK-F-011` is resolved. Model loading now performs fail-closed
+preflight and post-load memory validation, so a model is not published as
+`Loaded` when the default context reservation cannot fit. A rejected candidate
+returns to `Registered`; existing residents and runtime health are preserved.
+The reported R1 boundary was reproduced deterministically in the admission
+tests. Exact DeepSeek-R1-Distill-Qwen-1.5B native reproduction was unavailable
+because that GGUF is not installed on this host. KV/compute allocation remains
+an estimate rather than a direct llama.cpp allocator measurement and remains a
+documented WP-0058 limitation.
+
+## Automatic memory recovery — 2026-10-23
+
+The CPU-first runtime now performs bounded LRU recovery for idle, unpinned
+residents, keeps registry metadata after eviction, refreshes production memory
+availability after unload, and queues requests FIFO behind the existing
+single-active-generation limit. `ResourceAdmission` errors identify retryability.
+Deterministic tests cover successful eviction/retry, reload, queued cancellation,
+and boundary admission. Native pressure recovery with the reported
+DeepSeek-R1-Distill-Qwen-1.5B file remains **NOT VERIFIED** because that GGUF is
+not installed on the qualification host; no threshold was relaxed to force a
+pass.
+
+## Inference termination qualification — 2026-10-23
+
+The inference investigation did not reproduce token corruption, prompt leakage,
+or unexplained early termination on the available Qwen and DeepSeek GGUFs.
+Small-model arithmetic errors and verbose DeepSeek responses are classified as
+model/configuration behavior. A confirmed API defect was corrected: successful
+generation previously reported `finish_reason:"stop"` even when the native
+token budget was exhausted. Native termination now propagates through the
+runtime; OpenAI responses report standard `stop` or `length` and include the
+precise `termination_reason`. Streaming emits the final finish chunk before
+`[DONE]`. Native post-fix checks and affected unit tests passed; platform and
+IDE qualification status is unchanged.
+
+## Current Talvik M1 closeout — 2026-10-23
+
+The current implementation and acceptance evidence are consolidated in
+`docs/TALVIK-M1-ACCEPTANCE.md`. The verified release slice is the CPU-first
+macOS x86_64 path: multi-model residency, bounded LRU recovery, pinning,
+reload, FIFO waiting, queued cancellation, OpenAI-compatible inference, and
+termination metadata are recorded as passing. Continue/Cline UI acceptance is
+deferred by owner decision and is not an M1 gate.
+
+Linux latest-branch qualification, macOS arm64, Windows x86_64, and Docker
+runtime execution remain unverified or blocked and are not promoted to GO.
+Strict workspace Clippy now passes on the current branch. Historical host
+evidence is retained as historical and does not substitute for current-branch
+execution. The release decision is therefore GO only for the tested macOS
+x86_64 slice and NO-GO for a fully qualified cross-platform release.

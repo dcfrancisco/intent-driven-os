@@ -5,9 +5,9 @@ evidence of support.
 
 | OS | Architecture | Backend | Format | Quantization | Transport | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| macOS | x86_64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Local-only qualified; known cancellation diagnostic |
-| macOS | arm64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Blocked: no Apple Silicon host available |
-| Linux | x86_64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Qualified on Ubuntu 26.04 / AMD Phenom II X6; GitHub Actions baseline pending |
+| macOS | x86_64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Runtime qualified; multi-model PASS; native memory-rejection and IDE gates not verified |
+| macOS | arm64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Blocked: no Apple Silicon host available; procedure prepared |
+| Linux | x86_64 | llama.cpp | GGUF | Q4_K_M | Unix socket + loopback HTTP | Single-model qualified on Ubuntu / AMD Phenom II X6; multi-model not verified |
 | Windows | x86_64 | llama.cpp | GGUF | Q4_K_M | Loopback TCP + HTTP | Blocked: no Windows host or runner available |
 
 ## Current verification notes
@@ -67,3 +67,8 @@ evidence of support.
   `docs/qualification/linux-x86_64-wp-0078-phenom.json` and the governed OID
   evidence is summarized in
   `docs/qualification/linux-x86_64-phenom-oid-evidence.json`.
+- Talvik M1 macOS x86_64 multi-model evidence is recorded in
+  `docs/qualification/macos-x86_64-talvik-m1-2026-10-23.md`. It proves two
+  simultaneous native GGUF residents, independent generation, unload
+  preservation, and restart reconciliation. Linux remains single-model-only
+  for this gate; Windows and macOS arm64 remain blocked pending native hosts.

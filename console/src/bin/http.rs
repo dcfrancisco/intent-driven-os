@@ -1,8 +1,8 @@
 //! Native loopback HTTP API for Marina.
 
 use oid_runtime::{
-    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream, MarinaRuntime,
-    RuntimeService,
+    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
+    GenerationTermination, MarinaRuntime, RuntimeService,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
     address: &str,
-    runtime: Arc<MarinaRuntime>,
+    runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(address)?;
@@ -26,7 +26,7 @@ pub fn serve(
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
-                let runtime = Arc::clone(&runtime);
+                let runtime = Arc::clone(runtime);
                 let owners = Arc::clone(&owners);
                 std::thread::spawn(move || {
                     if let Err(error) =
@@ -42,6 +42,7 @@ pub fn serve(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle(
     mut stream: TcpStream,
     runtime: &dyn RuntimeService,
@@ -76,7 +77,11 @@ fn handle(
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let path = parts.next().unwrap_or_default();
-    let identity = if !authentication_enabled {
+    let identity = if authentication_enabled {
+        header(&headers, "authorization")
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(auth::identity)
+    } else {
         Some(auth::TokenIdentity {
             principal: "anonymous-local".to_owned(),
             scopes: vec![
@@ -87,10 +92,6 @@ fn handle(
                 auth::MODELS_ADMIN.to_owned(),
             ],
         })
-    } else {
-        header(&headers, "authorization")
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .and_then(auth::identity)
     };
     if path != "/healthz" && identity.is_none() {
         return respond_json(
@@ -116,7 +117,15 @@ fn handle(
                 .collect::<Vec<_>>();
             respond_json(&mut stream, 200, json!({"object": "list", "data": data}))
         }
-        ("POST", "/v1/chat/completions") | ("POST", "/v1/completions") => {
+        ("POST", "/v1/embeddings") => {
+            if !scope_allowed(&identity, auth::INFERENCE) {
+                return respond_scope_error(&mut stream, auth::INFERENCE);
+            }
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            embeddings(&mut stream, runtime, &request)
+        }
+        ("POST", "/v1/chat/completions" | "/v1/completions") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
@@ -173,6 +182,53 @@ fn handle(
     }
 }
 
+fn embeddings(
+    stream: &mut TcpStream,
+    runtime: &dyn RuntimeService,
+    body: &Value,
+) -> std::io::Result<()> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_data("model is required"))?;
+    let inputs = match body.get("input") {
+        Some(Value::String(value)) => vec![value.clone()],
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid_data("input array values must be strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return respond_error(stream, 400, "input is required".to_owned()),
+    };
+    if inputs.is_empty() || inputs.iter().any(|value| value.trim().is_empty()) {
+        return respond_error(stream, 400, "input must contain non-empty text".to_owned());
+    }
+    if let Err(error) = runtime.model_load(model) {
+        return respond_error(stream, 409, error.to_string());
+    }
+    let mut data = Vec::with_capacity(inputs.len());
+    for (index, input) in inputs.iter().enumerate() {
+        let result = runtime.embeddings(&oid_runtime::backends::EmbeddingsRequest {
+            model_id: model.to_owned(),
+            input: input.clone(),
+        });
+        let values = match result {
+            Ok(result) => result.values,
+            Err(error) => return respond_error(stream, 501, error.to_string()),
+        };
+        data.push(json!({"object":"embedding","embedding":values,"index":index}));
+    }
+    respond_json(
+        stream,
+        200,
+        json!({"object":"list","data":data,"model":model,"usage":{"prompt_tokens":0,"total_tokens":0}}),
+    )
+}
+
 fn scope_allowed(identity: &auth::TokenIdentity, scope: &str) -> bool {
     identity.allows(scope)
 }
@@ -185,6 +241,46 @@ fn respond_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::Result<(
     )
 }
 
+fn parse_tool_calls(output: &str) -> Option<Vec<Value>> {
+    let mut calls = Vec::new();
+    let mut remainder = output;
+    while let Some(start) = remainder.find("<tool_call>") {
+        let after_start = &remainder[start + "<tool_call>".len()..];
+        let end = after_start.find("</tool_call>")?;
+        let value: Value = serde_json::from_str(after_start[..end].trim()).ok()?;
+        calls.push(normalize_tool_call(&value, calls.len()));
+        remainder = &after_start[end + "</tool_call>".len()..];
+    }
+    if !calls.is_empty() {
+        return Some(calls);
+    }
+    let value: Value = serde_json::from_str(output.trim()).ok()?;
+    if value.get("name").is_some() && value.get("arguments").is_some() {
+        return Some(vec![normalize_tool_call(&value, 0)]);
+    }
+    None
+}
+
+fn normalize_tool_call(value: &Value, index: usize) -> Value {
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let arguments = value.get("arguments").map_or_else(
+        || "{}".to_owned(),
+        |arguments| match arguments {
+            Value::String(arguments) => arguments.clone(),
+            arguments => arguments.to_string(),
+        },
+    );
+    json!({
+        "id": format!("call_{index}"),
+        "type": "function",
+        "function": {"name": name, "arguments": arguments}
+    })
+}
+
+#[allow(clippy::too_many_lines)]
 fn generate(
     stream: &mut TcpStream,
     runtime: &dyn RuntimeService,
@@ -196,25 +292,64 @@ fn generate(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| invalid_data("model is required"))?;
-    let prompt = if let Some(messages) = body.get("messages").and_then(Value::as_array) {
-        messages
-            .iter()
-            .filter_map(|message| {
-                let role = message
-                    .get("role")
+    let tool_definitions = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .filter(|tools| !tools.is_empty());
+    let mut prompt = if let Some(messages) = body.get("messages").and_then(Value::as_array) {
+        let mut prompt = String::new();
+        for message in messages {
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("user");
+            let content = if role == "assistant" {
+                message
+                    .get("tool_calls")
+                    .filter(|calls| !calls.is_null())
+                    .map(|calls| format!("<tool_calls>{calls}</tool_calls>"))
+                    .or_else(|| {
+                        message
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .ok_or_else(|| {
+                        invalid_data("assistant message requires content or tool_calls")
+                    })?
+            } else {
+                let content = message
+                    .get("content")
                     .and_then(Value::as_str)
-                    .unwrap_or("user");
-                let content = message.get("content").and_then(Value::as_str)?;
-                Some(format!("<{role}>\n{content}"))
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+                    .ok_or_else(|| invalid_data("message content must be a string"))?;
+                if role == "tool" {
+                    let name = message
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tool");
+                    format!("Tool result for {name}: {content}")
+                } else {
+                    content.to_owned()
+                }
+            };
+            prompt.push('\u{001e}');
+            prompt.push_str(role);
+            prompt.push('\n');
+            prompt.push_str(&content);
+        }
+        prompt
     } else {
         body.get("prompt")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned()
     };
+    if let Some(tools) = tool_definitions {
+        prompt.insert_str(
+            0,
+            &format!("\u{001e}__talvik_tools\n{}", Value::Array(tools.clone())),
+        );
+    }
     if prompt.is_empty() {
         return respond_error(stream, 400, "prompt or messages is required".to_owned());
     }
@@ -226,7 +361,8 @@ fn generate(
         .get("max_tokens")
         .and_then(Value::as_u64)
         .unwrap_or(128)
-        .min(u64::from(u32::MAX)) as u32;
+        .min(u64::from(u32::MAX));
+    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let timeout = body
         .get("timeout_ms")
         .and_then(Value::as_u64)
@@ -245,13 +381,23 @@ fn generate(
     if let Err(error) = runtime.model_load(model) {
         return respond_error(stream, 409, error.to_string());
     }
+    if tool_definitions.is_some() {
+        let support = runtime.tool_support();
+        if !support.supported {
+            return respond_error(
+                stream,
+                501,
+                format!("tool calls are unavailable: {}", support.reason),
+            );
+        }
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
         prompt,
         options: GenerationOptions {
             max_tokens,
-            context_size: context_size as u32,
+            context_size: u32::try_from(context_size).unwrap_or(u32::MAX),
             ..Default::default()
         },
     }) {
@@ -290,7 +436,7 @@ fn generate(
         match message {
             Ok(GenerationMessage::Token(token)) => {
                 output.push_str(&token);
-                if streaming {
+                if streaming && tool_definitions.is_none() {
                     let event = json!({
                         "id": request_id.clone(),
                         "object": "chat.completion.chunk",
@@ -303,14 +449,40 @@ fn generate(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
+                let finish_reason = completion_finish_reason(result.statistics.termination);
+                let termination_reason =
+                    completion_termination_reason(result.statistics.termination);
                 if streaming {
+                    if let Some(tool_calls) = parse_tool_calls(&output) {
+                        let event = json!({
+                            "id": result.request_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {"tool_calls": tool_calls}, "finish_reason": "tool_calls"}]
+                        });
+                        write!(stream, "data: {event}\n\n")?;
+                    } else {
+                        let event = json!({
+                            "id": result.request_id,
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                            "termination_reason": termination_reason
+                        });
+                        write!(stream, "data: {event}\n\n")?;
+                    }
                     write!(stream, "data: [DONE]\n\n")?;
                     return stream.flush();
                 }
+                let tool_calls = parse_tool_calls(&output);
+                let message = tool_calls.as_ref().map_or_else(
+                    || json!({"role":"assistant","content":output}),
+                    |calls| json!({"role":"assistant","content":Value::Null,"tool_calls":calls}),
+                );
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": {"role": "assistant", "content": output}, "finish_reason": "stop"}], "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -350,6 +522,21 @@ fn generate(
     }
 }
 
+fn completion_finish_reason(termination: GenerationTermination) -> &'static str {
+    match termination {
+        GenerationTermination::Stop => "stop",
+        GenerationTermination::Length | GenerationTermination::ContextLength => "length",
+    }
+}
+
+fn completion_termination_reason(termination: GenerationTermination) -> &'static str {
+    match termination {
+        GenerationTermination::Stop => "stop",
+        GenerationTermination::Length => "max_tokens",
+        GenerationTermination::ContextLength => "context_length",
+    }
+}
+
 /// Wait for the backend worker to publish its terminal result after a timeout.
 ///
 /// Returning a timeout response before this point can leave the single
@@ -370,8 +557,10 @@ fn drain_cancelled_generation(generation: &GenerationStream) -> bool {
                 | GenerationMessage::Completed(_)
                 | GenerationMessage::Failed(_),
             ) => return true,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
+            Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => return false,
         }
     }
 }
@@ -393,6 +582,7 @@ const fn request_body_size_is_allowed(size: usize) -> bool {
     size <= MAX_REQUEST_BODY_BYTES
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn respond_json(stream: &mut TcpStream, status: u16, body: Value) -> std::io::Result<()> {
     let payload = body.to_string();
     write!(
@@ -403,6 +593,7 @@ fn respond_json(stream: &mut TcpStream, status: u16, body: Value) -> std::io::Re
     )
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn respond_error(stream: &mut TcpStream, status: u16, message: String) -> std::io::Result<()> {
     respond_json(
         stream,
@@ -444,7 +635,11 @@ fn unique_request_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{request_body_size_is_allowed, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES};
+    use super::{
+        completion_finish_reason, completion_termination_reason, parse_tool_calls,
+        request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
+        MAX_REQUEST_BODY_BYTES,
+    };
 
     #[test]
     fn rejects_oversized_http_bodies() {
@@ -455,5 +650,40 @@ mod tests {
     #[test]
     fn exposes_a_bounded_context_policy() {
         assert_eq!(MAX_CONTEXT_TOKENS, 32_768);
+    }
+
+    #[test]
+    fn normalizes_template_tool_calls_to_openai_shape() {
+        let calls = parse_tool_calls(
+            r#"<tool_call>{"name":"get_weather","arguments":{"city":"Manila"}}</tool_call>"#,
+        )
+        .expect("tool call");
+        assert_eq!(calls[0]["type"], "function");
+        assert_eq!(calls[0]["function"]["name"], "get_weather");
+        assert_eq!(calls[0]["function"]["arguments"], r#"{"city":"Manila"}"#);
+    }
+
+    #[test]
+    fn reports_successful_termination_without_collapsing_length_into_stop() {
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::Stop),
+            "stop"
+        );
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::Length),
+            "length"
+        );
+        assert_eq!(
+            completion_termination_reason(GenerationTermination::Length),
+            "max_tokens"
+        );
+        assert_eq!(
+            completion_finish_reason(GenerationTermination::ContextLength),
+            "length"
+        );
+        assert_eq!(
+            completion_termination_reason(GenerationTermination::ContextLength),
+            "context_length"
+        );
     }
 }

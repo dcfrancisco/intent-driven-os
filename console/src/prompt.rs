@@ -3,6 +3,8 @@
 use crate::{editor::LineBuffer, presence::PresenceIndicator};
 use std::io::{self, Write};
 
+const MAX_COMPACT_DIRECTORY_LENGTH: usize = 42;
+
 /// Console prompt presentation.
 #[derive(Clone, Debug)]
 pub struct Prompt {
@@ -61,8 +63,7 @@ fn compact_directory(directory: &std::path::Path) -> String {
             },
         );
 
-    const MAX_LENGTH: usize = 42;
-    if display.chars().count() <= MAX_LENGTH {
+    if display.chars().count() <= MAX_COMPACT_DIRECTORY_LENGTH {
         return display;
     }
 

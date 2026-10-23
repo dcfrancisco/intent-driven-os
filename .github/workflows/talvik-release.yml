@@ -17,7 +17,7 @@ jobs:
     name: Workspace checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.82.0
@@ -26,7 +26,7 @@ jobs:
       - name: Test
         run: cargo test --workspace
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   build:
     name: Build ${{ matrix.name }}
@@ -60,12 +60,12 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.82.0
           targets: ${{ matrix.target }}
-      - uses: lukka/get-cmake@latest
+      - uses: lukka/get-cmake@v3.31.6
       - name: Checkout llama.cpp
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
@@ -123,7 +123,14 @@ jobs:
           Copy-Item scripts/install-model-runner.ps1 "$env:RUNNER_TEMP/talvik/"
           Compress-Archive -Path "$env:RUNNER_TEMP/talvik/*" -DestinationPath "$env:RUNNER_TEMP/${{ matrix.archive }}"
           (Get-FileHash "$env:RUNNER_TEMP/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.archive }}" | Out-File "$env:RUNNER_TEMP/${{ matrix.archive }}.sha256"
-      - uses: actions/upload-artifact@v4
+      - name: Smoke install Unix payload
+        if: runner.os != 'Windows'
+        run: ./scripts/smoke-release-install.sh "$RUNNER_TEMP/${{ matrix.archive }}"
+      - name: Smoke install Windows payload
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-release-install.ps1 -ArchivePath "$env:RUNNER_TEMP/${{ matrix.archive }}"
+      - uses: actions/upload-artifact@v4.6.2
         with:
           name: ${{ matrix.name }}
           path: |
@@ -136,11 +143,11 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0
         with:
           path: artifacts
       - name: Publish draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.3.2
         with:
           draft: true
           generate_release_notes: true

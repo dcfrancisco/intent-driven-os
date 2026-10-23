@@ -13,12 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+type ActiveRemoteGeneration = (String, Arc<AtomicBool>);
+
 /// OID-facing runtime that keeps policy/console operations local while routing
 /// model discovery and inference through Marina's provider-neutral HTTP client.
 pub struct RemoteRuntimeService {
     local: Box<dyn RuntimeService>,
     client: MarinaHttpClient,
-    active: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
+    active: Arc<Mutex<Option<ActiveRemoteGeneration>>>,
     evidence: Arc<Mutex<FileEvidenceStore>>,
     session_id: String,
 }
@@ -52,6 +54,7 @@ impl RemoteRuntimeService {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn unavailable(error: impl ToString) -> RuntimeError {
         RuntimeError::ModelLifecycle(error.to_string())
     }
@@ -103,12 +106,13 @@ impl RuntimeService for RemoteRuntimeService {
 
     fn snapshot(&self) -> RuntimeSnapshot {
         let mut snapshot = self.local.snapshot();
-        snapshot.backend = "marina-http".to_owned();
+        "marina-http".clone_into(&mut snapshot.backend);
         let models = self.remote_models();
         snapshot.models = models.len();
         snapshot.loaded_model = std::env::var("OID_MARINA_MODEL")
             .ok()
             .or_else(|| models.first().map(|model| model.id.clone()));
+        snapshot.loaded_models = snapshot.loaded_model.clone().into_iter().collect();
         snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
         snapshot
     }
@@ -152,6 +156,7 @@ impl RuntimeService for RemoteRuntimeService {
         Err(RuntimeError::NotImplemented("remote tokenization"))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
         let cancellation = Arc::new(AtomicBool::new(false));
         let mut active = self.active.lock().map_err(|_| {
@@ -403,6 +408,7 @@ fn statistics_from_metrics(
             && metrics.tokens_per_second.is_some()
             && metrics.latency_ms.is_some()
             && metrics.inference_time_ms.is_some(),
+        ..GenerationStatistics::default()
     }
 }
 

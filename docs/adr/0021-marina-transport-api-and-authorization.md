@@ -123,6 +123,22 @@ and otherwise reserves the loaded model allocation, a conservative context/KV
 estimate, and a fixed safety margin. It remains a first local-runtime policy,
 not a complete accelerator allocator.
 
+Implementation clarification (2026-10-23): model load admission now performs
+the same default-context preflight and validates the backend-reported model
+size after native load before publishing `Loaded`. A failed validation unloads
+the candidate and restores `Registered`; generation admission remains a second
+fail-closed check for the caller's requested context. This corrects lifecycle
+state publication without changing the architectural ownership of admission.
+
+Implementation clarification (2026-10-23, `TALVIK-F-012`): inference may now
+perform bounded runtime-owned recovery before returning a resource error. It
+selects LRU idle residents, excludes the active request and configured pinned
+models, refreshes production hardware availability after unload, and retains
+registry metadata for reload. Requests arriving during the existing single
+active-generation window use a bounded FIFO queue with cancellation and an
+admission deadline. This is scheduling policy inside Talvik; it does not change
+the public backend-neutral API or introduce orchestration ownership elsewhere.
+
 ## Implementation order
 
 1. Native HTTP server and versioned API resources.

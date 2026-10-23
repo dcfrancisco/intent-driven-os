@@ -23,9 +23,10 @@ OID / assistant / system client
                                       `-> auditable decision/evidence
 ```
 
-The first production slice remains local, CPU-first, one active model, and
-GGUF-focused. Remote providers, multi-model scheduling, tools, embeddings,
-RAG, and autonomous agent loops are separate capabilities.
+The first production slice remains local, CPU-first, one active generation,
+and GGUF-focused. Multiple resident models and native embeddings are now part
+of the bounded Talvik M1 slice; concurrent scheduling, remote providers, tools,
+RAG, and autonomous agent loops remain separate capabilities.
 
 ## Required capabilities
 
@@ -83,8 +84,10 @@ gated by WP-0060.
 The project maintains a rich internal OID contract and deliberately limited
 compatibility edges. The router adds policy and observability work, but enables
 backend replacement and future assistant composition without rewriting clients.
-The initial one-model constraint remains intentional until admission and
-scheduling are real.
+The initial one-model implementation constraint was removed for Talvik M1 after
+aggregate memory admission and explicit model selection were implemented and
+validated. One active generation remains intentional until concurrent
+scheduling is designed and qualified.
 
 This ADR is a target decision, not a claim that all capabilities are complete.
 WP-0057 through WP-0068 provide the implementation and validation sequence.
@@ -112,3 +115,13 @@ the embedded template for a single user message before tokenization, while
 retaining raw-prompt behavior for template-less models. This keeps prompt
 semantics inside the model execution adapter, preserves the backend-neutral
 runtime boundary, and makes prompt correctness a release acceptance property.
+
+## M1 implementation amendment — 2026-10-23
+
+Talvik M1 extends resident model state from a singleton to an ordered map of
+model IDs. Generation requests select a loaded model explicitly, aggregate
+resident memory participates in admission, and unloading one model preserves
+the others. Native handles remain inside the llama.cpp adapter. The amendment
+also adds native embeddings and requires unsupported tool requests to fail
+explicitly at the compatibility edge; it does not authorize tool execution or
+concurrent generation.

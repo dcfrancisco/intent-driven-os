@@ -1,7 +1,7 @@
 //! Compatibility bridge from the legacy runtime backend API to `ModelRunner`.
 
 use crate::backends::{Backend, BackendDescriptor, BackendHealth, GenerationRequest, LoadedModel};
-use crate::generation::GenerationStatistics;
+use crate::generation::{GenerationStatistics, GenerationTermination};
 use crate::models::ModelMetadata;
 use oid_llama_cpp_adapter::LlamaCppModelRunner;
 use oid_model_runner::{
@@ -103,9 +103,11 @@ impl Backend for LlamaCppAdapter {
         })
     }
 
-    fn unload_model(&self, _model_id: &str) -> Result<(), RuntimeError> {
+    fn unload_model(&self, model_id: &str) -> Result<(), RuntimeError> {
+        let model_id = ModelId::new(model_id.to_owned())
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
         self.runner
-            .unload()
+            .unload_model(&model_id)
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
     }
 
@@ -143,6 +145,8 @@ impl Backend for LlamaCppAdapter {
         cancellation: &AtomicBool,
     ) -> Result<GenerationStatistics, RuntimeError> {
         let stream_request = oid_model_runner::GenerationRequest {
+            model_id: ModelId::new(request.model_id.clone())
+                .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?,
             prompt: request.input.clone(),
             max_tokens: request.options.max_tokens,
             temperature: request.options.temperature,
@@ -195,6 +199,17 @@ impl Backend for LlamaCppAdapter {
                         inference_time_ms: stats.generation_time.unwrap_or_default().as_millis(),
                         context_tokens: prompt_tokens + stats.generated_tokens,
                         metrics_known: true,
+                        termination: match stats.termination {
+                            oid_model_runner::GenerationTermination::Stop => {
+                                GenerationTermination::Stop
+                            }
+                            oid_model_runner::GenerationTermination::Length => {
+                                GenerationTermination::Length
+                            }
+                            oid_model_runner::GenerationTermination::ContextLength => {
+                                GenerationTermination::ContextLength
+                            }
+                        },
                         ..GenerationStatistics::default()
                     });
                 }
@@ -232,14 +247,20 @@ impl Backend for LlamaCppAdapter {
     }
     fn embeddings(
         &self,
-        _request: &crate::backends::EmbeddingsRequest,
+        request: &crate::backends::EmbeddingsRequest,
     ) -> Result<crate::backends::EmbeddingsResult, RuntimeError> {
-        Err(RuntimeError::NotImplemented("embeddings"))
+        let model_id = ModelId::new(request.model_id.clone())
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
+        let values = self
+            .runner
+            .embeddings(&model_id, &request.input, 4096)
+            .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
+        Ok(crate::backends::EmbeddingsResult { values })
     }
     fn tool_support(&self) -> crate::backends::ToolSupport {
         crate::backends::ToolSupport {
-            supported: false,
-            reason: "not implemented".to_owned(),
+            supported: self.runner.tool_support(),
+            reason: "the loaded GGUF chat template does not advertise tool calls".to_owned(),
         }
     }
     fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {

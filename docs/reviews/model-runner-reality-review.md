@@ -694,7 +694,7 @@ and broader production-service work remain separate gates.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | MARINA-F-001 | The prior inline probe sent a literal `\\n`; Marina waited in `read_line`. A corrected frame reached `TOKEN\\tParis` after 50.0 seconds. | Harness escaping error plus a 30-second timeout below CPU first-token latency. | Added `scripts/accept-marina-lifecycle.py` with explicit `"\\t"`/`"\\n"` framing and 240-second bounds. | ADR-0011 | WP-0059 | Corrected harness returned terminal responses and cancellation. | RESOLVED |
 | MARINA-F-002 | After `DONE\\tcompleted`, the next request returned `model is busy`. | Marina sent the terminal message before clearing `active_generation`. | Clear the active slot before terminal completion, cancellation, or failure delivery. | ADR-0011 | WP-0059 | Final lifecycle run passed independent requests, cancellation, recovery, and no busy race. | RESOLVED |
-| MARINA-F-003 | Four console process-signal tests timed out waiting for `✓ Console ready`; two SIGTERM tests passed. | Not isolated; treated as process-test environment instability, not Marina IPC. | Keep open under WP-0056; rerun on a stable process-test environment. | ADR-0011 | WP-0056 | Native Marina lifecycle passed independently. | OPEN |
+| MARINA-F-003 | Earlier loaded workspace run had four startup-marker timeouts; a fresh standalone run passed all six tests serially and with default test threads. | Test-process/workspace timing or load condition before signal delivery; no runtime or transport failure reproduced. | No implementation change. Use the serial process-signal gate and retain real-TTY host qualification. | ADR-0011 | WP-0056 | Serial command: 6 passed; default-thread rerun: 6 passed. | RESOLVED |
 | TALVIK-F-001 | The productization lifecycle rerun received `DONE\tcompleted\t2`, then the immediate independent request failed with `model is busy`; cancellation recovery reproduced the same failure. | The runtime slot was released before `DONE`, but the llama.cpp adapter cleared its separate `generating` flag after sending its terminal event. | Clear adapter admission and restore `Ready` before publishing completed, cancelled, or failed terminal events. | ADR-0011 | WP-0059 | Corrected final-binary run passed immediate independent requests, cancellation/recovery, unload/reload, and post-reload inference. | RESOLVED |
 
 ### Talvik productization closeout — 2026-10-17
@@ -747,3 +747,73 @@ independent socket/lifecycle harness did not receive its first token and was
 stopped. That result was superseded by the corrected checked-in harness and the
 final lifecycle run recorded below; the remaining open item is the separate
 console process-signal startup-marker finding MARINA-F-003.
+
+## Talvik M1 implementation closeout — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-002 | Qwen emitted `|im_end|` after an otherwise correct answer | llama.cpp detokenized the special end token without angle brackets | Recognize bracketed and unbracketed terminal markers before callback delivery | ADR-0011 | WP-0057 | Fresh release generation and lifecycle harness returned clean decoded text and terminal `DONE` | RESOLVED |
+| TALVIK-F-003 | A second real GGUF had no resident-state representation | Runtime and adapter stored one loaded model in an `Option` | Use ordered model maps, explicit model selection, and aggregate admission memory | ADR-0010, ADR-0011 | WP-0057, WP-0058 | Two real GGUFs loaded, generated independently, one unloaded, remaining model recovered | RESOLVED |
+| TALVIK-F-004 | Embeddings endpoint was absent and backend returned an empty vector | Embeddings existed only as a placeholder contract | Add native llama.cpp embedding context and `/v1/embeddings` delegation | ADR-0010, ADR-0013 | WP-0061 | Real Qwen request returned a non-empty 896-dimensional vector | RESOLVED |
+| TALVIK-F-005 | Tool requests were accepted and silently ignored | HTTP edge did not consult backend capability | Return explicit 501 capability error when tools are unsupported | ADR-0003, ADR-0013 | WP-0061, WP-0063 | Real HTTP tool request returned `tool calls are unavailable` | RESOLVED |
+| TALVIK-F-006 | Debug native tests require a library search path | Test executables run from `target/debug`; managed library is in `$HOME/.marina/lib` | Preserve installed-binary rpath; run native tests with `DYLD_LIBRARY_PATH` or the managed prefix | ADR-0013 | WP-0065 | Release binaries ran from isolated managed-layout validation; workspace suite passed with explicit path | DOCUMENTED |
+| TALVIK-F-007 | Ubuntu 24.04 Docker validation stopped before tests | Rust 1.99 strict Clippy reports the existing workspace lint baseline before the script reaches `cargo test` | Keep the lint baseline disposition explicit; do not weaken or skip the gate; re-run after baseline cleanup | ADR-0013 | WP-0078 | `scripts/validate-linux.sh` on 2026-10-23 built the image and workspace, then reported 94 pre-existing diagnostics | DOCUMENTED |
+| TALVIK-F-008 | Remote acquisition discarded interrupted transfers | Acquisition used a unique temporary file and removed it after curl failure | Retain a stable `.part`, resume with curl ranges/retries, show progress, verify trusted SHA-256, and atomically register the observed digest | ADR-0014 | WP-0058 | Local partial-resume and checksum tests pass; HTTP behavior uses curl `--continue-at -` and was code-checked | RESOLVED |
+| TALVIK-F-009 | OpenAI tool requests had no backend execution path | The edge rejected every tool request even when the GGUF template advertised tool support | Detect template capability, translate tool definitions/results, parse model tool calls, and return normalized OpenAI responses | ADR-0011, ADR-0013 | WP-0063, WP-0067 | Real Qwen GGUF emitted `get_weather`; real multi-turn tool-result request returned the weather summary | RESOLVED |
+
+### Inference output correctness investigation — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-010 | Qwen and DeepSeek produced coherent code and Fibonacci output, but small-model arithmetic answers were wrong or overly verbose; long responses ended at 128 tokens | Model capability and default sampling/output budget; no prompt leakage, token corruption, or premature native stop was reproduced | Preserve model behavior; expose native EOS, max-token, and context exhaustion through backend-neutral statistics and OpenAI metadata | ADR-0011, ADR-0013 | WP-0061, WP-0067 | Native two-model matrix; one-token HTTP request returned `finish_reason=length`, `termination_reason=max_tokens`; streaming emitted a final finish event | RESOLVED |
+
+The investigation used the installed Qwen 2.5 0.5B Instruct Q4_K_M and
+DeepSeek Coder 1.3B GGUFs. Chat-template metadata was present in Qwen and the
+native adapter applied it through llama.cpp. Each request created a fresh native
+context, and alternating resident-model requests produced the expected model-
+specific output. The incorrect arithmetic results are classified as model
+limitations/configuration behavior, not runtime defects.
+
+The native adapter now carries a termination enum from llama.cpp through the
+runtime statistics. The OpenAI-compatible endpoint maps EOS to `stop`, token
+budget and context exhaustion to standard `length`, and adds the precise
+`termination_reason` (`stop`, `max_tokens`, or `context_length`). Streaming
+responses now include the final finish chunk before `[DONE]`.
+
+### Memory admission investigation — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-011 | A DeepSeek-R1-Distill-Qwen-1.5B run reported `available=2180747264`, `required=2200802304`, `model=1596822528`, `context=67108864` after the model had already become `Loaded` | Load admission was absent; generation alone checked the resident model reservation plus context estimate and safety margin | Add load preflight using the registry estimate and post-load validation using backend-reported bytes. Rejecting a load returns the registry to `Registered` and preserves existing residents | ADR-0021, ADR-0011 | WP-0058 | Exact boundary test passes at `required` and rejects `required-1`; constrained two-model test rejects the second model without displacing the first; native Qwen/DeepSeek load/unload/retry remains healthy | RESOLVED |
+
+The reported arithmetic is exactly `model + context + 512 MiB safety margin`.
+There was no double count between load and inference because load had no memory
+admission at all. `available` is a startup hardware snapshot: Linux uses
+`MemAvailable`, macOS uses free + inactive + speculative pages, and Windows uses
+sysinfo available memory. It is not a configured budget and is not a live
+remaining-capacity counter.
+
+The current estimate explicitly includes the backend-reported model size, a
+16 KiB/context-token KV estimate, and a fixed 512 MiB safety margin. It does not
+measure llama.cpp compute buffers or derive KV size from model architecture.
+Native logs show those allocations can vary materially by model (for example,
+the available DeepSeek Coder GGUF used 768 MiB KV plus about 300 MiB compute at
+4096 context, while Qwen used 48 MiB KV plus about 71 MiB compute). The fixed
+margin remains intentionally conservative for this CPU-first slice, but exact
+backend allocation accounting remains an open WP-0058 limitation.
+
+### Automatic memory recovery — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-012 | A request for a non-resident model returned `requested model is not loaded`; a resident model could not be reclaimed and memory availability was not refreshed after unload | The runtime had no inference-time LRU recovery, no bounded FIFO wait, and `HardwareService` reused its startup snapshot | Added runtime-owned LRU eviction/reload, active/pinned protection, bounded recovery attempts, FIFO queue with cancellation/deadline handling, configurable policy, and live hardware refresh for production detection | ADR-0021, ADR-0011 | WP-0058 | Controlled 640 MiB fixture evicted alpha, generated beta, preserved alpha as Registered, reloaded alpha; queued request cancellation passed; full runtime test suite passed except sandbox-denied HTTP fixture bind | RESOLVED |
+
+Recovery does not count model bytes twice: resident backend bytes are summed once
+for the current admission decision, while load preflight uses the registry estimate
+before native allocation and post-load validation uses the backend-reported size.
+The available value is now refreshed for production hardware reads after an
+eviction; deterministic test providers remain fixed snapshots. Automatic recovery
+is bounded by `TALVIK_RECOVERY_BUDGET`, never unloads the active or configured
+`TALVIK_PINNED_MODELS`, and returns `ResourceAdmission { retryable }` when no safe
+candidate remains. The fixed KV/compute estimate is still conservative and is not
+a direct llama.cpp allocator measurement.

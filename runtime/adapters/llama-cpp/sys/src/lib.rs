@@ -167,6 +167,8 @@ mod ffi {
             name: *const c_char,
         ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
+        pub fn llama_model_n_embd(model: *const c_void) -> i32;
+        pub fn llama_get_embeddings(ctx: *mut c_void) -> *const f32;
         pub fn llama_chat_apply_template(
             template: *const c_char,
             chat: *const ChatMessage,
@@ -276,6 +278,20 @@ pub struct NativeGenerationStatistics {
     pub generated_tokens: u64,
     /// Context tokens consumed.
     pub context_tokens: u64,
+    /// Why successful generation terminated.
+    pub termination: NativeGenerationTermination,
+}
+
+/// Native reason a generation reached its successful terminal boundary.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum NativeGenerationTermination {
+    /// The model emitted an end-of-generation token or stop marker.
+    #[default]
+    Stop,
+    /// The requested completion token budget was exhausted.
+    Length,
+    /// The requested context window was exhausted.
+    ContextLength,
 }
 
 #[cfg(native_llama_cpp)]
@@ -304,6 +320,25 @@ fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
 unsafe impl Send for NativeModel {}
 
 impl NativeModel {
+    /// Report whether the embedded chat template advertises tool handling.
+    #[must_use]
+    pub fn supports_tools(&self) -> bool {
+        #[cfg(native_llama_cpp)]
+        unsafe {
+            let template =
+                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
+            if template.is_null() {
+                return false;
+            }
+            let template = CStr::from_ptr(template).to_string_lossy();
+            return template.contains("custom_tools") || template.contains("tool_calls");
+        }
+        #[cfg(not(native_llama_cpp))]
+        {
+            false
+        }
+    }
+
     /// Model memory reported by llama.cpp.
     #[must_use]
     pub const fn memory_bytes(&self) -> u64 {
@@ -361,6 +396,60 @@ impl NativeModel {
         }
     }
 
+    /// Compute the model embedding for one input string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the embedding context cannot be created or the
+    /// native engine cannot produce an embedding vector.
+    pub fn embedding(&self, text: &str, context_size: u32) -> Result<Vec<f32>, String> {
+        #[cfg(native_llama_cpp)]
+        unsafe {
+            let mut tokens = self.tokenize(text)?;
+            if tokens.is_empty() {
+                return Err("embedding input produced no tokens".to_owned());
+            }
+            let mut params = ffi::llama_context_default_params();
+            let token_count = u32::try_from(tokens.len())
+                .map_err(|_| "embedding input is too large".to_owned())?;
+            params.n_ctx = context_size.max(token_count);
+            params.n_batch = params.n_ctx.min(512);
+            params.n_ubatch = params.n_batch;
+            params.embeddings = true;
+            let context = ffi::llama_init_from_model(self.pointer, params);
+            if context.is_null() {
+                return Err("llama.cpp could not create an embedding context".to_owned());
+            }
+            let result = ffi::llama_decode(
+                context,
+                ffi::llama_batch_get_one(
+                    tokens.as_mut_ptr(),
+                    i32::try_from(tokens.len()).map_err(|_| "embedding input is too large")?,
+                ),
+            );
+            if result != 0 {
+                ffi::llama_free(context);
+                return Err(format!("llama.cpp embedding decode failed: {result}"));
+            }
+            let dimension = ffi::llama_model_n_embd(self.pointer.cast_const());
+            let values = ffi::llama_get_embeddings(context);
+            if dimension <= 0 || values.is_null() {
+                ffi::llama_free(context);
+                return Err("llama.cpp did not return an embedding vector".to_owned());
+            }
+            let dimension = usize::try_from(dimension)
+                .map_err(|_| "llama.cpp returned an invalid embedding dimension")?;
+            let vector = std::slice::from_raw_parts(values, dimension).to_vec();
+            ffi::llama_free(context);
+            Ok(vector)
+        }
+        #[cfg(not(native_llama_cpp))]
+        {
+            let _ = (text, context_size);
+            Err("native llama.cpp is unavailable".to_owned())
+        }
+    }
+
     #[cfg(native_llama_cpp)]
     fn format_prompt(&self, prompt: &str) -> Result<String, String> {
         unsafe {
@@ -369,17 +458,64 @@ impl NativeModel {
             if template.is_null() {
                 return Ok(prompt.to_owned());
             }
-
-            let user_role = CString::new("user").map_err(|_| "invalid chat role".to_owned())?;
-            let content = CString::new(prompt).map_err(|_| "prompt contains NUL".to_owned())?;
-            let message = ChatMessage {
-                role: user_role.as_ptr(),
-                content: content.as_ptr(),
-            };
+            // HTTP multi-turn requests use a private record separator so the
+            // backend-neutral public contract remains plain text while the
+            // native adapter can still pass distinct role/content messages to
+            // the embedded GGUF chat template.
+            let parsed = prompt
+                .strip_prefix('\u{001e}')
+                .map(|conversation| {
+                    conversation
+                        .split('\u{001e}')
+                        .filter(|record| !record.is_empty())
+                        .map(|record| {
+                            record
+                                .split_once('\n')
+                                .ok_or_else(|| "invalid structured chat prompt".to_owned())
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?;
+            let entries = parsed.unwrap_or_else(|| vec![("user", prompt)]);
+            let entries = entries
+                .into_iter()
+                .map(|(role, content)| {
+                    if role == "__talvik_tools" {
+                        (
+                            "system".to_owned(),
+                            format!(
+                                "You may call one of these tools. When the user asks for a tool, do not answer in prose and do not invent the result. Emit exactly one call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{}}}}</tool_call>. The arguments must be valid JSON. Tools: {content}"
+                            ),
+                        )
+                    } else {
+                        (role.to_owned(), content.to_owned())
+                    }
+                })
+                .collect::<Vec<_>>();
+            let roles = entries
+                .iter()
+                .map(|(role, _)| {
+                    CString::new(role.as_str()).map_err(|_| "invalid chat role".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let contents = entries
+                .iter()
+                .map(|(_, content)| {
+                    CString::new(content.as_str()).map_err(|_| "prompt contains NUL".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let messages = roles
+                .iter()
+                .zip(contents.iter())
+                .map(|(role, content)| ChatMessage {
+                    role: role.as_ptr(),
+                    content: content.as_ptr(),
+                })
+                .collect::<Vec<_>>();
             let required = ffi::llama_chat_apply_template(
                 template,
-                &raw const message,
-                1,
+                messages.as_ptr(),
+                messages.len(),
                 true,
                 std::ptr::null_mut(),
                 0,
@@ -399,8 +535,8 @@ impl NativeModel {
             ];
             let written = ffi::llama_chat_apply_template(
                 template,
-                &raw const message,
-                1,
+                messages.as_ptr(),
+                messages.len(),
                 true,
                 buffer.as_mut_ptr(),
                 capacity,
@@ -459,8 +595,17 @@ impl NativeModel {
 
     #[cfg(native_llama_cpp)]
     fn terminal_piece_prefix(piece: &[u8]) -> (&[u8], bool) {
-        const TERMINAL_MARKERS: [&[u8]; 4] =
-            [b"<|im_end|>", b"</|im_end|}", b"<|endoftext|>", b"</s>"];
+        // Some llama.cpp versions detokenize a special end token without its
+        // angle brackets (for example `|im_end|`). Treat both spellings as
+        // terminal markers so control text never reaches the caller.
+        const TERMINAL_MARKERS: [&[u8]; 6] = [
+            b"<|im_end|>",
+            b"</|im_end|}",
+            b"|im_end|",
+            b"<|endoftext|>",
+            b"|endoftext|",
+            b"</s>",
+        ];
         TERMINAL_MARKERS
             .iter()
             .find_map(|marker| {
@@ -606,6 +751,7 @@ impl NativeModel {
             let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
+            let mut termination = NativeGenerationTermination::Stop;
             for _ in 0..max_tokens {
                 if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
                     cancelled_result = true;
@@ -638,6 +784,11 @@ impl NativeModel {
                     ffi::llama_sampler_accept(sampler, token);
                 }
                 if generated >= u64::from(max_tokens) {
+                    termination = NativeGenerationTermination::Length;
+                    break;
+                }
+                if prompt_count + generated >= u64::from(context_size) {
+                    termination = NativeGenerationTermination::ContextLength;
                     break;
                 }
                 let mut next = [token];
@@ -682,6 +833,7 @@ impl NativeModel {
                 prompt_tokens: prompt_count,
                 generated_tokens: generated,
                 context_tokens: prompt_count + generated,
+                termination,
             })
         }
     }

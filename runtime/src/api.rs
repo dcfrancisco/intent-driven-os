@@ -2,7 +2,7 @@
 
 use crate::generation::{GenerationRequest, GenerationStream};
 use crate::{
-    backends::{BackendHealth, BackendSummary},
+    backends::{BackendHealth, BackendSummary, EmbeddingsRequest, EmbeddingsResult, ToolSupport},
     hardware::HardwareSnapshot,
     models::ModelMetadata,
     RuntimeStatus,
@@ -22,6 +22,8 @@ pub struct RuntimeSnapshot {
     pub memory: String,
     /// Currently loaded model, if any.
     pub loaded_model: Option<String>,
+    /// All resident models in stable identifier order.
+    pub loaded_models: Vec<String>,
     /// Seconds since the mock/runtime service started.
     pub uptime_seconds: u64,
     /// Backend-reported library information.
@@ -51,6 +53,11 @@ pub trait RuntimeService: Send + Sync {
     /// Inspect model metadata by identifier.
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata>;
     /// Pull or import a local/remote GGUF artifact and register it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when acquisition, validation, checksum verification,
+    /// or registry persistence fails.
     fn model_pull(
         &self,
         source: &str,
@@ -75,6 +82,26 @@ pub trait RuntimeService: Send + Sync {
     ///
     /// Returns an error when no tokenizer is available or tokenization fails.
     fn tokenize(&self, text: &str) -> Result<usize, oid_shared::RuntimeError>;
+    /// Compute an embedding vector through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication, admission, or backend capability error when
+    /// the active runtime cannot compute embeddings.
+    fn embeddings(
+        &self,
+        request: &EmbeddingsRequest,
+    ) -> Result<EmbeddingsResult, oid_shared::RuntimeError> {
+        let _ = request;
+        Err(oid_shared::RuntimeError::NotImplemented("embeddings"))
+    }
+    /// Report whether the active backend can execute structured tool calls.
+    fn tool_support(&self) -> ToolSupport {
+        ToolSupport {
+            supported: false,
+            reason: "tool calls are not supported by the active backend".to_owned(),
+        }
+    }
     /// Start an independent non-blocking generation.
     ///
     /// # Errors

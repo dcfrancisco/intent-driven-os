@@ -25,10 +25,22 @@ policy, routing, and backend boundaries authoritative.
 
 WP-0058 through WP-0062, WP-0066; ADR-0011, ADR-0013.
 
-## Implementation status (2026-10-07)
+## Implementation status (2026-10-23)
 
 An initial local OpenAI-compatible bridge is implemented at
 `scripts/marina-openai-proxy.py`. It supports authenticated model discovery,
 text chat/completions, and SSE streaming over loopback. It is intentionally
-not the final Marina HTTP service: provider BYOK, scopes/quotas, structured
-tool calls, and Windows HTTP parity remain future work.
+not the final Marina HTTP service: provider BYOK and quotas remain future work.
+The native Talvik HTTP edge now accepts OpenAI-shaped tool definitions when the
+loaded GGUF template advertises tool support, translates assistant tool calls
+and tool results through the backend-neutral prompt boundary, and returns
+normalized OpenAI `tool_calls`. The repeatable standard-client procedure is
+`scripts/qualify-openai-client.py`; it covers model discovery, non-streaming,
+SSE streaming, tool invocation, and a tool-result round trip. It requires the
+optional `openai` Python package and a real GGUF daemon.
+
+Final macOS x86_64 verification on 2026-10-23 used an isolated Python 3.11
+environment and a fresh release daemon. The procedure returned
+`OPENAI_CLIENT_ACCEPTED`; no IDE-specific client session was available. The
+Windows and macOS arm64 procedures remain pending in the platform qualification
+bundle.

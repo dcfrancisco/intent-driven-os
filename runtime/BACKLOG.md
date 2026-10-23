@@ -63,6 +63,21 @@ The acceptance evidence and the original failed output are retained in
 `docs/reviews/model-runner-reality-review.md`. Exact semantic output remains a
 sampling-controlled qualification concern, not a process-exit assertion.
 
+### Talvik M1 implementation completion — 2026-10-23
+
+- [x] Multi-model resident map with explicit model selection, aggregate memory
+  admission, independent unload, and post-unload recovery.
+- [x] CLI help, JSON status/model output, and actionable request errors.
+- [x] Native embeddings path and OpenAI-compatible `/v1/embeddings` edge.
+- [x] Multi-turn role preservation through the embedded GGUF chat template.
+- [x] Capability-gated GGUF tool calls with normalized OpenAI `tool_calls` and
+  assistant/tool-result round trips.
+- [x] Fresh real-GGUF lifecycle validation with release binaries.
+- [x] Resumable acquisition retains `.part` files, reports progress, retries
+  HTTP transfers, verifies trusted SHA-256 values, and records observed
+  checksums in the registry.
+- [ ] Windows and macOS arm64 native qualification remain WP-0079/WP-0080.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models
@@ -76,7 +91,7 @@ sampling-controlled qualification concern, not a process-exit assertion.
 ### Hardware and resources
 
 - [ ] Define CPU, GPU, and NPU discovery records and capability normalization.
-- [ ] Define memory budgets, reservations, accounting units, and pressure signals.
+- [~] Define memory budgets, reservations, accounting units, and pressure signals. Talvik now has bounded CPU-first admission/recovery policy; direct llama.cpp KV/compute allocation accounting remains open under WP-0058.
 - [ ] Define quantization selection inputs and deterministic fallback rules.
 - [ ] Define resource requests for model load, active run, context, and streaming buffers.
 
@@ -96,8 +111,8 @@ sampling-controlled qualification concern, not a process-exit assertion.
 
 ## v0.2 — Resource and policy control
 
-- [ ] Specify memory manager behavior under admission failure and memory pressure.
-- [ ] Specify idle model unloading, grace periods, pinning, and active-stream protection.
+- [x] Specify memory manager behavior under admission failure and memory pressure for the CPU-first runtime slice (WP-0058/TALVIK-F-012); accelerator policy remains future work.
+- [x] Specify idle model unloading, grace periods, pinning, and active-stream protection for the CPU-first runtime slice; grace-period retention and accelerator preemption remain future work.
 - [ ] Specify GPU scheduler priorities, fairness, concurrency, placement, and preemption limits.
 - [ ] Define hardware health monitoring and device quarantine behavior.
 - [ ] Define authentication and authorization principals, model permissions, device permissions, and administrative actions.

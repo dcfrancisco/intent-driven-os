@@ -27,11 +27,13 @@ backend-neutral llama.cpp boundary, GGUF discovery, model lifecycle, tokenizer
 routing, streamed text generation, cancellation, metrics, local bearer tokens,
 and a small OpenAI-compatible IDE bridge.
 
-The current runner is a focused CPU-first release slice: one loaded model, one
-active generation, and local-first operation. Optional ordered local-model
-fallback is available but disabled by default. Chat sessions, tools,
-embeddings, full provider secrets, capability-aware remote routing, production
-scheduling, and Linux distro packaging remain later work.
+The current runner is a focused CPU-first release slice: multiple resident
+models, one active generation, FIFO waiting, bounded LRU eviction under memory
+pressure, streaming, cancellation, embeddings, and local-first operation.
+Optional ordered local-model fallback is available but disabled by default.
+Talvik does not edit project files, execute autonomous tools, or own OID/DW/OIP
+policy. Concurrent generation, GPU scheduling, remote providers, and distro
+packaging remain outside M1.
 
 The local Talvik installation retains the compatible `$HOME/.marina` home;
 native libraries use `$HOME/.marina/lib` and models use `$HOME/.marina/models`:

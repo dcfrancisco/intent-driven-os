@@ -12,9 +12,13 @@ WP-0075 and `runtime/BACKLOG.md`.
 
 ## Current product boundary
 
-The qualified CPU-first slice supports one loaded GGUF model and one active
-generation through the llama.cpp adapter. It is not a multi-model scheduler,
-agent loop, model-training system, or unrestricted network gateway.
+The qualified CPU-first slice supports multiple resident GGUF models, one
+active generation, streaming, cancellation, embeddings, and OpenAI-compatible
+chat/completions translation through the llama.cpp adapter, including tool
+calls for GGUF templates that advertise tool support. It is not a model
+scheduler with concurrent generations, an agent loop, a training system, or an
+unrestricted network gateway. Tool calls remain capability-gated and are
+rejected explicitly for unsupported templates.
 
 `talvikd` is the daemon and `talvik` is its client. The former `marina` and
 `marinactl` binaries are no longer built or packaged. Existing `$HOME/.marina`
@@ -77,6 +81,20 @@ Talvik uses the following configuration variables:
 | `TALVIK_TOKEN_FILE` | Token database |
 | `TALVIK_HTTP_ADDR` | Optional HTTP listener |
 | `TALVIK_HTTP_AUTH` | HTTP authentication control |
+
+Memory scheduling is bounded and CPU-first: one generation runs at a time,
+idle unpinned residents may be evicted by LRU under pressure, and registered
+model metadata remains available for reload. The policy can be controlled with
+`TALVIK_MAX_RESIDENT_MODELS`, `TALVIK_MEMORY_BUDGET_BYTES`,
+`TALVIK_SAFETY_MARGIN_BYTES`, `TALVIK_AUTOMATIC_EVICTION`,
+`TALVIK_RECOVERY_BUDGET`, `TALVIK_ADMISSION_TIMEOUT_SECONDS`,
+`TALVIK_IDLE_RETENTION_SECONDS`, `TALVIK_QUEUE_CAPACITY`, and
+`TALVIK_PINNED_MODELS`. Defaults preserve multi-model residency where the
+detected budget permits it; explicit context sizes are not silently reduced.
+
+For a container deployment, use `docker/talvik/compose.yaml`. It keeps the
+host port on loopback by default, requires bearer authentication for HTTP API
+requests, and separates model and state volumes.
 
 Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.
