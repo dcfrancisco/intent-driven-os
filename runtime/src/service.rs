@@ -407,14 +407,16 @@ fn admit_generation(
     request: &GenerationRequest,
     policy: &ResourcePolicy,
 ) -> Result<(), RuntimeError> {
-    let model_bytes = loaded
+    let resident = loaded
         .lock()
-        .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-        .values()
-        .map(|model| model.memory_bytes)
-        .sum();
-    admit_memory(
+        .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?;
+    let model_bytes = resident
+        .get(&request.model_id)
+        .map_or(0, |model| model.memory_bytes);
+    let resident_bytes = resident.values().map(|model| model.memory_bytes).sum();
+    admit_memory_with_resident(
         hardware.snapshot().available_ram_bytes,
+        resident_bytes,
         model_bytes,
         request.options.context_size,
         policy,
@@ -425,9 +427,20 @@ const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
 const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
 const DEFAULT_CONTEXT_SIZE: u32 = 4_096;
 
+#[cfg(test)]
 fn admit_memory(
     available: Option<u64>,
     model_bytes: u64,
+    context_size: u32,
+    policy: &ResourcePolicy,
+) -> Result<(), RuntimeError> {
+    admit_memory_with_resident(available, 0, model_bytes, context_size, policy)
+}
+
+fn admit_memory_with_resident(
+    available: Option<u64>,
+    resident_bytes: u64,
+    incremental_model_bytes: u64,
     context_size: u32,
     policy: &ResourcePolicy,
 ) -> Result<(), RuntimeError> {
@@ -441,19 +454,27 @@ fn admit_memory(
         .ok_or_else(|| {
             RuntimeError::ModelLifecycle("context memory estimate overflow".to_owned())
         })?;
-    let required = model_bytes
+    let incremental_required = incremental_model_bytes
         .saturating_add(context_bytes)
         .saturating_add(policy.safety_margin_bytes);
-    let effective_available = policy
-        .memory_budget_bytes
-        .map_or(available, |budget| available.min(budget));
-    if effective_available < required {
+    let budget_required = resident_bytes.saturating_add(incremental_required);
+    if available < incremental_required {
         return Err(RuntimeError::ResourceAdmission {
             retryable: true,
             message: format!(
-                "memory admission rejected: available={effective_available} required={required} model={model_bytes} context={context_bytes}"
+                "memory admission rejected: available={available} required={incremental_required} model={incremental_model_bytes} context={context_bytes} resident={resident_bytes}"
             ),
         });
+    }
+    if let Some(budget) = policy.memory_budget_bytes {
+        if budget < budget_required {
+            return Err(RuntimeError::ResourceAdmission {
+                retryable: true,
+                message: format!(
+                    "memory budget rejected: budget={budget} required={budget_required} model={incremental_model_bytes} context={context_bytes} resident={resident_bytes}"
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -630,9 +651,10 @@ impl RuntimeService for MarinaRuntime {
         // request is already known to be impossible. The backend-reported
         // size is checked again after native loading because a GGUF may need
         // additional repack/working memory beyond its registry estimate.
-        admit_memory(
+        admit_memory_with_resident(
             self.hardware.snapshot().available_ram_bytes,
-            resident_bytes.saturating_add(estimated_model_bytes),
+            resident_bytes,
+            estimated_model_bytes,
             DEFAULT_CONTEXT_SIZE,
             &self.resource_policy,
         )?;
@@ -640,10 +662,10 @@ impl RuntimeService for MarinaRuntime {
         self.models.set_status(id, &ModelStatus::Loading)?;
         match self.backends.load_model(&model) {
             Ok(loaded) => {
-                let actual_total = resident_bytes.saturating_add(loaded.memory_bytes);
-                if let Err(error) = admit_memory(
+                if let Err(error) = admit_memory_with_resident(
                     self.hardware.snapshot().available_ram_bytes,
-                    actual_total,
+                    resident_bytes,
+                    loaded.memory_bytes,
                     DEFAULT_CONTEXT_SIZE,
                     &self.resource_policy,
                 ) {
@@ -906,8 +928,26 @@ impl RuntimeService for MarinaRuntime {
             if let Some((active_id, _, cancellation)) = active.as_ref() {
                 if active_id == request_id {
                     cancellation.store(true, Ordering::SeqCst);
+                    return;
                 }
             }
+        }
+        let pending = self.pending_generations.lock().ok().and_then(|mut queue| {
+            queue
+                .iter()
+                .position(|pending| pending.request.request_id == request_id)
+                .and_then(|position| queue.remove(position))
+        });
+        if let Some(pending) = pending {
+            pending.cancellation.store(true, Ordering::SeqCst);
+            let _ = pending
+                .sender
+                .send(GenerationMessage::Cancelled(GenerationResult {
+                    request_id: pending.request.request_id,
+                    generation_id: String::new(),
+                    text: String::new(),
+                    statistics: GenerationStatistics::default(),
+                }));
         }
     }
 
@@ -1107,6 +1147,28 @@ mod tests {
     }
 
     #[test]
+    fn resident_model_is_not_counted_as_a_new_physical_allocation() {
+        let policy = ResourcePolicy::default();
+        let resident = 1_596_822_528;
+        let available = 67_108_864 + SAFETY_MARGIN_BYTES;
+        assert!(
+            super::admit_memory_with_resident(Some(available), resident, 0, 4_096, &policy,)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn aggregate_budget_includes_resident_models_once() {
+        let policy = ResourcePolicy {
+            memory_budget_bytes: Some(2_000),
+            safety_margin_bytes: 100,
+            ..ResourcePolicy::default()
+        };
+        assert!(super::admit_memory_with_resident(Some(10_000), 1_000, 0, 0, &policy).is_ok());
+        assert!(super::admit_memory_with_resident(Some(10_000), 1_900, 1, 0, &policy).is_err());
+    }
+
+    #[test]
     fn rejected_model_load_preserves_existing_resident_model() {
         let root = std::env::temp_dir().join(format!(
             "oid-runtime-memory-admission-{}-{}",
@@ -1189,6 +1251,7 @@ mod tests {
                 ..HardwareSnapshot::default()
             }),
         );
+        runtime.resource_policy.max_resident_models = 1;
         for id in ["alpha", "beta"] {
             runtime
                 .models
@@ -1243,7 +1306,8 @@ mod tests {
                 options: GenerationOptions::default(),
             })
             .expect("queued generation");
-        queued.cancel();
+        runtime.cancel_generation_for("queued");
+        assert_eq!(runtime.snapshot().pending_requests, 0);
         first.cancel();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {

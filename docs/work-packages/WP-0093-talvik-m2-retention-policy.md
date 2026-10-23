@@ -26,4 +26,17 @@ WP-0058, WP-0062, WP-0091; ADR-0007, ADR-0025.
 
 ## Status
 
-Planned; no concurrent-generation work is authorized by this package.
+Implementation slice verified on `feature/talvik-m2-runtime-ide`.
+
+Evidence: `runtime/src/service.rs` now separates incremental physical-memory
+admission from aggregate configured-budget accounting, preserves resident
+models during normal generation admission, protects pinned/active models, and
+uses bounded LRU recovery for load/reload. Deterministic runtime tests cover
+the exact memory boundary, resident-model accounting, pinning, eviction,
+reload, and queued cancellation. Native process-signal qualification also
+passes in parallel after the harness was isolated from shared user state.
+
+Idle retention remains an on-demand scheduler policy: expired idle models are
+eligible for bounded pressure recovery; no background eviction thread is
+introduced. Per-request retention control and native two-model qualification
+remain open acceptance work.

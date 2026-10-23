@@ -27,5 +27,8 @@ WP-0058, WP-0061, WP-0062, WP-0067; ADR-0025.
 ## Status
 
 Implementation slice complete on `feature/talvik-m2-runtime-ide`; deterministic
-runtime/API tests pass. Native two-model endpoint qualification and external
-client qualification remain open acceptance work.
+runtime/API tests pass. Memory admission now reports incremental physical
+requirements and aggregate budget requirements separately, while queued
+request cancellation removes the request before dispatch. Native two-model
+endpoint qualification and external client qualification remain open
+acceptance work.
