@@ -671,7 +671,11 @@ impl NativeModel {
             }
             let mut context_params = ContextParams {
                 n_ctx: context_size,
-                n_batch: context_size.min(512),
+                // The prompt is submitted as one logical batch. Keep the
+                // micro-batch bounded for graph evaluation, but ensure the
+                // native batch capacity can hold every valid context-sized
+                // prompt. llama.cpp aborts when n_tokens exceeds n_batch.
+                n_batch: context_size,
                 n_ubatch: context_size.min(512),
                 ..unsafe { ffi::llama_context_default_params() }
             };
