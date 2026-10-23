@@ -1,10 +1,18 @@
 #![allow(missing_docs)]
 
 use std::env;
+use std::fs;
 use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/index");
+    if let Ok(head) = fs::read_to_string("../.git/HEAD") {
+        if let Some(reference) = head.strip_prefix("ref: ") {
+            println!("cargo:rerun-if-changed=../.git/{}", reference.trim());
+        }
+    }
     println!("cargo:rerun-if-env-changed=TALVIK_GIT_SHA");
     println!("cargo:rerun-if-env-changed=TALVIK_GIT_DIRTY");
     println!(
