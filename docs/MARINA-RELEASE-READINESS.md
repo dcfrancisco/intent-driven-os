@@ -343,6 +343,18 @@ because that GGUF is not installed on this host. KV/compute allocation remains
 an estimate rather than a direct llama.cpp allocator measurement and remains a
 documented WP-0058 limitation.
 
+## Automatic memory recovery — 2026-10-23
+
+The CPU-first runtime now performs bounded LRU recovery for idle, unpinned
+residents, keeps registry metadata after eviction, refreshes production memory
+availability after unload, and queues requests FIFO behind the existing
+single-active-generation limit. `ResourceAdmission` errors identify retryability.
+Deterministic tests cover successful eviction/retry, reload, queued cancellation,
+and boundary admission. Native pressure recovery with the reported
+DeepSeek-R1-Distill-Qwen-1.5B file remains **NOT VERIFIED** because that GGUF is
+not installed on the qualification host; no threshold was relaxed to force a
+pass.
+
 ## Inference termination qualification — 2026-10-23
 
 The inference investigation did not reproduce token corruption, prompt leakage,

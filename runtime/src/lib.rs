@@ -35,4 +35,4 @@ pub use hardware::{HardwareService, HardwareSnapshot};
 pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
-pub use service::MarinaRuntime;
+pub use service::{MarinaRuntime, ResourcePolicy};

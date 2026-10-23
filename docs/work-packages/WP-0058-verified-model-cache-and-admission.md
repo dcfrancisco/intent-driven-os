@@ -37,6 +37,26 @@ The fixed KV/compute estimate is still conservative rather than a direct
 llama.cpp allocation measurement; architecture-aware accounting remains future
 work under this package.
 
+## Automatic recovery implementation — 2026-10-23
+
+WP-0058 now includes the first bounded pressure-recovery slice. Inference checks
+the requested resident model, otherwise attempts normal load/admission, evicts
+the least-recently-used idle unpinned model when necessary, refreshes production
+hardware availability, and retries within a fixed recovery budget. Registered
+metadata is retained after eviction. A bounded FIFO queue waits behind the
+existing one-active-generation limit; queued cancellation and admission deadlines
+are terminal and do not retry indefinitely. Policy is configurable with
+`TALVIK_MAX_RESIDENT_MODELS`, `TALVIK_MEMORY_BUDGET_BYTES`,
+`TALVIK_SAFETY_MARGIN_BYTES`, `TALVIK_AUTOMATIC_EVICTION`,
+`TALVIK_RECOVERY_BUDGET`, `TALVIK_ADMISSION_TIMEOUT_SECONDS`,
+`TALVIK_QUEUE_CAPACITY`, `TALVIK_IDLE_RETENTION_SECONDS`, and
+`TALVIK_PINNED_MODELS`.
+
+Acceptance evidence: `TALVIK-F-012` controlled admission/recovery and queue tests
+pass; native llama.cpp pressure recovery remains not verified for the unavailable
+DeepSeek-R1-Distill-Qwen-1.5B artifact. The implementation does not claim direct
+measurement of llama.cpp compute/KV allocations.
+
 ## Dependencies
 
 WP-0024, WP-0025, WP-0029; ADR-0006, ADR-0007, ADR-0011.

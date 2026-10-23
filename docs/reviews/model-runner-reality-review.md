@@ -801,3 +801,19 @@ the available DeepSeek Coder GGUF used 768 MiB KV plus about 300 MiB compute at
 4096 context, while Qwen used 48 MiB KV plus about 71 MiB compute). The fixed
 margin remains intentionally conservative for this CPU-first slice, but exact
 backend allocation accounting remains an open WP-0058 limitation.
+
+### Automatic memory recovery — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-012 | A request for a non-resident model returned `requested model is not loaded`; a resident model could not be reclaimed and memory availability was not refreshed after unload | The runtime had no inference-time LRU recovery, no bounded FIFO wait, and `HardwareService` reused its startup snapshot | Added runtime-owned LRU eviction/reload, active/pinned protection, bounded recovery attempts, FIFO queue with cancellation/deadline handling, configurable policy, and live hardware refresh for production detection | ADR-0021, ADR-0011 | WP-0058 | Controlled 640 MiB fixture evicted alpha, generated beta, preserved alpha as Registered, reloaded alpha; queued request cancellation passed; full runtime test suite passed except sandbox-denied HTTP fixture bind | RESOLVED |
+
+Recovery does not count model bytes twice: resident backend bytes are summed once
+for the current admission decision, while load preflight uses the registry estimate
+before native allocation and post-load validation uses the backend-reported size.
+The available value is now refreshed for production hardware reads after an
+eviction; deterministic test providers remain fixed snapshots. Automatic recovery
+is bounded by `TALVIK_RECOVERY_BUDGET`, never unloads the active or configured
+`TALVIK_PINNED_MODELS`, and returns `ResourceAdmission { retryable }` when no safe
+candidate remains. The fixed KV/compute estimate is still conservative and is not
+a direct llama.cpp allocator measurement.

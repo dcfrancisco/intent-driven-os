@@ -41,6 +41,7 @@ pub trait HardwareProvider: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct HardwareService {
     snapshot: HardwareSnapshot,
+    refresh_on_read: bool,
 }
 
 impl HardwareService {
@@ -49,6 +50,7 @@ impl HardwareService {
     pub fn detect(bus: &EventBus) -> Self {
         let service = Self {
             snapshot: detect_snapshot(),
+            refresh_on_read: true,
         };
         bus.publish(&RuntimeEvent::HardwareDetected);
         service
@@ -57,12 +59,19 @@ impl HardwareService {
     /// Return the normalized snapshot.
     #[must_use]
     pub fn snapshot(&self) -> HardwareSnapshot {
-        self.snapshot.clone()
+        if self.refresh_on_read {
+            detect_snapshot()
+        } else {
+            self.snapshot.clone()
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn from_snapshot(snapshot: HardwareSnapshot) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            refresh_on_read: false,
+        }
     }
 }
 

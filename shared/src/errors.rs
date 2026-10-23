@@ -38,6 +38,13 @@ pub enum RuntimeError {
     InvalidModel(String),
     /// A model lifecycle operation failed.
     ModelLifecycle(String),
+    /// A request could not be admitted within the configured resource policy.
+    ResourceAdmission {
+        /// Human-readable capacity detail.
+        message: String,
+        /// Whether retrying after resource state changes may succeed.
+        retryable: bool,
+    },
     /// Tokenization could not be completed.
     Tokenization(String),
 }
@@ -71,6 +78,10 @@ impl fmt::Display for RuntimeError {
             Self::NativeBackend(message) => write!(formatter, "native backend error: {message}"),
             Self::InvalidModel(message) => write!(formatter, "invalid model: {message}"),
             Self::ModelLifecycle(message) => write!(formatter, "model lifecycle error: {message}"),
+            Self::ResourceAdmission { message, retryable } => write!(
+                formatter,
+                "resource admission error (retryable={retryable}): {message}"
+            ),
             Self::Tokenization(message) => write!(formatter, "tokenization error: {message}"),
         }
     }

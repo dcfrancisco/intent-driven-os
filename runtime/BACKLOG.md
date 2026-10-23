@@ -91,7 +91,7 @@ sampling-controlled qualification concern, not a process-exit assertion.
 ### Hardware and resources
 
 - [ ] Define CPU, GPU, and NPU discovery records and capability normalization.
-- [ ] Define memory budgets, reservations, accounting units, and pressure signals.
+- [~] Define memory budgets, reservations, accounting units, and pressure signals. Talvik now has bounded CPU-first admission/recovery policy; direct llama.cpp KV/compute allocation accounting remains open under WP-0058.
 - [ ] Define quantization selection inputs and deterministic fallback rules.
 - [ ] Define resource requests for model load, active run, context, and streaming buffers.
 
@@ -111,8 +111,8 @@ sampling-controlled qualification concern, not a process-exit assertion.
 
 ## v0.2 — Resource and policy control
 
-- [ ] Specify memory manager behavior under admission failure and memory pressure.
-- [ ] Specify idle model unloading, grace periods, pinning, and active-stream protection.
+- [x] Specify memory manager behavior under admission failure and memory pressure for the CPU-first runtime slice (WP-0058/TALVIK-F-012); accelerator policy remains future work.
+- [x] Specify idle model unloading, grace periods, pinning, and active-stream protection for the CPU-first runtime slice; grace-period retention and accelerator preemption remain future work.
 - [ ] Specify GPU scheduler priorities, fairness, concurrency, placement, and preemption limits.
 - [ ] Define hardware health monitoring and device quarantine behavior.
 - [ ] Define authentication and authorization principals, model permissions, device permissions, and administrative actions.
