@@ -21,11 +21,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some("--version" | "-V") => {
-            if args.next().as_deref() == Some("--verbose") {
-                println!("{}", server::build_info::display("talvikd"));
-            } else {
-                println!("talvikd {}", server::build_info::current().version);
-            }
+            let _ = args.next();
+            println!("{}", server::build_info::display("talvikd"));
             Ok(())
         }
         Some("version") => {

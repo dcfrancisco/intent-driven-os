@@ -22,6 +22,7 @@ static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = logging::initialize();
+    eprintln!("{}", build_info::display("talvikd"));
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);

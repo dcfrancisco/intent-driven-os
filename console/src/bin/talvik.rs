@@ -55,11 +55,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match command.as_str() {
         "--help" | "-h" | "help" => println!("{HELP}"),
         "--version" | "-V" => {
-            if args.next().as_deref() == Some("--verbose") {
-                println!("{}", build_info::display("talvik"));
-            } else {
-                println!("talvik {}", build_info::current().version);
-            }
+            let _ = args.next();
+            println!("{}", build_info::display("talvik"));
         }
         "version" if args.next().is_none() => {
             if json_output {
