@@ -1,7 +1,10 @@
 # Talvik IDE Compatibility and Qualification
 
 Status: procedure prepared; real external-client qualification is **BLOCKED / NOT VERIFIED**
-in the current environment.
+in the current environment. The available host reports VS Code 1.142.0 and
+Continue extension 2.0.0, but the active Continue configuration targets a
+different local endpoint and model. No isolated interactive Continue session
+was available for this run, so no Talvik IDE PASS is claimed.
 
 Talvik exposes an authenticated OpenAI-compatible endpoint. The IDE is the
 client; Talvik remains an inference provider and does not execute workstation
@@ -29,6 +32,13 @@ Qualification:
 4. Select the model and request a small code change; verify streaming.
 5. Confirm no Reference local runner process or remote provider is configured or contacted.
 6. Cancel a request, then issue another and verify recovery.
+
+Observed host evidence on 2026-10-24: `code --version` reported VS Code
+1.142.0 (x64, commit `6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1`) and the
+installed extension was `continue.continue-2.0.0-darwin-x64`. The `continue`
+command itself is not a usable qualification client in this shell. The next
+qualification attempt must launch VS Code interactively with the Talvik
+endpoint configured and capture the client session plus daemon logs.
 
 Record IDE versions, model ID, GGUF SHA-256, endpoint, token scope (never the
 token), Talvik identity, timestamps, and redacted daemon/client logs.

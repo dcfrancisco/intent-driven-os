@@ -230,7 +230,7 @@ pub fn initialize() -> Result<(), String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         ffi::llama_backend_init();
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(native_llama_cpp))]
     {
@@ -252,8 +252,7 @@ pub fn system_info() -> Option<String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let pointer = ffi::llama_print_system_info();
-        return (!pointer.is_null())
-            .then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned());
+        (!pointer.is_null()).then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned())
     }
     #[cfg(not(native_llama_cpp))]
     {
@@ -331,7 +330,7 @@ impl NativeModel {
                 return false;
             }
             let template = CStr::from_ptr(template).to_string_lossy();
-            return template.contains("custom_tools") || template.contains("tool_calls");
+            template.contains("custom_tools") || template.contains("tool_calls")
         }
         #[cfg(not(native_llama_cpp))]
         {
@@ -387,7 +386,7 @@ impl NativeModel {
                 return Err("llama.cpp tokenization failed".to_owned());
             }
             tokens.truncate(usize::try_from(count).map_err(|_| "token count overflow".to_owned())?);
-            return Ok(tokens);
+            Ok(tokens)
         }
         #[cfg(not(native_llama_cpp))]
         {
@@ -918,10 +917,10 @@ pub fn load_model(path: &str) -> Result<NativeModel, String> {
             return Err("llama.cpp rejected the model".to_owned());
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
-        return Ok(NativeModel {
+        Ok(NativeModel {
             pointer,
             memory_bytes,
-        });
+        })
     }
     #[cfg(not(native_llama_cpp))]
     {

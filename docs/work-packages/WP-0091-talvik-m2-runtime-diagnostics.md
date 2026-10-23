@@ -32,3 +32,6 @@ requirements and aggregate budget requirements separately, while queued
 request cancellation removes the request before dispatch. Native two-model
 endpoint qualification and external client qualification remain open
 acceptance work.
+
+The final strict Clippy command now passes after the five native FFI
+`needless_return` findings were converted to equivalent tail expressions.

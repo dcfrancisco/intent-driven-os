@@ -1026,6 +1026,9 @@ mod tests {
         LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry, ModelStatus, RuntimeService,
     };
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn marina_runtime_is_deterministic_and_publishes_events() {
@@ -1176,6 +1179,125 @@ mod tests {
         };
         assert!(super::admit_memory_with_resident(Some(10_000), 1_000, 0, 0, &policy).is_ok());
         assert!(super::admit_memory_with_resident(Some(10_000), 1_900, 1, 0, &policy).is_err());
+    }
+
+    #[test]
+    fn retention_selects_expired_lru_and_respects_pinning_and_active_requests() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.idle_retention = Duration::from_secs(60);
+        runtime.loaded.lock().expect("loaded lock").extend([
+            (
+                "alpha".to_owned(),
+                crate::backends::LoadedModel {
+                    model_id: "alpha".to_owned(),
+                    memory_bytes: 1,
+                },
+            ),
+            (
+                "beta".to_owned(),
+                crate::backends::LoadedModel {
+                    model_id: "beta".to_owned(),
+                    memory_bytes: 1,
+                },
+            ),
+        ]);
+        let expired = Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .expect("test duration is representable");
+        runtime
+            .last_used
+            .lock()
+            .expect("last-used lock")
+            .extend([("alpha".to_owned(), expired), ("beta".to_owned(), expired)]);
+
+        assert_eq!(runtime.eviction_candidate("none").as_deref(), Some("alpha"));
+        runtime
+            .resource_policy
+            .pinned_models
+            .insert("alpha".to_owned());
+        assert_eq!(runtime.eviction_candidate("none").as_deref(), Some("beta"));
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "beta".to_owned(),
+            "generation".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        assert_eq!(runtime.eviction_candidate("none"), None);
+    }
+
+    #[test]
+    fn retention_keeps_recent_idle_models_until_the_expiry_boundary() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.idle_retention = Duration::from_secs(60);
+        runtime.loaded.lock().expect("loaded lock").insert(
+            "recent".to_owned(),
+            crate::backends::LoadedModel {
+                model_id: "recent".to_owned(),
+                memory_bytes: 1,
+            },
+        );
+        runtime
+            .last_used
+            .lock()
+            .expect("last-used lock")
+            .insert("recent".to_owned(), Instant::now());
+        assert_eq!(runtime.eviction_candidate("none"), None);
+    }
+
+    #[test]
+    fn queue_capacity_and_admission_deadline_are_bounded() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.queue_capacity = 1;
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "active".to_owned(),
+            "generation".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        let request = |id: &str| GenerationRequest {
+            request_id: id.to_owned(),
+            model_id: "model".to_owned(),
+            prompt: "prompt".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let queued = runtime
+            .generate(request("queued"))
+            .expect("queue one request");
+        assert!(matches!(
+            runtime.generate(request("overflow")),
+            Err(oid_shared::RuntimeError::ResourceAdmission { .. })
+        ));
+        runtime.cancel_generation_for("queued");
+        assert_eq!(runtime.snapshot().pending_requests, 0);
+        let (sender, receiver) = mpsc::channel();
+        runtime
+            .pending_generations
+            .lock()
+            .expect("queue lock")
+            .push_back(super::PendingGeneration {
+                request: request("expired"),
+                sender,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                enqueued_at: Instant::now()
+                    .checked_sub(Duration::from_secs(31))
+                    .expect("test duration is representable"),
+            });
+        runtime.start_next_queued();
+        assert!(matches!(
+            receiver.recv().expect("deadline response"),
+            GenerationMessage::Failed(oid_shared::RuntimeError::ResourceAdmission { .. })
+        ));
+        queued.cancel();
     }
 
     #[test]

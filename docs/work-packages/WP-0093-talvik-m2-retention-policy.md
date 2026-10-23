@@ -41,3 +41,7 @@ Idle retention remains an on-demand scheduler policy: expired idle models are
 eligible for bounded pressure recovery; no background eviction thread is
 introduced. Per-request retention control and native two-model qualification
 remain open acceptance work.
+
+The scheduler test set now includes expiry-boundary retention, LRU ordering,
+pinned and active-request protection, queue overflow, queued admission
+deadlines, cancellation removal, memory-pressure eviction, and reload.
