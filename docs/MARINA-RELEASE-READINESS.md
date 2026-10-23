@@ -377,9 +377,9 @@ reload, FIFO waiting, queued cancellation, OpenAI-compatible inference, and
 termination metadata are recorded as passing. Continue/Cline UI acceptance is
 deferred by owner decision and is not an M1 gate.
 
-Linux latest-branch qualification, macOS arm64, Windows x86_64, Docker
-execution, and strict workspace Clippy remain unverified or failing and are
-not promoted to GO. Historical host evidence is retained as historical and
-does not substitute for current-branch execution. The release decision is
-therefore GO only for the tested macOS x86_64 slice and NO-GO for a fully
-qualified cross-platform release.
+Linux latest-branch qualification, macOS arm64, Windows x86_64, and Docker
+runtime execution remain unverified or blocked and are not promoted to GO.
+Strict workspace Clippy now passes on the current branch. Historical host
+evidence is retained as historical and does not substitute for current-branch
+execution. The release decision is therefore GO only for the tested macOS
+x86_64 slice and NO-GO for a fully qualified cross-platform release.
