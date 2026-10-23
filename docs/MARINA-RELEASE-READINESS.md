@@ -331,6 +331,18 @@ The M1 release decision remains **NO-GO** until native multi-model evidence is
 available for every supported platform and at least one real IDE assistant
 completes an audited Talvik-only request.
 
+## Memory admission investigation — 2026-10-23
+
+Finding `TALVIK-F-011` is resolved. Model loading now performs fail-closed
+preflight and post-load memory validation, so a model is not published as
+`Loaded` when the default context reservation cannot fit. A rejected candidate
+returns to `Registered`; existing residents and runtime health are preserved.
+The reported R1 boundary was reproduced deterministically in the admission
+tests. Exact DeepSeek-R1-Distill-Qwen-1.5B native reproduction was unavailable
+because that GGUF is not installed on this host. KV/compute allocation remains
+an estimate rather than a direct llama.cpp allocator measurement and remains a
+documented WP-0058 limitation.
+
 ## Inference termination qualification — 2026-10-23
 
 The inference investigation did not reproduce token corruption, prompt leakage,

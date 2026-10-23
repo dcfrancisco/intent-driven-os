@@ -123,6 +123,13 @@ and otherwise reserves the loaded model allocation, a conservative context/KV
 estimate, and a fixed safety margin. It remains a first local-runtime policy,
 not a complete accelerator allocator.
 
+Implementation clarification (2026-10-23): model load admission now performs
+the same default-context preflight and validates the backend-reported model
+size after native load before publishing `Loaded`. A failed validation unloads
+the candidate and restores `Registered`; generation admission remains a second
+fail-closed check for the caller's requested context. This corrects lifecycle
+state publication without changing the architectural ownership of admission.
+
 ## Implementation order
 
 1. Native HTTP server and versioned API resources.

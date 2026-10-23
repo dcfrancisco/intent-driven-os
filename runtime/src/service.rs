@@ -41,11 +41,20 @@ impl MarinaRuntime {
     }
 
     fn start_with_backend(config: RuntimeConfig, bus: EventBus, backend: Box<dyn Backend>) -> Self {
+        let hardware = HardwareService::detect(&bus);
+        Self::start_with_backend_and_hardware(config, bus, backend, hardware)
+    }
+
+    fn start_with_backend_and_hardware(
+        config: RuntimeConfig,
+        bus: EventBus,
+        backend: Box<dyn Backend>,
+        hardware: HardwareService,
+    ) -> Self {
         let backends = BackendManager::new(bus.clone());
         let backend_id = backend.descriptor().id;
         let _ = backends.register(backend);
         let _ = backends.enable(&backend_id);
-        let hardware = HardwareService::detect(&bus);
         let models = config
             .registry_path
             .as_ref()
@@ -115,13 +124,15 @@ fn admit_generation(
     )
 }
 
+const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
+const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
+const DEFAULT_CONTEXT_SIZE: u32 = 4_096;
+
 fn admit_memory(
     available: Option<u64>,
     model_bytes: u64,
     context_size: u32,
 ) -> Result<(), RuntimeError> {
-    const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
-    const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
     let available = available.ok_or_else(|| {
         RuntimeError::ModelLifecycle(
             "memory admission unavailable: available system memory is unknown".to_owned(),
@@ -248,10 +259,48 @@ impl RuntimeService for MarinaRuntime {
             .models
             .inspect(id)
             .ok_or_else(|| RuntimeError::ModelNotFound(id.to_owned()))?;
+        let resident_bytes = self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .values()
+            .map(|loaded| loaded.memory_bytes)
+            .sum::<u64>();
+        let estimated_model_bytes = model
+            .memory_requirement_mb
+            .checked_mul(1_048_576)
+            .ok_or_else(|| {
+                RuntimeError::ModelLifecycle("model memory estimate overflow".to_owned())
+            })?;
+        // Loading is admitted against the default context reservation so a
+        // model cannot become visibly Loaded while the default generation
+        // request is already known to be impossible. The backend-reported
+        // size is checked again after native loading because a GGUF may need
+        // additional repack/working memory beyond its registry estimate.
+        admit_memory(
+            self.hardware.snapshot().available_ram_bytes,
+            resident_bytes.saturating_add(estimated_model_bytes),
+            DEFAULT_CONTEXT_SIZE,
+        )?;
         self.bus.publish(&RuntimeEvent::ModelLoading(id.to_owned()));
         self.models.set_status(id, &ModelStatus::Loading)?;
         match self.backends.load_model(&model) {
             Ok(loaded) => {
+                let actual_total = resident_bytes.saturating_add(loaded.memory_bytes);
+                if let Err(error) = admit_memory(
+                    self.hardware.snapshot().available_ram_bytes,
+                    actual_total,
+                    DEFAULT_CONTEXT_SIZE,
+                ) {
+                    let cleanup = self.backends.unload_model(id).err();
+                    let _ = self.models.set_status(id, &ModelStatus::Registered);
+                    if let Some(cleanup) = cleanup {
+                        return Err(RuntimeError::ModelLifecycle(format!(
+                            "memory admission rejected and model cleanup failed: {error}; {cleanup}"
+                        )));
+                    }
+                    return Err(error);
+                }
                 self.models.set_status(id, &ModelStatus::Loaded)?;
                 self.loaded
                     .lock()
@@ -539,9 +588,10 @@ pub fn start(config: RuntimeConfig, bus: EventBus) -> Result<MarinaRuntime, Runt
 
 #[cfg(test)]
 mod tests {
-    use super::{admit_memory, MarinaRuntime};
+    use super::{admit_memory, MarinaRuntime, KV_BYTES_PER_CONTEXT_TOKEN, SAFETY_MARGIN_BYTES};
     use crate::{
-        LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry, ModelStatus, RuntimeService,
+        HardwareService, HardwareSnapshot, LlamaCppAdapter, MockBackend, ModelMetadata,
+        ModelRegistry, ModelStatus, RuntimeService,
     };
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
 
@@ -657,6 +707,77 @@ mod tests {
         assert!(admit_memory(None, 0, 1).is_err());
         assert!(admit_memory(Some(512 * 1_048_576), 256 * 1_048_576, 32_768).is_err());
         assert!(admit_memory(Some(2 * 1_073_741_824), 256 * 1_048_576, 4_096).is_ok());
+    }
+
+    #[test]
+    fn memory_admission_accepts_exact_boundary_and_rejects_one_byte_below() {
+        let model_bytes: u64 = 1_596_822_528;
+        let context_size = 4_096;
+        let context_bytes = u64::from(context_size) * KV_BYTES_PER_CONTEXT_TOKEN;
+        let required = model_bytes
+            .saturating_add(context_bytes)
+            .saturating_add(SAFETY_MARGIN_BYTES);
+
+        assert!(admit_memory(Some(required), model_bytes, context_size).is_ok());
+        assert!(admit_memory(Some(required - 1), model_bytes, context_size).is_err());
+    }
+
+    #[test]
+    fn rejected_model_load_preserves_existing_resident_model() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-runtime-memory-admission-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create root");
+        let bus = EventBus::new();
+        let available = 600 * 1_048_576;
+        let hardware = HardwareService::from_snapshot(HardwareSnapshot {
+            available_ram_bytes: Some(available),
+            ..HardwareSnapshot::default()
+        });
+        let runtime = MarinaRuntime::start_with_backend_and_hardware(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            bus,
+            Box::new(MockBackend),
+            hardware,
+        );
+        for (id, memory_requirement_mb) in [("alpha", 1), ("beta", 64)] {
+            runtime
+                .models
+                .register(ModelMetadata {
+                    id: id.to_owned(),
+                    name: format!("{id}.gguf"),
+                    family: "test".to_owned(),
+                    backend: "mock".to_owned(),
+                    quantization: "test".to_owned(),
+                    context_window: 4096,
+                    memory_requirement_mb,
+                    capabilities: vec!["chat".to_owned()],
+                    status: ModelStatus::Registered,
+                    checksum: None,
+                    location: root.join(format!("{id}.gguf")).display().to_string(),
+                })
+                .expect("register model");
+        }
+
+        runtime.model_load("alpha").expect("alpha load");
+        assert!(runtime.model_load("beta").is_err());
+        assert_eq!(runtime.snapshot().loaded_models, vec!["alpha".to_owned()]);
+        assert_eq!(
+            runtime.model_inspect("beta").expect("beta").status,
+            ModelStatus::Registered
+        );
+        assert_eq!(runtime.snapshot().health, "Healthy");
+
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 
     #[test]

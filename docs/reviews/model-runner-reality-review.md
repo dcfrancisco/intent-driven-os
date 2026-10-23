@@ -779,3 +779,25 @@ runtime statistics. The OpenAI-compatible endpoint maps EOS to `stop`, token
 budget and context exhaustion to standard `length`, and adds the precise
 `termination_reason` (`stop`, `max_tokens`, or `context_length`). Streaming
 responses now include the final finish chunk before `[DONE]`.
+
+### Memory admission investigation — 2026-10-23
+
+| Finding ID | Evidence | Root cause | Fix or deferral | ADR | WP | Verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TALVIK-F-011 | A DeepSeek-R1-Distill-Qwen-1.5B run reported `available=2180747264`, `required=2200802304`, `model=1596822528`, `context=67108864` after the model had already become `Loaded` | Load admission was absent; generation alone checked the resident model reservation plus context estimate and safety margin | Add load preflight using the registry estimate and post-load validation using backend-reported bytes. Rejecting a load returns the registry to `Registered` and preserves existing residents | ADR-0021, ADR-0011 | WP-0058 | Exact boundary test passes at `required` and rejects `required-1`; constrained two-model test rejects the second model without displacing the first; native Qwen/DeepSeek load/unload/retry remains healthy | RESOLVED |
+
+The reported arithmetic is exactly `model + context + 512 MiB safety margin`.
+There was no double count between load and inference because load had no memory
+admission at all. `available` is a startup hardware snapshot: Linux uses
+`MemAvailable`, macOS uses free + inactive + speculative pages, and Windows uses
+sysinfo available memory. It is not a configured budget and is not a live
+remaining-capacity counter.
+
+The current estimate explicitly includes the backend-reported model size, a
+16 KiB/context-token KV estimate, and a fixed 512 MiB safety margin. It does not
+measure llama.cpp compute buffers or derive KV size from model architecture.
+Native logs show those allocations can vary materially by model (for example,
+the available DeepSeek Coder GGUF used 768 MiB KV plus about 300 MiB compute at
+4096 context, while Qwen used 48 MiB KV plus about 71 MiB compute). The fixed
+margin remains intentionally conservative for this CPU-first slice, but exact
+backend allocation accounting remains an open WP-0058 limitation.

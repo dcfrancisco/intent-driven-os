@@ -19,9 +19,23 @@ work package.
 - Unverified or corrupt artifacts cannot load.
 - Admission explains each rejection and releases reservations on failure or
   cancellation.
+- Model load admission uses a preflight estimate and validates the actual
+  backend-reported allocation before publishing `Loaded`; rejected loads return
+  to `Registered` without disturbing existing residents.
 - Restart preserves registry/cache state or fails closed without corruption.
 - Multiple resident models remain independently addressable and admission
   accounts for their aggregate memory.
+
+## 2026-10-23 memory-admission correction
+
+Finding `TALVIK-F-011` showed that generation admission was fail-closed but
+model load admission was missing, allowing a model to become `Loaded` before a
+default-context request was known to be impossible. The implementation now
+preflights the registry estimate and rechecks the backend-reported size after
+native load, unloading the candidate and restoring `Registered` on rejection.
+The fixed KV/compute estimate is still conservative rather than a direct
+llama.cpp allocation measurement; architecture-aware accounting remains future
+work under this package.
 
 ## Dependencies
 

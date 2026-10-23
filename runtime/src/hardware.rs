@@ -59,6 +59,11 @@ impl HardwareService {
     pub fn snapshot(&self) -> HardwareSnapshot {
         self.snapshot.clone()
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_snapshot(snapshot: HardwareSnapshot) -> Self {
+        Self { snapshot }
+    }
 }
 
 impl HardwareProvider for HardwareService {
