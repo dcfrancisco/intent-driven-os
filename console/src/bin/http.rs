@@ -106,6 +106,11 @@ fn handle(
     });
     match (method, path) {
         ("GET", "/healthz") => respond_json(&mut stream, 200, json!({"status": "ok"})),
+        ("GET", "/version" | "/v1/version") => respond_json(
+            &mut stream,
+            200,
+            super::build_info::json("talvikd", runtime.snapshot().backend_version.as_deref()),
+        ),
         ("GET", "/v1/models") => {
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);

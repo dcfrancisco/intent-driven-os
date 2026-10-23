@@ -92,3 +92,13 @@ queue capacity, eviction state, and retention policy. The HTTP edge provides
 authenticated `GET /api/tags` and `GET /api/ps` backed by those snapshots.
 Deterministic runtime and HTTP contract tests pass; real-GGUF and real-IDE
 qualification remain separate acceptance obligations.
+
+## Capability-register policy
+
+The complete Ollama comparison is maintained in
+`docs/TALVIK-OLLAMA-CAPABILITY-MATRIX.md`. Additional Ollama routes are not
+implemented merely for endpoint-count parity: `/api/show`, `/api/chat`,
+`/api/generate`, and `/api/embed` are owned by WP-0096 and require evidence of
+a selected client need. GPU scheduling, multimodal support, MarinaOS service
+integration, and alternate inference engines are later-milestone work owned by
+WP-0100 through WP-0103. This preserves the llama.cpp-only, CPU-first boundary.

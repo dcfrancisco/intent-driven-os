@@ -21,7 +21,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some("--version" | "-V") => {
-            println!("talvikd {}", env!("CARGO_PKG_VERSION"));
+            if args.next().as_deref() == Some("--verbose") {
+                println!("{}", server::build_info::display("talvikd"));
+            } else {
+                println!("talvikd {}", server::build_info::current().version);
+            }
+            Ok(())
+        }
+        Some("version") => {
+            if args.next().as_deref() == Some("--json") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&server::build_info::json("talvikd", None))?
+                );
+            } else {
+                println!("{}", server::build_info::display("talvikd"));
+            }
             Ok(())
         }
         Some(argument) => Err(format!("unexpected argument `{argument}`; usage: talvikd").into()),

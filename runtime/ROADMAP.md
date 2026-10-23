@@ -215,3 +215,11 @@ The legacy CA-Clipper archive is a separate Linux product input, not a Marina
 backend. WP-0074 first inventories and legally clears the archive, then builds
 a Rust/Linux vertical slice, data compatibility layer, and governed OID
 integration before adding it to distro packaging.
+
+## Talvik M2 capability register — 2026-10-23
+
+The complete Ollama comparison and disposition is maintained in
+`docs/TALVIK-OLLAMA-CAPABILITY-MATRIX.md`. WP-0095 closes the build-identity
+implementation gap. Additional Ollama routes, model profiles, GPU scheduling,
+multimodal support, MarinaOS integration, and alternate engines remain visible
+under WP-0096/WP-0097/WP-0100–0103 with explicit later-milestone dispositions.

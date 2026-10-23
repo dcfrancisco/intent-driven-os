@@ -94,5 +94,12 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0092 | Talvik M2 IDE API Compatibility and Qualification | Real external coding-assistant connectivity and evidence |
 | WP-0093 | Talvik M2 Retention and Resource Policy | Explicit idle retention, eviction, and resource-policy observability |
 | WP-0094 | Talvik M2 Concurrent Inference Qualification | Measured decision on safe bounded concurrent generation |
+| WP-0095 | Talvik M2 Build and Runtime Identity | Independent CLI, daemon, IPC, and HTTP build identity |
+| WP-0096 | Talvik M2 Ollama Compatibility Demand | Add only justified `/api/show`, `/api/chat`, `/api/generate`, or `/api/embed` behavior |
+| WP-0097 | Talvik M2 Model Profiles and Registry Integrity | Stable aliases, metadata inspection, deduplication, and reusable profiles |
+| WP-0100 | Talvik M3 GPU Resource Scheduling | GPU-aware admission, placement, and container execution |
+| WP-0101 | Talvik M3 Multimodal Capability | Broader model modality and client qualification |
+| WP-0102 | MarinaOS Talvik Service Adapter | Future governed system-service integration |
+| WP-0103 | Talvik Backend Expansion Review | Separate authorization for any inference engine beyond llama.cpp |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

@@ -88,6 +88,13 @@ sampling-controlled qualification concern, not a process-exit assertion.
   explicit without changing one-active-generation safety.
 - [ ] WP-0094: measure concurrent inference before authorizing implementation;
   do not infer safety from multi-model residency.
+- [ ] WP-0095: qualify consistent CLI, daemon, IPC, and HTTP build identity.
+- [ ] WP-0096: retain the Ollama endpoint gap register; implement additional
+  routes only when a real client requires them.
+- [ ] WP-0097: qualify model profiles, aliases, metadata inspection, and
+  registry deduplication without introducing OCI distribution.
+- [ ] WP-0100/0101/0102/0103: schedule GPU, multimodal, MarinaOS integration,
+  and alternate-engine decisions for later milestones.
 
 ## v0.1 — Contracts and local foundation
 
