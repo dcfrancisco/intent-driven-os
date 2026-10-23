@@ -1,0 +1,19 @@
+services:
+  talvikd:
+    build:
+      context: ../..
+      dockerfile: docker/talvik/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TALVIK_PORT:-11434}:11434"
+    environment:
+      TALVIK_HTTP_ADDR: 0.0.0.0:11434
+      TALVIK_HTTP_AUTH: "true"
+      TALVIK_TOKEN_FILE: /var/lib/talvik/state/tokens.db
+    volumes:
+      - talvik-models:/var/lib/talvik/models
+      - talvik-state:/var/lib/talvik/state
+
+volumes:
+  talvik-models:
+  talvik-state:

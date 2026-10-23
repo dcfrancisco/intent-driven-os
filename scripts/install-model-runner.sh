@@ -7,6 +7,7 @@ set -euo pipefail
 # release payload; GitHub release archives already contain this directory.
 PREFIX="${PREFIX:-${HOME}/.marina}"
 NATIVE_LIB_DIR="${LLAMA_CPP_LIB_DIR:-}"
+UNINSTALL=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix)
@@ -19,8 +20,12 @@ while [[ $# -gt 0 ]]; do
       NATIVE_LIB_DIR="$2"
       shift 2
       ;;
+    --uninstall)
+      UNINSTALL=1
+      shift
+      ;;
     --help|-h)
-      echo "Usage: $0 [--prefix DIR] [--native-lib-dir DIR]"
+      echo "Usage: $0 [--prefix DIR] [--native-lib-dir DIR] [--uninstall]"
       exit 0
       ;;
     *)
@@ -31,12 +36,37 @@ while [[ $# -gt 0 ]]; do
 done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "$UNINSTALL" == 1 ]]; then
+  rm -f "$PREFIX/bin/talvik" "$PREFIX/bin/talvikd"
+  find "$PREFIX/lib" -maxdepth 1 -type f \( -name 'libllama.*' -o -name 'libggml*.*' \) -delete 2>/dev/null || true
+  rmdir "$PREFIX/bin" "$PREFIX/lib" 2>/dev/null || true
+  echo "Removed Talvik executables and native libraries from $PREFIX; models and state were preserved."
+  exit 0
+fi
+
+if [[ -x "$ROOT/bin/talvik" && -x "$ROOT/bin/talvikd" ]]; then
+  mkdir -p "$PREFIX/bin" "$PREFIX/lib"
+  cp -f "$ROOT/bin/talvik" "$ROOT/bin/talvikd" "$PREFIX/bin/"
+  if [[ -d "$ROOT/lib" ]]; then
+    find "$ROOT/lib" -maxdepth 1 \
+      \( -type f -o -type l \) \
+      \( -name 'libllama.*' -o -name 'libggml*.*' \) \
+      -exec cp -a {} "$PREFIX/lib/" \;
+  fi
+  chmod 0755 "$PREFIX/bin/talvik" "$PREFIX/bin/talvikd"
+  PAYLOAD_INSTALL=1
+else
+  PAYLOAD_INSTALL=0
+fi
+
+if [[ "$PAYLOAD_INSTALL" == 0 ]]; then
 if [[ -n "$NATIVE_LIB_DIR" ]]; then
   export LLAMA_CPP_LIB_DIR="$NATIVE_LIB_DIR"
   export LLAMA_CPP_REQUIRED=1
 fi
 cargo install --path "$ROOT/console" --root "$PREFIX" --locked --force \
   --bin talvik --bin talvikd
+fi
 
 if [[ -n "$NATIVE_LIB_DIR" ]]; then
   [[ -d "$NATIVE_LIB_DIR" ]] || { echo "native library directory not found: $NATIVE_LIB_DIR" >&2; exit 1; }

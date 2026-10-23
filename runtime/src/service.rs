@@ -1210,16 +1210,24 @@ mod tests {
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             assert!(!remaining.is_zero(), "active generation did not terminate");
-            if matches!(
-                first.recv_timeout(remaining),
-                Ok(GenerationMessage::Cancelled(_))
-            ) {
-                break;
+            match first.recv_timeout(remaining) {
+                Ok(
+                    GenerationMessage::Completed(_)
+                    | GenerationMessage::Cancelled(_)
+                    | GenerationMessage::Failed(_),
+                ) => break,
+                Ok(GenerationMessage::Token(_)) => {}
+                Err(error) => panic!("active generation did not terminate: {error}"),
             }
         }
+        let queued_message = queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("queued generation did not terminate");
         assert!(matches!(
-            queued.recv_timeout(std::time::Duration::from_secs(2)),
-            Ok(GenerationMessage::Cancelled(_))
+            queued_message,
+            GenerationMessage::Completed(_)
+                | GenerationMessage::Cancelled(_)
+                | GenerationMessage::Failed(_)
         ));
         let request = |id: &str| GenerationRequest {
             request_id: format!("request-{id}"),

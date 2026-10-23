@@ -367,3 +367,19 @@ runtime; OpenAI responses report standard `stop` or `length` and include the
 precise `termination_reason`. Streaming emits the final finish chunk before
 `[DONE]`. Native post-fix checks and affected unit tests passed; platform and
 IDE qualification status is unchanged.
+
+## Current Talvik M1 closeout — 2026-10-23
+
+The current implementation and acceptance evidence are consolidated in
+`docs/TALVIK-M1-ACCEPTANCE.md`. The verified release slice is the CPU-first
+macOS x86_64 path: multi-model residency, bounded LRU recovery, pinning,
+reload, FIFO waiting, queued cancellation, OpenAI-compatible inference, and
+termination metadata are recorded as passing. Continue/Cline UI acceptance is
+deferred by owner decision and is not an M1 gate.
+
+Linux latest-branch qualification, macOS arm64, Windows x86_64, Docker
+execution, and strict workspace Clippy remain unverified or failing and are
+not promoted to GO. Historical host evidence is retained as historical and
+does not substitute for current-branch execution. The release decision is
+therefore GO only for the tested macOS x86_64 slice and NO-GO for a fully
+qualified cross-platform release.
