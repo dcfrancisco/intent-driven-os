@@ -3,6 +3,7 @@
 Date: 2026-10-23
 Branch: `feature/talvik-m2-runtime-ide`
 Starting revision: `eabc2e8`
+Final implementation revision: `a96bb3a`
 Ollama reference: `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`
 
 ## Decision
@@ -65,6 +66,10 @@ The complete inventory is maintained in
   passed.
 - `talvik --version --verbose`, `talvik --json version`,
   `talvikd --version --verbose`, and `talvikd version --json`: passed.
+- Final release binaries built from `a96bb3a` with `dirty=false`: `talvik`
+  SHA-256 `5d10974b8d273eaa8f2b0722b0357fc943db0aaa037fbb3ee4f42cb9aeac8fa4`;
+  `talvikd` SHA-256
+  `841c7723b9cac2c513b7a8a79fa87d1fc298983042dd8fd2a073de0664106c53`.
 - Full workspace regression, native GGUF qualification, live daemon mismatch,
   and HTTP endpoint execution remain separate gates.
 
