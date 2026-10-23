@@ -90,5 +90,9 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0088 | OID Bootable Linux Image | Reproducible image, boot lifecycle, services, and governed-operation proof |
 | WP-0089 | OID/Marina Packaged Linux Environment | Versioned Debian artifact and isolated install/upgrade/removal qualification |
 | WP-0090 | Marina Windows Support Readiness | Windows native prerequisites, build setup, packaging checks, and support documentation |
+| WP-0091 | Talvik M2 Runtime Diagnostics and Residency Edge | Truthful resident-model and scheduler diagnostics plus justified compatibility endpoints |
+| WP-0092 | Talvik M2 IDE API Compatibility and Qualification | Real external coding-assistant connectivity and evidence |
+| WP-0093 | Talvik M2 Retention and Resource Policy | Explicit idle retention, eviction, and resource-policy observability |
+| WP-0094 | Talvik M2 Concurrent Inference Qualification | Measured decision on safe bounded concurrent generation |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

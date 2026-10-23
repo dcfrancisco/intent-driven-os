@@ -6,7 +6,8 @@ use oid_model_client::{ChatRequest, MarinaHttpClient, ModelClient, ModelClientEr
 use oid_runtime::{
     BackendHealth, BackendSummary, GenerationMessage, GenerationRequest, GenerationResult,
     GenerationStatistics, GenerationStream, HardwareSnapshot, MarinaRuntime, ModelMetadata,
-    ModelStatus, RuntimeError, RuntimeService, RuntimeSnapshot, RuntimeStatus,
+    ModelStatus, ResidentModelSnapshot, RuntimeError, RuntimeService, RuntimeSnapshot,
+    RuntimeStatus,
 };
 use oid_shared::{EventBus, RuntimeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -113,6 +114,17 @@ impl RuntimeService for RemoteRuntimeService {
             .ok()
             .or_else(|| models.first().map(|model| model.id.clone()));
         snapshot.loaded_models = snapshot.loaded_model.clone().into_iter().collect();
+        snapshot.resident_models = snapshot
+            .loaded_models
+            .iter()
+            .map(|id| ResidentModelSnapshot {
+                id: id.clone(),
+                memory_bytes: None,
+                idle_seconds: 0,
+            })
+            .collect();
+        snapshot.pending_requests = 0;
+        snapshot.active_requests = usize::from(snapshot.generating);
         snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
         snapshot
     }

@@ -96,6 +96,11 @@ For a container deployment, use `docker/talvik/compose.yaml`. It keeps the
 host port on loopback by default, requires bearer authentication for HTTP API
 requests, and separates model and state volumes.
 
+The authenticated HTTP compatibility subset also exposes `GET /api/tags` for
+registered-model discovery and `GET /api/ps` for actual resident-model and
+scheduler inspection. These endpoints are diagnostic/discovery edges; `/v1/*`
+remains the primary OpenAI-compatible inference API.
+
 Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.
 Talvik does not delete or silently migrate existing data.

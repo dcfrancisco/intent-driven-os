@@ -8,8 +8,8 @@ use crate::{
     hardware::{HardwareService, HardwareSnapshot},
     models::{ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
-    LlamaCppAdapter, RuntimeApi, RuntimeConfig, RuntimeError, RuntimeService, RuntimeSnapshot,
-    RuntimeStatus,
+    LlamaCppAdapter, ResidentModelSnapshot, RuntimeApi, RuntimeConfig, RuntimeError,
+    RuntimeService, RuntimeSnapshot, RuntimeStatus,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -464,6 +464,36 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn snapshot(&self) -> RuntimeSnapshot {
+        let last_used = self
+            .last_used
+            .lock()
+            .map(|last_used| last_used.clone())
+            .unwrap_or_default();
+        let resident_models = self
+            .loaded
+            .lock()
+            .map(|loaded| {
+                loaded
+                    .values()
+                    .map(|model| ResidentModelSnapshot {
+                        id: model.model_id.clone(),
+                        memory_bytes: Some(model.memory_bytes),
+                        idle_seconds: last_used
+                            .get(&model.model_id)
+                            .copied()
+                            .map_or(0, |used| used.elapsed().as_secs()),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let pending_requests = self
+            .pending_generations
+            .lock()
+            .map_or(0, |pending| pending.len());
+        let active_requests = self
+            .active_generation
+            .lock()
+            .map_or(0, |active| usize::from(active.is_some()));
         RuntimeSnapshot {
             health: "Healthy",
             backend: self
@@ -492,6 +522,12 @@ impl RuntimeService for MarinaRuntime {
                 .lock()
                 .map(|loaded| loaded.keys().cloned().collect())
                 .unwrap_or_default(),
+            resident_models,
+            pending_requests,
+            active_requests,
+            queue_capacity: self.resource_policy.queue_capacity,
+            automatic_eviction: self.resource_policy.automatic_eviction,
+            idle_retention_seconds: self.resource_policy.idle_retention.as_secs(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
             backend_version: self
                 .backends
@@ -1312,6 +1348,14 @@ mod tests {
             runtime.snapshot().loaded_models,
             vec!["alpha".to_owned(), "beta".to_owned()]
         );
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.resident_models.len(), 2);
+        assert_eq!(snapshot.pending_requests, 0);
+        assert_eq!(snapshot.active_requests, 0);
+        assert!(snapshot
+            .resident_models
+            .iter()
+            .all(|model| model.memory_bytes == Some(1_048_576)));
         runtime.model_unload("alpha").expect("unload alpha");
         assert_eq!(runtime.snapshot().loaded_models, vec!["beta".to_owned()]);
         runtime.model_unload("beta").expect("unload beta");

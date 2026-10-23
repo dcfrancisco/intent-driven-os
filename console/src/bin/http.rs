@@ -117,6 +117,18 @@ fn handle(
                 .collect::<Vec<_>>();
             respond_json(&mut stream, 200, json!({"object": "list", "data": data}))
         }
+        ("GET", "/api/tags") => {
+            if !scope_allowed(&identity, auth::MODELS_READ) {
+                return respond_scope_error(&mut stream, auth::MODELS_READ);
+            }
+            respond_json(&mut stream, 200, ollama_tags(runtime))
+        }
+        ("GET", "/api/ps") => {
+            if !scope_allowed(&identity, auth::MODELS_READ) {
+                return respond_scope_error(&mut stream, auth::MODELS_READ);
+            }
+            respond_json(&mut stream, 200, ollama_ps(runtime))
+        }
         ("POST", "/v1/embeddings") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
@@ -227,6 +239,67 @@ fn embeddings(
         200,
         json!({"object":"list","data":data,"model":model,"usage":{"prompt_tokens":0,"total_tokens":0}}),
     )
+}
+
+fn ollama_tags(runtime: &dyn RuntimeService) -> Value {
+    let models = runtime
+        .model_list()
+        .into_iter()
+        .map(|model| {
+            json!({
+                "name": model.id.clone(),
+                "model": model.id,
+                "modified_at": null,
+                "size": null,
+                "memory_requirement_bytes": model.memory_requirement_mb.saturating_mul(1_048_576),
+                "digest": model.checksum,
+                "details": {
+                    "family": model.family,
+                    "quantization_level": model.quantization,
+                    "parameter_size": null,
+                    "format": "gguf"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"models": models})
+}
+
+fn ollama_ps(runtime: &dyn RuntimeService) -> Value {
+    let snapshot = runtime.snapshot();
+    let metadata = runtime
+        .model_list()
+        .into_iter()
+        .map(|model| (model.id.clone(), model))
+        .collect::<HashMap<_, _>>();
+    let models = snapshot
+        .resident_models
+        .into_iter()
+        .map(|resident| {
+            let model = metadata.get(&resident.id);
+            json!({
+                "name": resident.id,
+                "model": resident.id,
+                "size": resident.memory_bytes,
+                "size_vram": null,
+                "expires_at": null,
+                "idle_seconds": resident.idle_seconds,
+                "details": {
+                    "family": model.map_or("unknown", |model| model.family.as_str()),
+                    "quantization_level": model.map_or("unknown", |model| model.quantization.as_str()),
+                    "format": "gguf"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "models": models,
+        "active_requests": snapshot.active_requests,
+        "pending_requests": snapshot.pending_requests,
+        "queue_capacity": snapshot.queue_capacity,
+        "automatic_eviction": snapshot.automatic_eviction,
+        "idle_retention_seconds": snapshot.idle_retention_seconds
+    })
 }
 
 fn scope_allowed(identity: &auth::TokenIdentity, scope: &str) -> bool {

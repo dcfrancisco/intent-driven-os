@@ -78,6 +78,17 @@ sampling-controlled qualification concern, not a process-exit assertion.
   checksums in the registry.
 - [ ] Windows and macOS arm64 native qualification remain WP-0079/WP-0080.
 
+### Talvik M2 starting backlog — 2026-10-23
+
+- [ ] WP-0091: expose truthful resident-model and scheduler diagnostics and
+  justify the `/api/tags` and `/api/ps` compatibility subset.
+- [ ] WP-0092: qualify a real Continue/Cline coding workflow; Codex support is
+  documented only where the installed client permits it.
+- [ ] WP-0093: make keep-alive/idle retention and resource-pressure behavior
+  explicit without changing one-active-generation safety.
+- [ ] WP-0094: measure concurrent inference before authorizing implementation;
+  do not infer safety from multi-model residency.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models

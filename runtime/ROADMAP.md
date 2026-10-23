@@ -44,6 +44,17 @@ llama.cpp adapter itself. This does not complete the capability-aware
 multi-backend router: policy snapshots, route evidence, remote providers,
 health scoring, and circuit breaking remain WP-0060 work.
 
+## M1 closeout and M2 starting point — 2026-10-23
+
+Talvik M1 development scope is closed at baseline `1ade5f1`; the recorded
+macOS x86_64 CPU-first qualification is GO, while cross-platform product
+qualification remains incomplete. M2 starts on
+`feature/talvik-m2-runtime-ide` with ADR-0025 and WP-0091 through WP-0094.
+The first implementation slice is truthful resident/scheduler diagnostics and
+the justified `/api/tags` and `/api/ps` compatibility edge. Real IDE
+qualification remains a separate external gate under WP-0092. One active
+generation remains the baseline until WP-0094 measurements justify otherwise.
+
 ## v0.2 — Resource and policy control
 
 Goal: make model execution predictable under resource contention.
