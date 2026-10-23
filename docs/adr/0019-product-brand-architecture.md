@@ -55,7 +55,7 @@ preview, planned, and unavailable capabilities.
 
 1. Talvik local model runtime: install, discover, load, chat, stream, cancel,
    inspect, and authenticate clients.
-2. Talvik assistant edge: stable OpenAI/Ollama-compatible subset and IDE use.
+2. Talvik assistant edge: stable OpenAI/Reference local runner-compatible subset and IDE use.
 3. OID Linux AI desktop: governed plans, skills, approvals, verification, and
    recovery.
 4. OID OS-management model: specialized model evaluation and release.

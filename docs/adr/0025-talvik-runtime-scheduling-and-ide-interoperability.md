@@ -15,10 +15,10 @@ implementation is in `runtime/src/service.rs`, `runtime/src/models.rs`, and
 `console/src/bin/http.rs`. M1 qualification evidence is consolidated in
 `docs/TALVIK-M1-CLOSEOUT.md` and `docs/TALVIK-M1-ACCEPTANCE.md`.
 
-The local Ollama reference was inspected at
-`/Users/dannyfrancisco/codes/ollama`, commit
+The local Reference local runner reference was inspected at
+`/Users/dannyfrancisco/codes/reference-runner`, commit
 `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`. Relevant evidence is in
-`server/sched.go` and `server/routes.go`. Ollama uses a keyed loaded-runner
+`server/sched.go` and `server/routes.go`. Reference local runner uses a keyed loaded-runner
 map, serializes loading while allowing requests to an already loaded runner,
 tracks active references, bounds pending requests, and expires idle runners
 through keep-alive timers. Its `/api/tags`, `/api/show`, `/api/ps`, `/api/chat`,
@@ -43,7 +43,7 @@ and `/api/generate` contracts are documented in `docs/api.md` and
 
 Keep Talvik's simpler one-active-generation policy for M2 while making
 residency and scheduling observable and client-usable. Add only a justified
-Ollama-compatible subset: `/api/tags` for model discovery and `/api/ps` for
+Reference local runner-compatible subset: `/api/tags` for model discovery and `/api/ps` for
 actual resident-model inspection. Do not add compatibility endpoints that do
 not serve a demonstrated client workflow. Preserve `/v1/*` as the primary
 assistant edge.
@@ -66,11 +66,11 @@ unload and automatic eviction preserving active-request and pinning invariants.
 
 ## Alternatives rejected
 
-- Replacing Talvik's scheduler with Ollama's implementation: rejected because
+- Replacing Talvik's scheduler with Reference local runner's implementation: rejected because
   Talvik must retain its backend-neutral Rust boundary and CPU-first scope.
 - Enabling concurrent generation now: rejected until native context ownership,
   memory reservations, and measured latency/RAM evidence justify it.
-- Implementing all Ollama endpoints: rejected as compatibility surface without
+- Implementing all Reference local runner endpoints: rejected as compatibility surface without
   a client or workflow need.
 - Claiming IDE interoperability from OpenAI-client tests: rejected; a real IDE
   session is required for PASS.
@@ -95,8 +95,8 @@ qualification remain separate acceptance obligations.
 
 ## Capability-register policy
 
-The complete Ollama comparison is maintained in
-`docs/TALVIK-OLLAMA-CAPABILITY-MATRIX.md`. Additional Ollama routes are not
+The complete Reference local runner comparison is maintained in
+`docs/TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md`. Additional compatibility routes are not
 implemented merely for endpoint-count parity: `/api/show`, `/api/chat`,
 `/api/generate`, and `/api/embed` are owned by WP-0096 and require evidence of
 a selected client need. GPU scheduling, multimodal support, MarinaOS service

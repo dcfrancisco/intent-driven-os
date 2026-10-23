@@ -126,13 +126,13 @@ fn handle(
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);
             }
-            respond_json(&mut stream, 200, ollama_tags(runtime))
+            respond_json(&mut stream, 200, compatibility_tags(runtime))
         }
         ("GET", "/api/ps") => {
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);
             }
-            respond_json(&mut stream, 200, ollama_ps(runtime))
+            respond_json(&mut stream, 200, compatibility_ps(runtime))
         }
         ("POST", "/v1/embeddings") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
@@ -246,7 +246,7 @@ fn embeddings(
     )
 }
 
-fn ollama_tags(runtime: &dyn RuntimeService) -> Value {
+fn compatibility_tags(runtime: &dyn RuntimeService) -> Value {
     let models = runtime
         .model_list()
         .into_iter()
@@ -270,7 +270,7 @@ fn ollama_tags(runtime: &dyn RuntimeService) -> Value {
     json!({"models": models})
 }
 
-fn ollama_ps(runtime: &dyn RuntimeService) -> Value {
+fn compatibility_ps(runtime: &dyn RuntimeService) -> Value {
     let snapshot = runtime.snapshot();
     let metadata = runtime
         .model_list()

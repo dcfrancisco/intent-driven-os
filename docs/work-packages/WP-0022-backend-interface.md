@@ -14,7 +14,7 @@ Initialization, shutdown, health, model listing, model load/unload, streaming ge
 - Generation request and stream chunk contracts.
 - Embeddings and tool-support placeholders.
 - Structured health and lifecycle error boundary.
-- Capability and compatibility guidance for llama.cpp, vLLM, Ollama, Docker Model Runner, and OpenAI-compatible providers.
+- Capability and compatibility guidance for llama.cpp, vLLM, Reference local runner, Docker Model Runner, and OpenAI-compatible providers.
 
 ## Acceptance Criteria
 

@@ -7,7 +7,7 @@ intended to be read once per task, not repeated in every prompt.
 
 Build a Linux-first Rust AI desktop/OS that makes local intelligence a
 managed, observable, policy-controlled system resource. The first useful
-runtime must feel as simple as an Ollama-like local runner while retaining an
+runtime must feel as simple as an Reference local runner-like local runner while retaining an
 OID-owned control plane. The product goal is that a user can prompt the
 computer to inspect, plan, operate, verify, recover, and maintain itself. The
 next layers are an OmniRouter-like gateway and governed desktop/system agency,
@@ -20,7 +20,7 @@ without leaking provider details or granting models direct authority.
 Marina owns the public API, model identity, lifecycle, request IDs, admission,
 routing decisions, cancellation semantics, metrics, and audit trail. OID is a
 governed client and system integration. Adapters own only translation to
-llama.cpp, Ollama, Docker Model Runner, OpenAI-compatible, or future engines.
+llama.cpp, Reference local runner, Docker Model Runner, OpenAI-compatible, or future engines.
 
 ## Inventory snapshot (2026-10-01)
 
@@ -64,7 +64,7 @@ Not complete:
 4. **Router:** introduce capability-based backend selection, fallback policy,
    health/circuit breaking, quotas, cost/latency policy, and explainable
    routing decisions.
-5. **Compatibility:** add deliberately scoped Ollama, OpenAI, and later
+5. **Compatibility:** add deliberately scoped Reference local runner, OpenAI, and later
    Anthropic-compatible edges without making any protocol the internal model.
 6. **Assistant composition:** add session context, governed tools, MCP/A2A
    integration, and agent orchestration only after runtime lifecycle and
@@ -122,7 +122,7 @@ first usable runner.
 - Every run has a stable request ID, terminal outcome, metrics, and audit record.
 - Backend failures do not corrupt runtime state; recovery is deterministic.
 - Routing returns the selected backend plus a machine-readable explanation.
-- Compatibility tests prove supported Ollama/OpenAI behavior and explicitly
+- Compatibility tests prove supported Reference local runner/OpenAI behavior and explicitly
   reject unsupported semantics.
 - Native shell and governed-operation behavior remain intact without a model.
 

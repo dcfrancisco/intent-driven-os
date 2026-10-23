@@ -9,7 +9,7 @@ assistant, starting with Continue and documenting Codex/Cline capability limits.
 
 - Provide executable Continue configuration against Talvik's OpenAI edge.
 - Verify real streaming coding output, authentication, disconnect/cancellation,
-  and absence of Ollama/remote fallback.
+  and absence of Reference local runner/remote fallback.
 - Test tool-calling workflows only with a model/template that advertises the
   capability; Talvik remains a model provider, not a workstation agent.
 

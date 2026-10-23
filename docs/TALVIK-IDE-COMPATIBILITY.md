@@ -27,7 +27,7 @@ Qualification:
 2. Run `talvik --json version` and `talvik status --json`.
 3. Verify `/v1/models` succeeds with the token and fails without it.
 4. Select the model and request a small code change; verify streaming.
-5. Confirm no Ollama process or remote provider is configured or contacted.
+5. Confirm no Reference local runner process or remote provider is configured or contacted.
 6. Cancel a request, then issue another and verify recovery.
 
 Record IDE versions, model ID, GGUF SHA-256, endpoint, token scope (never the
@@ -38,7 +38,7 @@ token), Talvik identity, timestamps, and redacted daemon/client logs.
 Use Cline's OpenAI-compatible custom endpoint and a model whose embedded chat
 template supports tools. Verify coding output, streaming, tool-call/tool-result
 round trip, invalid authentication, cancellation, recovery, and absence of
-Ollama or remote fallback. Tool support must be rejected for unsupported
+Reference local runner or remote fallback. Tool support must be rejected for unsupported
 templates.
 
 ## Codex

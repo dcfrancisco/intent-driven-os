@@ -32,8 +32,8 @@ policy, health, and resource fit.
   or multi-backend router.
 - The governed operation lifecycle (plan, approval, execution, verification,
   rollback, evidence) is a separate foundation and must remain intact.
-- Ollama is an interoperability target and reference UX, not OID's internal
-  architectural boundary. OID must not require Ollama to run local models.
+- Reference local runner is an interoperability target and reference UX, not OID's internal
+  architectural boundary. OID must not require Reference local runner to run local models.
 - The model runner is independently installable: `talvikd` is the daemon,
   `talvik` is its client, and `oid-console` is an optional client.
 - The canonical user installation is `$HOME/.marina` on Linux/macOS and the
@@ -50,7 +50,7 @@ policy, health, and resource fit.
 1. Inspect the repository and relevant ADR/WP before changing architecture.
 2. Prefer small, reviewable slices with tests and documentation updated in the
    same change.
-3. Preserve backend neutrality: no llama.cpp, Ollama, provider SDK, tensor, or
+3. Preserve backend neutrality: no llama.cpp, Reference local runner, provider SDK, tensor, or
    native pointer types may cross the runtime API.
 4. Preserve security and recoverability: model artifacts, requests, routing
    choices, approvals, failures, and lifecycle transitions need explicit policy

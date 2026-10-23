@@ -4,7 +4,7 @@ Date: 2026-10-23
 Branch: `feature/talvik-m2-runtime-ide`
 Starting revision: `eabc2e8`
 Final implementation revision: `a96bb3a`
-Ollama reference: `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`
+Reference local runner reference: `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`
 
 ## Decision
 
@@ -12,7 +12,7 @@ M2 is **not fully qualified**. This implementation slice is reviewable and
 verified by deterministic checks, but real IDE sessions, native cross-platform
 runs, Docker runtime execution, and full lifecycle qualification remain open.
 The complete inventory is maintained in
-[`TALVIK-OLLAMA-CAPABILITY-MATRIX.md`](TALVIK-OLLAMA-CAPABILITY-MATRIX.md).
+[`TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md`](TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md).
 
 ## Implemented P0
 
@@ -35,7 +35,7 @@ The complete inventory is maintained in
 ## P1 and P2 disposition
 
 - CAP-013 through CAP-015 are deferred to WP-0096 until a real client requires
-  the additional Ollama routes.
+  the additional Reference local runner routes.
 - CAP-018 and CAP-019 are owned by WP-0097; no full OCI/content-addressed
   distribution is authorized for M2.
 - CAP-020 remains serialized under WP-0094 pending native measurements.
@@ -54,7 +54,7 @@ The complete inventory is maintained in
 | WP-0093 | Retention, pinning, resource policy | Implemented, incompletely qualified |
 | WP-0094 | Concurrent inference decision | Deferred pending native measurements |
 | WP-0095 | Build/runtime identity | Implemented; deterministic verification passed |
-| WP-0096 | Additional Ollama endpoints | Deferred pending client demand |
+| WP-0096 | Additional Reference local runner endpoints | Deferred pending client demand |
 | WP-0097 | Model profiles and registry integrity | Scheduled M2.1 |
 | WP-0100–0103 | GPU, multimodal, MarinaOS, alternate engines | Scheduled later |
 
@@ -87,5 +87,5 @@ The complete inventory is maintained in
 
 No claim is made for real IDE interoperability, unexecuted native hosts,
 Docker runtime behavior, per-request keep-alive, concurrent generation, or
-additional Ollama routes. Public release remains **NO-GO** until mandatory
+additional Reference local runner routes. Public release remains **NO-GO** until mandatory
 qualification evidence is collected.

@@ -2,7 +2,7 @@
 
 - Date: 2026-10-07
 - Scope: Linux distribution product, standalone model runner, AI service,
-  OID integration, and Ollama/ Docker Model Runner/OmniRoute capability parity
+  OID integration, and Reference local runner/ Docker Model Runner/OmniRoute capability parity
 - Result: direction is sound; Linux-ready and AI-service-ready status are not
   yet earned
 
@@ -25,7 +25,7 @@ package provenance, recovery, or AI capability semantics.
 | Trust | Optional checksum HTTP import; no release/backend/model signatures | ADR-0014, WP-0058/WP-0071: separate artifact trust and provenance |
 | Linux | No distro support matrix, rootless/system semantics, GPU permission policy, or sandbox profiles | ADR-0014, WP-0069/WP-0071 |
 | AI API | Text generation contract only; no canonical chat/session/provider schema | ADR-0015, WP-0070 |
-| Compatibility | No OpenAI/Ollama/Anthropic HTTP edge | WP-0067 and WP-0070 |
+| Compatibility | No OpenAI/Reference local runner/Anthropic HTTP edge | WP-0067 and WP-0070 |
 | Routing | No production multi-backend router, fallback, quota, cost, or circuit breaker | WP-0060, WP-0071 |
 | Assistants | Tool execution/session/evidence boundary is not implemented | WP-0063, WP-0068, WP-0070/0071 |
 | Evaluation | No conformance/quality/latency/cost/tool-safety release suite | WP-0070/0071 |
@@ -48,7 +48,7 @@ itself.
 
 Marina should combine:
 
-- Ollama-like local model management and chat/generation ergonomics;
+- Reference local runner-like local model management and chat/generation ergonomics;
 - Docker Model Runner-like protocol compatibility, engine abstraction, and
   model packaging/on-demand execution;
 - OmniRoute-like provider routing, policies, fallbacks, quotas, circuit
@@ -65,7 +65,7 @@ OID/system host authorizes and verifies execution.
   WP-0057 through WP-0071.
 - Runtime: installer, IPC, configuration, model acquisition/discovery,
   service composition, hardware detection, and llama.cpp build boundary.
-- External references: Ollama API documentation, Docker Model Runner API and
+- External references: Reference local runner API documentation, Docker Model Runner API and
   gateway documentation, OmniRoute user guide, Linux FHS, and systemd service,
   user-unit, credential, and sandbox documentation.
 
@@ -78,7 +78,7 @@ Files changed: ADR-0012, ADR-0013, new ADR-0014, new ADR-0015, new WP-0069,
 WP-0070, WP-0071, runtime architecture/roadmap/backlog, and this audit.
 
 Evidence/tests: Source audit, official Linux/systemd references, official
-Ollama and Docker Model Runner API references, OmniRoute user guide, `cargo
+Reference local runner and Docker Model Runner API references, OmniRoute user guide, `cargo
 fmt --all -- --check`, `cargo check --workspace`, `cargo test -p oid-runtime`,
 and `git diff --check`.
 

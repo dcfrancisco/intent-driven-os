@@ -260,7 +260,7 @@ talvik run model-id "Hello from Talvik"
 
 At startup Talvik also discovers existing `.gguf` files recursively in the
 compatible Marina store, `~/Models`, Hugging Face/Python caches (`HF_HOME`,
-`TRANSFORMERS_CACHE`, `XDG_CACHE_HOME`), ModelScope caches, and common Ollama
+`TRANSFORMERS_CACHE`, `XDG_CACHE_HOME`), ModelScope caches, and common Reference local runner
 cache roots. Discovery registers files in place; `model pull` is the explicit
 copy/download path into `$HOME/.marina/models`.
 

@@ -263,8 +263,8 @@ cmake version 4.2.3
 
 CMake suite maintained and supported by Kitware (kitware.com/cmake).
 
-$ ollama --version
-ollama version is 0.30.10
+$ reference-runner --version
+reference-runner version is 0.30.10
 
 $ git -C /home/danny/codes/llama.cpp rev-parse HEAD
 18443257a30c884d5332abb8e7dc43c7ffe42fda

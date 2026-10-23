@@ -60,7 +60,7 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0058 | Verified Model Cache and Admission | Trusted model artifacts with memory/context/resource admission |
 | WP-0059 | Runtime API and Stream Transport | Versioned Unix-socket model/run/health API with idempotency |
 | WP-0060 | Backend Capability and Router | Deterministic, explainable local-first backend selection |
-| WP-0061 | Compatibility Edges | Scoped Ollama and OpenAI-compatible translation with capability gaps |
+| WP-0061 | Compatibility Edges | Scoped Reference local runner and OpenAI-compatible translation with capability gaps |
 | WP-0062 | Runtime Recovery and Observability | Crash isolation, metrics, audit records, and deterministic recovery |
 | WP-0063 | Assistant Session and Tool Boundary | Governed sessions/tools after runner and router foundations are stable |
 | WP-0064 | Individual Model Runner Installer | Installable Marina service/client without the interactive console |
@@ -95,7 +95,7 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0093 | Talvik M2 Retention and Resource Policy | Explicit idle retention, eviction, and resource-policy observability |
 | WP-0094 | Talvik M2 Concurrent Inference Qualification | Measured decision on safe bounded concurrent generation |
 | WP-0095 | Talvik M2 Build and Runtime Identity | Independent CLI, daemon, IPC, and HTTP build identity |
-| WP-0096 | Talvik M2 Ollama Compatibility Demand | Add only justified `/api/show`, `/api/chat`, `/api/generate`, or `/api/embed` behavior |
+| WP-0096 | Talvik M2 Reference local runner Compatibility Demand | Add only justified `/api/show`, `/api/chat`, `/api/generate`, or `/api/embed` behavior |
 | WP-0097 | Talvik M2 Model Profiles and Registry Integrity | Stable aliases, metadata inspection, deduplication, and reusable profiles |
 | WP-0100 | Talvik M3 GPU Resource Scheduling | GPU-aware admission, placement, and container execution |
 | WP-0101 | Talvik M3 Multimodal Capability | Broader model modality and client qualification |

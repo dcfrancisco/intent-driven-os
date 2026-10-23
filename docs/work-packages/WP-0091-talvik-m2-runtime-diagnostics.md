@@ -8,7 +8,7 @@ leaking backend-native handles or prompt content.
 ## Scope
 
 - Add runtime-owned resident model summaries and pending/active counts.
-- Add justified Ollama-compatible `/api/tags` and `/api/ps` responses.
+- Add justified Reference local runner-compatible `/api/tags` and `/api/ps` responses.
 - Preserve authenticated `/v1/*` behavior and loopback defaults.
 - Add deterministic API contract tests and real-GGUF inspection evidence.
 

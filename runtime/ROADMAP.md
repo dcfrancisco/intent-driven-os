@@ -1,7 +1,7 @@
 # Talvik / Intelligent Runtime Roadmap
 
 This roadmap sequences the control plane from the current local runner to an
-Ollama-like service and OID-owned multi-backend router. Milestones are
+Reference local runner-like service and OID-owned multi-backend router. Milestones are
 capability boundaries, not promises of implementation in the current
 repository. See `docs/PROJECT-OPERATING-BRIEF.md` and ADR-0011.
 
@@ -218,8 +218,8 @@ integration before adding it to distro packaging.
 
 ## Talvik M2 capability register — 2026-10-23
 
-The complete Ollama comparison and disposition is maintained in
-`docs/TALVIK-OLLAMA-CAPABILITY-MATRIX.md`. WP-0095 closes the build-identity
-implementation gap. Additional Ollama routes, model profiles, GPU scheduling,
+The complete Reference local runner comparison and disposition is maintained in
+`docs/TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md`. WP-0095 closes the build-identity
+implementation gap. Additional compatibility routes, model profiles, GPU scheduling,
 multimodal support, MarinaOS integration, and alternate engines remain visible
 under WP-0096/WP-0097/WP-0100–0103 with explicit later-milestone dispositions.

@@ -89,7 +89,7 @@ sampling-controlled qualification concern, not a process-exit assertion.
 - [ ] WP-0094: measure concurrent inference before authorizing implementation;
   do not infer safety from multi-model residency.
 - [ ] WP-0095: qualify consistent CLI, daemon, IPC, and HTTP build identity.
-- [ ] WP-0096: retain the Ollama endpoint gap register; implement additional
+- [ ] WP-0096: retain the Reference local runner endpoint gap register; implement additional
   routes only when a real client requires them.
 - [ ] WP-0097: qualify model profiles, aliases, metadata inspection, and
   registry deduplication without introducing OCI distribution.
@@ -146,7 +146,7 @@ sampling-controlled qualification concern, not a process-exit assertion.
   evidence integration. See WP-0037.
 - [ ] Define OpenAI-compatible chat/completions translation, streaming mapping, errors, and capability gaps.
 - [ ] Evaluate and specify a second adapter from vLLM, ONNX Runtime, OpenVINO, or TensorRT-LLM.
-- [ ] Define Ollama and Docker Model Runner adapter boundaries.
+- [ ] Define Reference local runner and Docker Model Runner adapter boundaries.
 - [ ] Define remote OpenAI-compatible provider policy, credential isolation, endpoint health, and cost attribution.
 - [ ] Define plugin discovery, manifest, API compatibility, signing, trust, isolation, and revocation.
 - [ ] Define policy profiles for shell, desktop, background services, local applications, and OIP clients.

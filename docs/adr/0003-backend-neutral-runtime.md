@@ -15,7 +15,7 @@ visibility, model load/unload, streaming, cancellation, embeddings, and tool
 support. The runtime owns `BackendManager`; adapters never become public client
 dependencies.
 
-Future adapter targets are vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Ollama, and Docker Model Runner.
+Future adapter targets are vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Reference local runner, and Docker Model Runner.
 
 ## Consequences
 

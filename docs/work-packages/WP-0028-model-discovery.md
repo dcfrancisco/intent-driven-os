@@ -14,7 +14,7 @@ basic file metadata, duplicate avoidance, and registry events.
 
 - `ModelDiscovery` service.
 - Canonical default directory: `$HOME/.marina/models`; legacy user data,
-  `~/Models`, and supported Hugging Face/Python, ModelScope, and Ollama caches
+  `~/Models`, and supported Hugging Face/Python, ModelScope, and Reference local runner caches
   remain discoverable. Repository-local `./models` is not an operational store.
 - Registry population tests for GGUF and non-GGUF files.
 
