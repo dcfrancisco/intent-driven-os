@@ -136,6 +136,7 @@ pub struct MarinaRuntime {
     hardware: HardwareService,
     started_at: Instant,
     loaded: Arc<Mutex<BTreeMap<String, LoadedModel>>>,
+    residency_lock: Arc<Mutex<()>>,
     last_used: Arc<Mutex<BTreeMap<String, Instant>>>,
     active_generation: Arc<Mutex<Option<ActiveGeneration>>>,
     pending_generations: Arc<Mutex<VecDeque<PendingGeneration>>>,
@@ -195,6 +196,7 @@ impl MarinaRuntime {
             hardware,
             started_at: Instant::now(),
             loaded: Arc::new(Mutex::new(BTreeMap::new())),
+            residency_lock: Arc::new(Mutex::new(())),
             last_used: Arc::new(Mutex::new(BTreeMap::new())),
             active_generation: Arc::new(Mutex::new(None)),
             pending_generations: Arc::new(Mutex::new(VecDeque::new())),
@@ -608,6 +610,10 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
         if self
             .loaded
             .lock()
@@ -696,6 +702,10 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_unload(&self, id: &str) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
         if self
             .active_generation
             .lock()

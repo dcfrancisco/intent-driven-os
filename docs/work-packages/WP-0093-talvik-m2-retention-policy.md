@@ -30,8 +30,9 @@ Implementation slice verified on `feature/talvik-m2-runtime-ide`.
 
 Evidence: `runtime/src/service.rs` now separates incremental physical-memory
 admission from aggregate configured-budget accounting, preserves resident
-models during normal generation admission, protects pinned/active models, and
-uses bounded LRU recovery for load/reload. Deterministic runtime tests cover
+models during normal generation admission, serializes lifecycle admission and
+native load/unload transitions, protects pinned/active models, and uses
+bounded LRU recovery for load/reload. Deterministic runtime tests cover
 the exact memory boundary, resident-model accounting, pinning, eviction,
 reload, and queued cancellation. Native process-signal qualification also
 passes in parallel after the harness was isolated from shared user state.
