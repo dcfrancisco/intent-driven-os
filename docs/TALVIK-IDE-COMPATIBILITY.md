@@ -15,8 +15,8 @@ qualification remains NOT VERIFIED in this environment.
 - Persistent state and models: `$HOME/.marina`
 - DeepSeek GGUF SHA-256: `d040cc18521592f70c199396aeaa44cdc40224079156dc09d4283d745d9dc5fd`
 - Qwen GGUF SHA-256: `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`
-- Release CLI SHA-256: `65261a6307ff5d549a44fc63fee577eac493344a8853c600a8b95fbff3c42a8e`
-- Release daemon SHA-256: `ca1529dac6c7eb622a5b9408975f0049b2f56f9095cb1957b9898ad737a01462`
+- Release CLI SHA-256: `c289cfe8a3caf86946817fb0e3602c39e49a04a3c63cf40485b539829bfb0eb0`
+- Release daemon SHA-256: `cb231e8ec800c5819b1995467120bc269dabd48e3f853f8ce0a0b4604e3e21f7`
 
 The shell currently has `TALVIK_HTTP_ADDR=127.0.0.1:11434` and
 `TALVIK_HTTP_AUTH=true`. An explicit environment override or config file can
@@ -93,7 +93,7 @@ Expected-results checklist:
 ## Actual evidence status
 
 The source build and version identity were verified on this host at commit
-`41dc0a33f1b83cb7407c242792147539f80ec846`. The daemon was started with:
+`bfea51e47536435f040756fd4ef4dd595b94a6e1`. The daemon was started with:
 
 ```sh
 TALVIK_HTTP_ADDR=127.0.0.1:11434 TALVIK_HTTP_AUTH=true \
