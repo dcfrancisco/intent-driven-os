@@ -28,5 +28,19 @@ WP-0067, WP-0091; ADR-0013, ADR-0025.
 
 ## Status
 
-Owner-deferred external qualification; implementation procedure is prepared,
-but no real IDE PASS is claimed.
+Configuration and API preflight assets are implemented. Interactive external
+qualification remains blocked in the current execution environment and is
+owner validation, not a simulated PASS.
+
+Evidence:
+
+- `docs/qualification/continue-talvik-config.yaml.example`
+- `docs/qualification/continue-talvik-sample/`
+- `scripts/qualify-talvik-openai-edge.sh`
+- `console/src/bin/http.rs` request correlation diagnostics
+- `docs/TALVIK-IDE-COMPATIBILITY.md`
+
+The current host reports VS Code 1.142.0 and Continue 2.0.0. Starting the
+daemon for the preflight was attempted with the configured loopback listener,
+but the restricted execution environment returned `Operation not permitted`
+when creating the listener. No real Continue PASS is claimed.

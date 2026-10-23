@@ -1,61 +1,108 @@
-# Talvik IDE Compatibility and Qualification
+# Talvik IDE compatibility
 
-Status: procedure prepared; real external-client qualification is **BLOCKED / NOT VERIFIED**
-in the current environment. The available host reports VS Code 1.142.0 and
-Continue extension 2.0.0, but the active Continue configuration targets a
-different local endpoint and model. No isolated interactive Continue session
-was available for this run, so no Talvik IDE PASS is claimed.
+Status: configuration and HTTP preflight prepared; interactive Continue
+qualification remains NOT VERIFIED in this environment.
 
-Talvik exposes an authenticated OpenAI-compatible endpoint. The IDE is the
-client; Talvik remains an inference provider and does not execute workstation
-tools.
+## Host and daemon contract
 
-## Continue on VS Code
+- VS Code: 1.142.0, x64, commit `6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1`
+- Continue extension: 2.0.0, `continue.continue-2.0.0-darwin-x64`
+- Listener selected by the current shell: `127.0.0.1:11434`
+- API base for Continue: `http://127.0.0.1:11434/v1`
+- Authentication: bearer token required by default (`TALVIK_HTTP_AUTH=true`)
+- Registered coding model: `deepseek-coder-1.3b`
+- Alternate registered model: `qwen2.5-0.5b-instruct-q4_k_m`
+- Persistent state and models: `$HOME/.marina`
+- DeepSeek GGUF SHA-256: `d040cc18521592f70c199396aeaa44cdc40224079156dc09d4283d745d9dc5fd`
+- Qwen GGUF SHA-256: `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`
+- Release CLI SHA-256: `65261a6307ff5d549a44fc63fee577eac493344a8853c600a8b95fbff3c42a8e`
+- Release daemon SHA-256: `ca1529dac6c7eb622a5b9408975f0049b2f56f9095cb1957b9898ad737a01462`
 
-Configure a registered coding GGUF model using Continue's OpenAI-compatible
-provider:
+The shell currently has `TALVIK_HTTP_ADDR=127.0.0.1:11434` and
+`TALVIK_HTTP_AUTH=true`. An explicit environment override or config file can
+change those values; record the effective values in the qualification log.
 
-```yaml
-models:
-  - name: talvik-local
-    provider: openai
-    model: <registered-talvik-model-id>
-    apiBase: http://127.0.0.1:<configured-port>/v1
-    apiKey: <Talvik inference token>
+## Additive Continue configuration
+
+Use [continue-talvik-config.yaml.example](qualification/continue-talvik-config.yaml.example)
+as a separate Talvik-specific configuration. It does not modify the existing
+`$HOME/.continue/config.yaml`. Continue 2.0.0's installed YAML schema accepts
+the `openai` provider, `apiBase`, `model`, and `apiKey` fields. The example
+contains only a placeholder; insert a token locally and never commit the
+completed file.
+
+Create a scoped token without exposing it in this repository:
+
+```sh
+export TALVIK_CONTINUE_TOKEN="$($HOME/.marina/bin/talvik auth token create continue-local)"
 ```
 
-Qualification:
+Copy the example to a private config location, replace
+`REPLACE_WITH_TALVIK_TOKEN`, and select `Talvik DeepSeek Coder` in Continue.
+The installed Continue schema stores `apiKey` as a literal string; do not put
+an unexpanded shell variable in the YAML and assume it will be resolved.
 
-1. Start `talvikd`; record `talvikd --version --verbose`.
-2. Run `talvik --json version` and `talvik status --json`.
-3. Verify `/v1/models` succeeds with the token and fails without it.
-4. Select the model and request a small code change; verify streaming.
-5. Confirm no Reference local runner process or remote provider is configured or contacted.
-6. Cancel a request, then issue another and verify recovery.
+## API preflight
 
-Observed host evidence on 2026-10-24: `code --version` reported VS Code
-1.142.0 (x64, commit `6d62b1d5dace93a33b3a6d3eca1317bd5e15bcb1`) and the
-installed extension was `continue.continue-2.0.0-darwin-x64`. The `continue`
-command itself is not a usable qualification client in this shell. The next
-qualification attempt must launch VS Code interactively with the Talvik
-endpoint configured and capture the client session plus daemon logs.
+With `talvikd` running on the selected loopback address, run:
 
-Record IDE versions, model ID, GGUF SHA-256, endpoint, token scope (never the
-token), Talvik identity, timestamps, and redacted daemon/client logs.
+```sh
+TALVIK_CONTINUE_TOKEN="$TALVIK_CONTINUE_TOKEN" \
+  TALVIK_OPENAI_BASE_URL=http://127.0.0.1:11434/v1 \
+  TALVIK_MODEL_ID=deepseek-coder-1.3b \
+  scripts/qualify-talvik-openai-edge.sh 2>&1 | tee /tmp/talvik-continue-api.log
+```
 
-## Cline
+This checks model discovery, non-streaming coding output, SSE streaming with a
+terminal `[DONE]`, and the model's tool-call capability. A `501` tool response
+means the selected GGUF template does not support tools and is an explicit
+capability result, not a successful tool qualification.
 
-Use Cline's OpenAI-compatible custom endpoint and a model whose embedded chat
-template supports tools. Verify coding output, streaming, tool-call/tool-result
-round trip, invalid authentication, cancellation, recovery, and absence of
-Reference local runner or remote fallback. Tool support must be rejected for unsupported
-templates.
+Authentication failure must also be checked without printing the valid token:
 
-## Codex
+```sh
+curl -i -sS -H 'Authorization: Bearer invalid' \
+  http://127.0.0.1:11434/v1/models
+```
 
-Test only if the installed version documents a custom OpenAI-compatible provider.
-Do not modify Codex or infer support from HTTP tests. Otherwise record CAP-024
-as deferred by client capability.
+Expected status: `401`.
 
-Cross-compilation is not native runtime evidence. Capture endpoint/status/log
-evidence for every failed or blocked client attempt.
+## Interactive qualification
+
+Open `docs/qualification/continue-talvik-sample` as a small workspace. Submit
+the three prompts in its README, verify streamed coding output, cancel one
+request, and submit the next prompt. Capture the Continue/VS Code version, the
+selected model, the config hash with the token redacted, and the Talvik log.
+
+Talvik logs only request ID, model ID, stream/tool flags, terminal state, and
+token count. Correlate those lines with the Continue request; prompts and
+responses are not logged by default.
+
+Expected-results checklist:
+
+- [ ] Continue selects `Talvik DeepSeek Coder`.
+- [ ] `/v1/models` lists the selected model.
+- [ ] A coding response streams into Continue.
+- [ ] The Talvik log contains matching `request_id` and model lines.
+- [ ] Cancellation is followed by a successful new request.
+- [ ] Invalid authentication is rejected.
+- [ ] No alternate provider is configured or contacted.
+- [ ] Tool calls are either completed with a capable template or explicitly
+      rejected with the documented capability response.
+
+## Actual evidence status
+
+The source build and version identity were verified on this host at commit
+`41dc0a33f1b83cb7407c242792147539f80ec846`. The daemon was started with:
+
+```sh
+TALVIK_HTTP_ADDR=127.0.0.1:11434 TALVIK_HTTP_AUTH=true \
+  $HOME/.marina/bin/talvikd
+```
+
+The current restricted execution environment returned `Operation not
+permitted` while creating the loopback listener. Therefore model listing,
+chat, streaming, and tool-call HTTP results are NOT EXECUTED here, and no
+interactive Continue PASS is claimed. The owner can run the commands above in
+the normal user session and attach `/tmp/talvik-continue-api.log` plus the
+daemon stderr log.

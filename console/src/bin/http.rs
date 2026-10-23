@@ -459,6 +459,13 @@ fn generate(
     if let Err(error) = runtime.model_load(model) {
         return respond_error(stream, 409, error.to_string());
     }
+    eprintln!(
+        "Talvik HTTP generation started request_id={} model={} stream={} tools={}",
+        request_id,
+        model,
+        body.get("stream").and_then(Value::as_bool).unwrap_or(false),
+        tool_definitions.is_some()
+    );
     if tool_definitions.is_some() {
         let support = runtime.tool_support();
         if !support.supported {
@@ -527,6 +534,13 @@ fn generate(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation completed request_id={} model={} termination={:?} generated_tokens={}",
+                    request_id,
+                    model,
+                    result.statistics.termination,
+                    result.statistics.generated_tokens
+                );
                 let finish_reason = completion_finish_reason(result.statistics.termination);
                 let termination_reason =
                     completion_termination_reason(result.statistics.termination);
@@ -565,6 +579,10 @@ fn generate(
             }
             Ok(GenerationMessage::Cancelled(result)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation cancelled request_id={} model={} generated_tokens={}",
+                    request_id, model, result.statistics.generated_tokens
+                );
                 if streaming {
                     write!(stream, "data: [DONE]\n\n")?;
                     return stream.flush();
@@ -577,11 +595,15 @@ fn generate(
             }
             Ok(GenerationMessage::Failed(error)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation failed request_id={request_id} model={model} error={error}"
+                );
                 return respond_error(stream, 500, error.to_string());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
                 finish_owner(owners, &request_id);
+                eprintln!("Talvik HTTP generation timed_out request_id={request_id} model={model}");
                 if drain_cancelled_generation(&generation) {
                     return respond_error(stream, 504, "generation request timed out".to_owned());
                 }
