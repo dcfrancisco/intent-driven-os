@@ -48,9 +48,10 @@ decode larger prompts in chunks, stream each token piece incrementally, map
 `max_completion_tokens`, `temperature`, `top_p`, `top_k`, and `seed`, stop only
 on complete terminal markers, and expose prompt/first-token timing.
 
-Stage B is owned by WP-0098: each resident model receives a supervised native
-execution worker with a persistent model context strategy. Worker identity is
-still the exact Talvik model ID. The scheduler retains ownership of admission,
+Stage B is being implemented incrementally under WP-0098. The current slice
+gives each resident model an owned persistent native context behind the existing
+one-active-generation scheduler. Worker identity is still the exact Talvik
+model ID. The scheduler retains ownership of admission,
 pinning, FIFO fairness, eviction, authentication, cancellation, and public
 model state. A worker crash fails only its request and model, never the daemon
 or unrelated resident models.
@@ -59,6 +60,15 @@ Context reuse is conservative: cache keys include model digest, template,
 tokenized prompt prefix, context size, and native build identity. Any mismatch,
 cancelled mutation, failed decode, model unload, or worker restart invalidates
 the cache. Talvik must remain correct with caching disabled.
+
+The implemented slice reuses an exact formatted-token prefix by trimming the
+native sequence KV state with `llama_memory_seq_rm` and re-evaluating the final
+cached token to restore sampler state. It reports cache-hit and reused-token
+counts in generation metrics. A mismatch in model context size, formatted token
+prefix, cancellation, decode failure, unload, or restart drops the context.
+This is persistent in-process context ownership, not crash-isolated process
+workers; the latter remains open because a native assertion can still terminate
+the host process.
 
 ## Invariants
 
@@ -95,12 +105,14 @@ prompt larger than the physical batch, valid SSE completion, and timing fields.
 Stage B requires repeated-prefix and unrelated-prompt tests, model A/B
 isolation, cancellation recovery, worker crash recovery, unload/reload, memory
 pressure, and before/after TTFT and throughput measurements on each advertised
-platform. Interactive IDE evidence remains separate from HTTP compatibility.
+platform. The exact-prefix native Qwen test now verifies KV reuse and cache
+invalidation cases; its single-host timing is evidence only, not a performance
+claim. Interactive IDE evidence remains separate from HTTP compatibility.
 
 ## Consequences
 
 The immediate changes reduce avoidable per-token work and prevent context-sized
-graph batches. They do not remove the dominant cost of constructing and
-evaluating a fresh context for every request. Public claims therefore remain
-limited until WP-0098 completes persistent workers and uncontended native
-benchmarks.
+graph batches. They remove repeated context construction for compatible
+requests, while preserving a safe full-rebuild path for mismatches. Public
+performance claims remain limited until WP-0098 completes process isolation and
+uncontended native benchmarks.

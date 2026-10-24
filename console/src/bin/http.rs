@@ -571,7 +571,7 @@ fn generate(
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "time_to_first_token_ms": result.statistics.metrics_known.then_some(result.statistics.time_to_first_token_ms), "prompt_eval_time_ms": result.statistics.metrics_known.then_some(result.statistics.prompt_eval_time_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "time_to_first_token_ms": result.statistics.metrics_known.then_some(result.statistics.time_to_first_token_ms), "prompt_eval_time_ms": result.statistics.metrics_known.then_some(result.statistics.prompt_eval_time_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens), "cache_hit": result.statistics.cache_hit, "reused_prompt_tokens": result.statistics.reused_prompt_tokens}}),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -646,6 +646,18 @@ fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .unwrap_or(defaults.seed);
+    let stop_sequences = body
+        .get("stop")
+        .map(|value| match value {
+            Value::String(stop) => vec![stop.clone()],
+            Value::Array(values) => values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
     GenerationOptions {
         temperature,
         top_p,
@@ -653,6 +665,7 @@ fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
         max_tokens,
         seed,
         context_size,
+        stop_sequences,
     }
 }
 

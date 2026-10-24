@@ -18,9 +18,10 @@ The 2026-10-24 real Continue session established client connectivity but also
 exposed unacceptable warm-request latency and runaway output. ADR-0026 and
 WP-0098 now own CAP-030 through CAP-038. Bounded prompt batching, incremental
 token decoding, generation-option propagation, complete terminal-marker
-matching, and phase-specific metrics are implemented; persistent worker/context
-reuse and native crash isolation remain open. M2 performance qualification is
-therefore **NO-GO** even though the API connection works.
+matching, phase-specific metrics, persistent in-process context reuse, request
+stop strings, and repetition protection are implemented. Crash-isolated workers
+and fair uncontended performance qualification remain open. M2 performance
+qualification is therefore **NO-GO** even though the API connection works.
 
 ## Implemented P0
 
@@ -82,9 +83,10 @@ therefore **NO-GO** even though the API connection works.
 - The prior process-signal failures were a harness isolation defect: child
   processes inherited production config/registry/socket paths. No timeout was
   increased.
-- Persistent model workers, prompt/KV reuse, request stop strings, repetition
-  protection, per-model capability reporting, and native crash isolation remain
-  open under WP-0098/WP-0097.
+- Persistent in-process model contexts, prompt/KV reuse, request stop strings,
+  and repetition protection are implemented under WP-0098. Native
+  crash-isolated workers, per-model capability reporting, and uncontended
+  performance qualification remain open under WP-0098/WP-0097.
 
 - `cargo fmt --all`: passed.
 - `cargo test -p oid-console --bin talvik --bin talvikd`: passed (5 tests).

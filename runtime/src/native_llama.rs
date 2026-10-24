@@ -154,6 +154,7 @@ impl Backend for LlamaCppAdapter {
             top_k: request.options.top_k,
             context_size: request.options.context_size,
             seed: Some(request.options.seed),
+            stop_sequences: request.options.stop_sequences.clone(),
         };
         let stream = self
             .runner
@@ -216,6 +217,8 @@ impl Backend for LlamaCppAdapter {
                                 GenerationTermination::ContextLength
                             }
                         },
+                        cache_hit: stats.cache_hit,
+                        reused_prompt_tokens: stats.reused_prompt_tokens,
                     });
                 }
                 Ok(GenerationEvent::Cancelled(_)) => {

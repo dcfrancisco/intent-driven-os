@@ -187,6 +187,7 @@ impl ModelRunner for LlamaCppModelRunner {
                     request.top_p,
                     request.top_k,
                     request.seed.unwrap_or(0),
+                    &request.stop_sequences,
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;
@@ -213,6 +214,8 @@ impl ModelRunner for LlamaCppModelRunner {
                             GenerationTermination::ContextLength
                         }
                     },
+                    cache_hit: native_stats.cache_hit,
+                    reused_prompt_tokens: native_stats.reused_prompt_tokens,
                 };
                 Ok(stats)
             })();

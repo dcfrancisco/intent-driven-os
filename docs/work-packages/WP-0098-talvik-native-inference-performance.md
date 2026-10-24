@@ -27,7 +27,9 @@ ADR-0026; WP-0027, WP-0031, WP-0034, WP-0058, WP-0062, WP-0091, WP-0094.
    marker, and phase-timing Stage A changes.
 2. Add request stop sequences and bounded repetition protection.
 3. Design and implement supervised per-model native workers behind the current
-   backend contract.
+   backend contract. The current slice implements persistent in-process native
+   context ownership; crash-isolated process workers remain a separate open
+   stage.
 4. Add safe prompt-prefix/KV reuse with deterministic cache invalidation.
 5. Preserve exact model selection, FIFO one-active scheduling, cancellation,
    pinning, memory admission, and unload semantics.
@@ -81,8 +83,20 @@ generated tokens per second. Both reported `finish_reason=length`, 29 prompt
 tokens, and 8 completion tokens. The variation while the older production
 daemon remained resident confirms functional correctness but does not qualify
 performance. The run exposed and corrected a dropped throughput metric at the
-runtime bridge. Persistent workers, prompt/KV reuse, stop controls, repetition
-protection, and crash isolation remain OPEN.
+runtime bridge. Persistent model contexts, prompt/KV reuse, request stop
+controls, and repetition protection are implemented in the current in-process
+slice. Crash-isolated process workers and fair before/after performance
+qualification remain OPEN.
+
+Stage B implementation evidence (2026-10-24): persistent model contexts,
+exact formatted-token prefix KV reuse, request stop controls, and bounded
+repetition protection are implemented in-process. The real Qwen prefix test
+reported a cache hit and reused 26 prompt tokens. Its captured prompt
+evaluation times were 3.945 s cold and 7.802 s warm on a contested host, so
+this is correctness evidence rather than a speedup claim. Cache-key tests cover
+changed/shortened prefixes and context-size changes. Cancellation, decode
+failure, unload, and restart clear KV state. Crash-isolated process workers and
+uncontended before/after performance qualification remain OPEN.
 
 Verification on 2026-10-24:
 
@@ -94,5 +108,4 @@ Verification on 2026-10-24:
 - real Qwen short completion: PASS for loading, chat-template application,
   generation, bounded termination, metrics, and daemon shutdown.
 - long-prompt test crossed the former native assertion point with `n_ctx=2048`
-  and `n_batch=512`, but was manually cancelled under CPU contention; full
-  completion remains NOT VERIFIED.
+  and `n_batch=512` and passed on the real Qwen GGUF.

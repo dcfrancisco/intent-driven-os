@@ -121,6 +121,8 @@ pub struct GenerationRequest {
     pub context_size: u32,
     /// Optional deterministic seed.
     pub seed: Option<u32>,
+    /// Explicit strings that terminate generation without being emitted.
+    pub stop_sequences: Vec<String>,
 }
 
 impl GenerationRequest {
@@ -206,6 +208,10 @@ pub struct GenerationStats {
     pub tokens_per_second: Option<f64>,
     /// Why successful generation terminated.
     pub termination: GenerationTermination,
+    /// Whether a compatible prompt prefix was reused.
+    pub cache_hit: bool,
+    /// Number of prompt tokens reused from the persistent native context.
+    pub reused_prompt_tokens: u64,
 }
 
 /// Runtime-level model statistics.

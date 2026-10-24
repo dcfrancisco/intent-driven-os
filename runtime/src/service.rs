@@ -901,6 +901,8 @@ impl RuntimeService for MarinaRuntime {
                 context_tokens: statistics.context_tokens,
                 metrics_known: true,
                 termination: statistics.termination,
+                cache_hit: statistics.cache_hit,
+                reused_prompt_tokens: statistics.reused_prompt_tokens,
             };
             let result = GenerationResult {
                 request_id: request.request_id.clone(),
