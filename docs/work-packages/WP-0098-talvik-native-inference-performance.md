@@ -71,16 +71,18 @@ or mock test is not native performance qualification.
 
 ## Status
 
-In progress. Stage A is implemented and deterministic tests pass. A native
-Qwen smoke run against the isolated final release binary completed without the
-prior batch assertion. The bounded eight-token request finished with
-`finish_reason=length` in 12.533 seconds: 29 prompt tokens, 8 completion tokens,
-7.410 seconds prompt evaluation, and 7.411 seconds to first token. This is valid
-functional evidence, but not a comparative performance qualification because
-the host's older production daemon remained resident. The run exposed and
-corrected a dropped throughput metric at the runtime bridge. Persistent
-workers, prompt/KV reuse, stop controls, repetition protection, and crash
-isolation remain OPEN.
+In progress. Stage A is implemented and deterministic tests pass. Native Qwen
+smoke runs against isolated release binaries completed without the prior batch
+assertion. The first bounded eight-token run finished in 12.533 seconds, with
+7.410 seconds prompt evaluation and 7.411 seconds to first token. The final
+committed-source binary finished the same request in 18.534 seconds, with
+10.329 seconds prompt evaluation, 10.350 seconds to first token, and 0.432
+generated tokens per second. Both reported `finish_reason=length`, 29 prompt
+tokens, and 8 completion tokens. The variation while the older production
+daemon remained resident confirms functional correctness but does not qualify
+performance. The run exposed and corrected a dropped throughput metric at the
+runtime bridge. Persistent workers, prompt/KV reuse, stop controls, repetition
+protection, and crash isolation remain OPEN.
 
 Verification on 2026-10-24:
 

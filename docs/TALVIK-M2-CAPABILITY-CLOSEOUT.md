@@ -73,9 +73,12 @@ therefore **NO-GO** even though the API connection works.
 - Full workspace tests pass, including all six process-signal tests and the
   interrupted-download loopback test.
 - Strict workspace Clippy passes with all targets/features and `-D warnings`.
-- Isolated real-Qwen request produced 8 tokens and terminated by the requested
-  completion limit in 12.533 seconds; prompt evaluation/TTFT were 7.410/7.411
-  seconds. This confirms correctness but is not yet an acceptable IDE latency.
+- Isolated real-Qwen requests produced 8 tokens and terminated by the requested
+  completion limit. The first run took 12.533 seconds (7.410/7.411 seconds
+  prompt evaluation/TTFT); the final committed-source run took 18.534 seconds
+  (10.329/10.350 seconds prompt evaluation/TTFT, 0.432 generated tokens/sec).
+  This confirms correctness but the contention-sensitive latency is not yet
+  acceptable IDE performance.
 - The prior process-signal failures were a harness isolation defect: child
   processes inherited production config/registry/socket paths. No timeout was
   increased.
