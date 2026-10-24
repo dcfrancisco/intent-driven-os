@@ -683,6 +683,7 @@ impl RuntimeService for MarinaRuntime {
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
+        request.validate()?;
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
         if self

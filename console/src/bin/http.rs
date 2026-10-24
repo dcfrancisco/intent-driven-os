@@ -106,6 +106,105 @@ fn handle(
     });
     match (method, path) {
         ("GET", "/healthz") => respond_json(&mut stream, 200, json!({"status": "ok"})),
+        ("GET", "/api/tags") => {
+            let models = runtime
+                .model_list()
+                .into_iter()
+                .map(|model| {
+                    json!({
+                        "name": model.id,
+                        "model": model.name,
+                        "modified_at": "1970-01-01T00:00:00Z",
+                        "size": model.memory_requirement_mb * 1_048_576,
+                        "digest": model.checksum.unwrap_or_default(),
+                        "details": {
+                            "family": model.family,
+                            "quantization_level": model.quantization,
+                            "parameter_size": model.memory_requirement_mb.to_string()
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            respond_json(&mut stream, 200, json!({"models": models}))
+        }
+        ("POST", "/api/show") => {
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            let model_id = request
+                .get("name")
+                .or_else(|| request.get("model"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_data("name is required"))?;
+            match runtime.model_inspect(model_id) {
+                Some(model) => respond_json(
+                    &mut stream,
+                    200,
+                    json!({
+                        "license": "",
+                        "modelfile": "",
+                        "parameters": "",
+                        "template": "",
+                        "details": {
+                            "family": model.family,
+                            "quantization_level": model.quantization,
+                            "parameter_size": model.memory_requirement_mb.to_string()
+                        },
+                        "model_info": {"context_length": model.context_window}
+                    }),
+                ),
+                None => respond_error(&mut stream, 404, format!("model not found: {model_id}")),
+            }
+        }
+        ("POST", "/api/pull") => {
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            let source = request
+                .get("name")
+                .or_else(|| request.get("model"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_data("name is required"))?;
+            match runtime.model_pull(source, None, None) {
+                Ok(model) => respond_json(
+                    &mut stream,
+                    200,
+                    json!({"status":"success","digest":model.checksum,"total":model.memory_requirement_mb * 1_048_576,"completed":model.memory_requirement_mb * 1_048_576}),
+                ),
+                Err(error) => respond_error(&mut stream, 400, error.to_string()),
+            }
+        }
+        ("POST", "/api/generate" | "/api/chat") => {
+            if !scope_allowed(&identity, auth::INFERENCE) {
+                return respond_scope_error(&mut stream, auth::INFERENCE);
+            }
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            ollama_generate(&mut stream, runtime, &request, path == "/api/chat")?;
+            Ok(())
+        }
+        ("POST", "/api/embeddings") => {
+            if !scope_allowed(&identity, auth::INFERENCE) {
+                return respond_scope_error(&mut stream, auth::INFERENCE);
+            }
+            let request: Value =
+                serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
+            let model = request
+                .get("model")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_data("model is required"))?;
+            let input = request
+                .get("prompt")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid_data("prompt is required"))?;
+            runtime.model_load(model).map_err(|error| invalid_data(error.to_string()))?;
+            let values = runtime
+                .embeddings(&oid_runtime::backends::EmbeddingsRequest {
+                    model_id: model.to_owned(),
+                    input: input.to_owned(),
+                })
+                .map_err(|error| invalid_data(error.to_string()))?
+                .values;
+            respond_json(&mut stream, 200, json!({"embedding": values}))
+        }
         ("GET", "/v1/models") => {
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);
@@ -363,6 +462,34 @@ fn generate(
         .unwrap_or(128)
         .min(u64::from(u32::MAX));
     let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
+    let options = body
+        .get("options")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let temperature = body
+        .get("temperature")
+        .or_else(|| options.get("temperature"))
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(0.8);
+    let top_p = body
+        .get("top_p")
+        .or_else(|| options.get("top_p"))
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
+        .unwrap_or(0.95);
+    let top_k = body
+        .get("top_k")
+        .or_else(|| options.get("top_k"))
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(40);
+    let seed = body
+        .get("seed")
+        .or_else(|| options.get("seed"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0);
     let timeout = body
         .get("timeout_ms")
         .and_then(Value::as_u64)
@@ -398,7 +525,10 @@ fn generate(
         options: GenerationOptions {
             max_tokens,
             context_size: u32::try_from(context_size).unwrap_or(u32::MAX),
-            ..Default::default()
+            temperature,
+            top_p,
+            top_k,
+            seed,
         },
     }) {
         Ok(stream_result) => stream_result,
@@ -443,8 +573,12 @@ fn generate(
                         "model": model,
                         "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": Value::Null}]
                     });
-                    write!(stream, "data: {event}\n\n")?;
-                    stream.flush()?;
+                    if let Err(error) = write!(stream, "data: {event}\n\n").and_then(|_| stream.flush()) {
+                        generation.cancel();
+                        let _ = drain_cancelled_generation(&generation);
+                        finish_owner(owners, &request_id);
+                        return Err(error);
+                    }
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
@@ -534,6 +668,146 @@ fn completion_termination_reason(termination: GenerationTermination) -> &'static
         GenerationTermination::Stop => "stop",
         GenerationTermination::Length => "max_tokens",
         GenerationTermination::ContextLength => "context_length",
+    }
+}
+
+fn ollama_generate(
+    stream: &mut TcpStream,
+    runtime: &dyn RuntimeService,
+    body: &Value,
+    chat: bool,
+) -> std::io::Result<()> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_data("model is required"))?;
+    let prompt = if chat {
+        body.get("messages")
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid_data("messages is required"))?
+            .iter()
+            .map(|message| {
+                let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+                let content = message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid_data("message content must be a string"))?;
+                Ok(format!("{role}: {content}"))
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?
+            .join("\n")
+    } else {
+        body.get("prompt")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid_data("prompt is required"))?
+            .to_owned()
+    };
+    if prompt.trim().is_empty() {
+        return respond_error(stream, 400, "prompt must not be empty".to_owned());
+    }
+    let options = body
+        .get("options")
+        .cloned()
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    let number = |name: &str, default: f64| {
+        options
+            .get(name)
+            .and_then(Value::as_f64)
+            .unwrap_or(default)
+    };
+    let integer = |name: &str, default: i64| {
+        options
+            .get(name)
+            .and_then(Value::as_i64)
+            .unwrap_or(default)
+    };
+    let max_tokens = integer("num_predict", 128).clamp(1, i64::from(u32::MAX)) as u32;
+    let context_size = integer("num_ctx", 4096).clamp(1, i64::from(MAX_CONTEXT_TOKENS)) as u32;
+    runtime
+        .model_load(model)
+        .map_err(|error| invalid_data(error.to_string()))?;
+    let request_id = body
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map_or_else(unique_request_id, str::to_owned);
+    let generation = runtime
+        .generate(GenerationRequest {
+            request_id,
+            model_id: model.to_owned(),
+            prompt,
+            options: GenerationOptions {
+                temperature: number("temperature", 0.8) as f32,
+                top_p: number("top_p", 0.95) as f32,
+                top_k: integer("top_k", 40).clamp(1, i64::from(i32::MAX)) as i32,
+                max_tokens,
+                seed: integer("seed", 0).max(0) as u32,
+                context_size,
+            },
+        })
+        .map_err(|error| invalid_data(error.to_string()))?;
+    let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(true);
+    let mut output = String::new();
+    loop {
+        match generation.recv() {
+            Ok(GenerationMessage::Token(token)) => {
+                output.push_str(&token);
+                if streaming {
+                    let line = json!({"model": model, "response": token, "done": false});
+                    if let Err(error) = writeln!(stream, "{line}").and_then(|_| stream.flush()) {
+                        generation.cancel();
+                        let _ = drain_cancelled_generation(&generation);
+                        return Err(error);
+                    }
+            }
+            }
+            Ok(GenerationMessage::Completed(result)) => {
+                if streaming {
+                    return writeln!(
+                        stream,
+                        "{}",
+                        json!({
+                            "model": model,
+                            "response": "",
+                            "done": true,
+                            "done_reason": completion_termination_reason(result.statistics.termination),
+                            "context": result.statistics.context_tokens,
+                            "eval_count": result.statistics.generated_tokens,
+                            "eval_duration": result.statistics.inference_time_ms * 1_000_000
+                        })
+                    );
+                }
+                return respond_json(
+                    stream,
+                    200,
+                    json!({
+                        "model": model,
+                        "response": result.text,
+                        "done": true,
+                        "done_reason": completion_termination_reason(result.statistics.termination),
+                        "context": result.statistics.context_tokens,
+                        "eval_count": result.statistics.generated_tokens
+                    }),
+                );
+            }
+            Ok(GenerationMessage::Cancelled(result)) => {
+                if streaming {
+                    return writeln!(
+                        stream,
+                        "{}",
+                        json!({"model": model, "response": result.text, "done": true, "done_reason": "cancelled"})
+                    );
+                }
+                return respond_json(
+                    stream,
+                    200,
+                    json!({"model": model, "response": result.text, "done": true, "done_reason": "cancelled"}),
+                );
+            }
+            Ok(GenerationMessage::Failed(error)) => {
+                return respond_error(stream, 500, error.to_string());
+            }
+            Err(error) => return Err(std::io::Error::other(error)),
+        }
     }
 }
 

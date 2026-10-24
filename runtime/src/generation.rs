@@ -34,6 +34,43 @@ impl Default for GenerationOptions {
             context_size: 4096,
         }
     }
+
+    impl GenerationOptions {
+        /// Validate controls before admission or backend execution.
+        ///
+        /// # Errors
+        ///
+        /// Returns a runtime error when a caller supplies an unsafe or unsupported
+        /// generation value.
+        pub fn validate(&self) -> Result<(), RuntimeError> {
+            if self.max_tokens == 0 {
+                return Err(RuntimeError::InvalidConfiguration(
+                    "max_tokens must be greater than zero".to_owned(),
+                ));
+            }
+            if !self.temperature.is_finite() || self.temperature < 0.0 {
+                return Err(RuntimeError::InvalidConfiguration(
+                    "temperature must be finite and non-negative".to_owned(),
+                ));
+            }
+            if !self.top_p.is_finite() || self.top_p <= 0.0 || self.top_p > 1.0 {
+                return Err(RuntimeError::InvalidConfiguration(
+                    "top_p must be greater than zero and at most one".to_owned(),
+                ));
+            }
+            if self.top_k <= 0 {
+                return Err(RuntimeError::InvalidConfiguration(
+                    "top_k must be greater than zero".to_owned(),
+                ));
+            }
+            if self.context_size == 0 {
+                return Err(RuntimeError::InvalidConfiguration(
+                    "context_size must be greater than zero".to_owned(),
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 /// One independent generation request.
@@ -47,6 +84,32 @@ pub struct GenerationRequest {
     pub prompt: String,
     /// Generation options.
     pub options: GenerationOptions,
+}
+
+impl GenerationRequest {
+    /// Validate request identity, prompt, and generation controls.
+    ///
+    /// # Errors
+    ///
+    /// Returns a runtime error when required request data is missing.
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        if self.request_id.trim().is_empty() {
+            return Err(RuntimeError::InvalidConfiguration(
+                "request_id must not be empty".to_owned(),
+            ));
+        }
+        if self.model_id.trim().is_empty() {
+            return Err(RuntimeError::InvalidModel(
+                "model_id must not be empty".to_owned(),
+            ));
+        }
+        if self.prompt.trim().is_empty() {
+            return Err(RuntimeError::InvalidConfiguration(
+                "prompt must not be empty".to_owned(),
+            ));
+        }
+        self.options.validate()
+    }
 }
 
 /// Generation performance measurements.
