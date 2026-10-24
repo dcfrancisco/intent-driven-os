@@ -238,6 +238,12 @@ mod ffi {
         pub fn llama_sampler_init_top_k(k: i32) -> *mut c_void;
         pub fn llama_sampler_init_top_p(p: f32, min_keep: usize) -> *mut c_void;
         pub fn llama_sampler_init_temp(t: f32) -> *mut c_void;
+        pub fn llama_sampler_init_penalties(
+            penalty_last_n: i32,
+            penalty_repeat: f32,
+            penalty_freq: f32,
+            penalty_present: f32,
+        ) -> *mut c_void;
         pub fn llama_sampler_init_dist(seed: u32) -> *mut c_void;
         pub fn llama_sampler_sample(sampler: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
         pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
@@ -871,6 +877,11 @@ impl NativeModel {
                 [
                     ffi::llama_sampler_init_top_k(top_k),
                     ffi::llama_sampler_init_top_p(top_p, 1),
+                    // Match the practical local-runner default: discourage
+                    // runaway repeated fragments while leaving frequency and
+                    // presence penalties disabled unless they become part of
+                    // the public request contract.
+                    ffi::llama_sampler_init_penalties(64, 1.1, 0.0, 0.0),
                     ffi::llama_sampler_init_temp(temperature),
                     ffi::llama_sampler_init_dist(seed),
                 ]
