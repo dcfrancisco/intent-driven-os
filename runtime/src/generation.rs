@@ -21,6 +21,8 @@ pub struct GenerationOptions {
     pub seed: u32,
     /// Requested context size.
     pub context_size: u32,
+    /// Explicit strings that terminate generation without being emitted.
+    pub stop_sequences: Vec<String>,
 }
 
 impl Default for GenerationOptions {
@@ -32,6 +34,7 @@ impl Default for GenerationOptions {
             max_tokens: 128,
             seed: 0,
             context_size: 4096,
+            stop_sequences: Vec::new(),
         }
     }
 }
@@ -60,6 +63,10 @@ pub struct GenerationStatistics {
     pub tokens_per_second: f64,
     /// End-to-end latency in milliseconds.
     pub latency_ms: u128,
+    /// Time until the first generated token in milliseconds.
+    pub time_to_first_token_ms: u128,
+    /// Time spent evaluating the prompt in milliseconds.
+    pub prompt_eval_time_ms: u128,
     /// Total backend inference time in milliseconds.
     pub inference_time_ms: u128,
     /// Context tokens used.
@@ -69,6 +76,10 @@ pub struct GenerationStatistics {
     pub metrics_known: bool,
     /// Why successful generation terminated.
     pub termination: GenerationTermination,
+    /// Whether a compatible prompt prefix was reused.
+    pub cache_hit: bool,
+    /// Number of prompt tokens reused from the persistent native context.
+    pub reused_prompt_tokens: u64,
 }
 
 /// Reason a generation reached its successful terminal boundary.

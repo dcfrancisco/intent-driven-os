@@ -325,7 +325,7 @@ Continue 2.0.0 is installed, but the real UI request could not be submitted
 because macOS Accessibility denied automation (error 1002). No Cline session
 was available. The IDE gate is NOT VERIFIED; the self-contained procedure is
 `docs/qualification/continue-talvik-m1.md`. The temporary Continue config
-contained only Talvik and no Ollama or remote fallback.
+contained only Talvik and no Reference local runner or remote fallback.
 
 The M1 release decision remains **NO-GO** until native multi-model evidence is
 available for every supported platform and at least one real IDE assistant

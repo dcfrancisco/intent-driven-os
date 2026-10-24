@@ -78,6 +78,27 @@ sampling-controlled qualification concern, not a process-exit assertion.
   checksums in the registry.
 - [ ] Windows and macOS arm64 native qualification remain WP-0079/WP-0080.
 
+### Talvik M2 starting backlog — 2026-10-23
+
+- [ ] WP-0091: expose truthful resident-model and scheduler diagnostics and
+  justify the `/api/tags` and `/api/ps` compatibility subset.
+- [ ] WP-0092: qualify a real Continue/Cline coding workflow; Codex support is
+  documented only where the installed client permits it.
+- [ ] WP-0093: make keep-alive/idle retention and resource-pressure behavior
+  explicit without changing one-active-generation safety.
+- [ ] WP-0094: measure concurrent inference before authorizing implementation;
+  do not infer safety from multi-model residency.
+- [ ] WP-0095: qualify consistent CLI, daemon, IPC, and HTTP build identity.
+- [ ] WP-0096: retain the Reference local runner endpoint gap register; implement additional
+  routes only when a real client requires them.
+- [ ] WP-0097: qualify model profiles, aliases, metadata inspection, and
+  registry deduplication without introducing OCI distribution.
+- [ ] WP-0098: complete persistent native workers, prompt/KV reuse, request
+  stop and repetition safety, crash isolation, and uncontended performance
+  qualification. Stage A bounded batching and incremental decoding are done.
+- [ ] WP-0100/0101/0102/0103: schedule GPU, multimodal, MarinaOS integration,
+  and alternate-engine decisions for later milestones.
+
 ## v0.1 — Contracts and local foundation
 
 ### Registry and models
@@ -128,7 +149,7 @@ sampling-controlled qualification concern, not a process-exit assertion.
   evidence integration. See WP-0037.
 - [ ] Define OpenAI-compatible chat/completions translation, streaming mapping, errors, and capability gaps.
 - [ ] Evaluate and specify a second adapter from vLLM, ONNX Runtime, OpenVINO, or TensorRT-LLM.
-- [ ] Define Ollama and Docker Model Runner adapter boundaries.
+- [ ] Define Reference local runner and Docker Model Runner adapter boundaries.
 - [ ] Define remote OpenAI-compatible provider policy, credential isolation, endpoint health, and cost attribution.
 - [ ] Define plugin discovery, manifest, API compatibility, signing, trust, isolation, and revocation.
 - [ ] Define policy profiles for shell, desktop, background services, local applications, and OIP clients.

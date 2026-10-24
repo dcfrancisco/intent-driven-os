@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Make OID easy to adopt from Ollama-like and OpenAI-compatible clients without
+Make OID easy to adopt from Reference local runner-like and OpenAI-compatible clients without
 turning either external protocol into the internal architecture.
 
 ## Scope

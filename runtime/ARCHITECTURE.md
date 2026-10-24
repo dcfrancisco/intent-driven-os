@@ -40,7 +40,7 @@ flowchart TB
     subgraph Edge[Marina API edge]
         Native[Versioned native API]
         OpenAI[OpenAI-compatible API]
-        Ollama[Ollama-compatible API]
+        Reference local runner[Reference local runner-compatible API]
         Anthropic[Anthropic-compatible API]
         MCP[MCP / agent control surface]
     end
@@ -64,12 +64,12 @@ flowchart TB
     OID --> Native
     Assistants --> OpenAI
     SDK --> OpenAI
-    Assistants --> Ollama
+    Assistants --> Reference local runner
     Assistants --> Anthropic
     Assistants --> MCP
     Native --> Auth
     OpenAI --> Auth
-    Ollama --> Auth
+    Reference local runner --> Auth
     Anthropic --> Auth
     MCP --> Auth
     Auth --> Sessions
@@ -87,10 +87,10 @@ flowchart TB
 
 ### Capability matrix
 
-| Plane | Ollama-like capability | Docker Model Runner-like capability | OmniRoute-like capability | Marina status |
+| Plane | Reference local runner-like capability | Docker Model Runner-like capability | OmniRoute-like capability | Marina status |
 | --- | --- | --- | --- | --- |
 | Model lifecycle | pull, list, show, copy, delete, load/unload, version | model pull/package/list/inspect and on-demand load | provider/model aliases | Local GGUF pull/list/load exists; full lifecycle planned |
-| Inference | generate, chat, streaming, keep-alive | OpenAI/Ollama/Anthropic-compatible inference and embeddings | one endpoint across providers | Local streaming exists; HTTP compatibility planned |
+| Inference | generate, chat, streaming, keep-alive | OpenAI/Reference local runner/Anthropic-compatible inference and embeddings | one endpoint across providers | Local streaming exists; HTTP compatibility planned |
 | Model features | tools, structured output, images, embeddings, templates/parameters | embeddings, engine selection, image generation where supported | capability-aware model/provider selection | Capability contract exists; features are staged |
 | Routing | local model selection | engine/model selection | scoring, fallback, retries, quota, circuit breakers, cost/latency policy | Router contract planned; not yet production-complete |
 | Distribution | model library and local cache | OCI/Hugging Face packaging | provider credential/account management | GGUF local/HTTP import exists; OCI/provider management planned |
@@ -129,11 +129,11 @@ service lifecycle. Compatibility endpoints translate into this API:
 
 - OpenAI-compatible `/v1/models`, `/v1/chat/completions`,
   `/v1/completions`, and `/v1/embeddings`.
-- Ollama-compatible `/api/generate`, `/api/chat`, `/api/tags`, `/api/show`,
+- Reference local runner-compatible `/api/generate`, `/api/chat`, `/api/tags`, `/api/show`,
   `/api/pull`, `/api/ps`, and model lifecycle endpoints where semantics map
   cleanly.
 - Anthropic-compatible messages are an optional compatibility edge after the
-  OpenAI/Ollama surfaces are stable.
+  OpenAI/Reference local runner surfaces are stable.
 - MCP exposes bounded management and assistant capabilities; it is not a
   bypass around authorization or evidence.
 
@@ -171,7 +171,7 @@ runtime API.
 `ModelDiscovery` recursively scans configured directories for case-insensitive
 `.gguf` files and registers metadata without opening a model. The canonical
 default is `$HOME/.marina/models`; legacy user data, `~/Models`, Hugging
-Face/Python caches, ModelScope caches, and Ollama caches remain discoverable
+Face/Python caches, ModelScope caches, and Reference local runner caches remain discoverable
 for migration and interoperability. Repository-local `./models` is not an
 operational model store.
 
@@ -253,7 +253,7 @@ The common adapter contract should cover discovery, capability reporting, load/u
 
 Initial adapter: `llama.cpp`.
 
-Planned adapters: vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Ollama, Docker Model Runner, and remote OpenAI-compatible providers.
+Planned adapters: vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Reference local runner, Docker Model Runner, and remote OpenAI-compatible providers.
 
 ## Security and trust
 

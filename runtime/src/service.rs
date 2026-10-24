@@ -8,8 +8,8 @@ use crate::{
     hardware::{HardwareService, HardwareSnapshot},
     models::{ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus},
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
-    LlamaCppAdapter, RuntimeApi, RuntimeConfig, RuntimeError, RuntimeService, RuntimeSnapshot,
-    RuntimeStatus,
+    LlamaCppAdapter, ResidentModelSnapshot, RuntimeApi, RuntimeConfig, RuntimeError,
+    RuntimeService, RuntimeSnapshot, RuntimeStatus,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -136,6 +136,7 @@ pub struct MarinaRuntime {
     hardware: HardwareService,
     started_at: Instant,
     loaded: Arc<Mutex<BTreeMap<String, LoadedModel>>>,
+    residency_lock: Arc<Mutex<()>>,
     last_used: Arc<Mutex<BTreeMap<String, Instant>>>,
     active_generation: Arc<Mutex<Option<ActiveGeneration>>>,
     pending_generations: Arc<Mutex<VecDeque<PendingGeneration>>>,
@@ -195,6 +196,7 @@ impl MarinaRuntime {
             hardware,
             started_at: Instant::now(),
             loaded: Arc::new(Mutex::new(BTreeMap::new())),
+            residency_lock: Arc::new(Mutex::new(())),
             last_used: Arc::new(Mutex::new(BTreeMap::new())),
             active_generation: Arc::new(Mutex::new(None)),
             pending_generations: Arc::new(Mutex::new(VecDeque::new())),
@@ -407,14 +409,16 @@ fn admit_generation(
     request: &GenerationRequest,
     policy: &ResourcePolicy,
 ) -> Result<(), RuntimeError> {
-    let model_bytes = loaded
+    let resident = loaded
         .lock()
-        .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
-        .values()
-        .map(|model| model.memory_bytes)
-        .sum();
-    admit_memory(
+        .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?;
+    let model_bytes = resident
+        .get(&request.model_id)
+        .map_or(0, |model| model.memory_bytes);
+    let resident_bytes = resident.values().map(|model| model.memory_bytes).sum();
+    admit_memory_with_resident(
         hardware.snapshot().available_ram_bytes,
+        resident_bytes,
         model_bytes,
         request.options.context_size,
         policy,
@@ -425,9 +429,20 @@ const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
 const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
 const DEFAULT_CONTEXT_SIZE: u32 = 4_096;
 
+#[cfg(test)]
 fn admit_memory(
     available: Option<u64>,
     model_bytes: u64,
+    context_size: u32,
+    policy: &ResourcePolicy,
+) -> Result<(), RuntimeError> {
+    admit_memory_with_resident(available, 0, model_bytes, context_size, policy)
+}
+
+fn admit_memory_with_resident(
+    available: Option<u64>,
+    resident_bytes: u64,
+    incremental_model_bytes: u64,
     context_size: u32,
     policy: &ResourcePolicy,
 ) -> Result<(), RuntimeError> {
@@ -441,19 +456,27 @@ fn admit_memory(
         .ok_or_else(|| {
             RuntimeError::ModelLifecycle("context memory estimate overflow".to_owned())
         })?;
-    let required = model_bytes
+    let incremental_required = incremental_model_bytes
         .saturating_add(context_bytes)
         .saturating_add(policy.safety_margin_bytes);
-    let effective_available = policy
-        .memory_budget_bytes
-        .map_or(available, |budget| available.min(budget));
-    if effective_available < required {
+    let budget_required = resident_bytes.saturating_add(incremental_required);
+    if available < incremental_required {
         return Err(RuntimeError::ResourceAdmission {
             retryable: true,
             message: format!(
-                "memory admission rejected: available={effective_available} required={required} model={model_bytes} context={context_bytes}"
+                "memory admission rejected: available={available} required={incremental_required} model={incremental_model_bytes} context={context_bytes} resident={resident_bytes}"
             ),
         });
+    }
+    if let Some(budget) = policy.memory_budget_bytes {
+        if budget < budget_required {
+            return Err(RuntimeError::ResourceAdmission {
+                retryable: true,
+                message: format!(
+                    "memory budget rejected: budget={budget} required={budget_required} model={incremental_model_bytes} context={context_bytes} resident={resident_bytes}"
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -464,6 +487,36 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn snapshot(&self) -> RuntimeSnapshot {
+        let last_used = self
+            .last_used
+            .lock()
+            .map(|last_used| last_used.clone())
+            .unwrap_or_default();
+        let resident_models = self
+            .loaded
+            .lock()
+            .map(|loaded| {
+                loaded
+                    .values()
+                    .map(|model| ResidentModelSnapshot {
+                        id: model.model_id.clone(),
+                        memory_bytes: Some(model.memory_bytes),
+                        idle_seconds: last_used
+                            .get(&model.model_id)
+                            .copied()
+                            .map_or(0, |used| used.elapsed().as_secs()),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let pending_requests = self
+            .pending_generations
+            .lock()
+            .map_or(0, |pending| pending.len());
+        let active_requests = self
+            .active_generation
+            .lock()
+            .map_or(0, |active| usize::from(active.is_some()));
         RuntimeSnapshot {
             health: "Healthy",
             backend: self
@@ -492,6 +545,12 @@ impl RuntimeService for MarinaRuntime {
                 .lock()
                 .map(|loaded| loaded.keys().cloned().collect())
                 .unwrap_or_default(),
+            resident_models,
+            pending_requests,
+            active_requests,
+            queue_capacity: self.resource_policy.queue_capacity,
+            automatic_eviction: self.resource_policy.automatic_eviction,
+            idle_retention_seconds: self.resource_policy.idle_retention.as_secs(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
             backend_version: self
                 .backends
@@ -551,6 +610,10 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
         if self
             .loaded
             .lock()
@@ -594,9 +657,10 @@ impl RuntimeService for MarinaRuntime {
         // request is already known to be impossible. The backend-reported
         // size is checked again after native loading because a GGUF may need
         // additional repack/working memory beyond its registry estimate.
-        admit_memory(
+        admit_memory_with_resident(
             self.hardware.snapshot().available_ram_bytes,
-            resident_bytes.saturating_add(estimated_model_bytes),
+            resident_bytes,
+            estimated_model_bytes,
             DEFAULT_CONTEXT_SIZE,
             &self.resource_policy,
         )?;
@@ -604,10 +668,10 @@ impl RuntimeService for MarinaRuntime {
         self.models.set_status(id, &ModelStatus::Loading)?;
         match self.backends.load_model(&model) {
             Ok(loaded) => {
-                let actual_total = resident_bytes.saturating_add(loaded.memory_bytes);
-                if let Err(error) = admit_memory(
+                if let Err(error) = admit_memory_with_resident(
                     self.hardware.snapshot().available_ram_bytes,
-                    actual_total,
+                    resident_bytes,
+                    loaded.memory_bytes,
                     DEFAULT_CONTEXT_SIZE,
                     &self.resource_policy,
                 ) {
@@ -638,6 +702,10 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_unload(&self, id: &str) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
         if self
             .active_generation
             .lock()
@@ -825,16 +893,16 @@ impl RuntimeService for MarinaRuntime {
             let statistics = GenerationStatistics {
                 prompt_tokens: statistics.prompt_tokens,
                 generated_tokens: statistics.generated_tokens,
-                tokens_per_second: if latency_ms == 0 {
-                    statistics.generated_tokens as f64
-                } else {
-                    statistics.generated_tokens as f64 / (latency_ms as f64 / 1000.0)
-                },
+                tokens_per_second: statistics.tokens_per_second,
                 latency_ms,
-                inference_time_ms: latency_ms,
+                time_to_first_token_ms: statistics.time_to_first_token_ms,
+                prompt_eval_time_ms: statistics.prompt_eval_time_ms,
+                inference_time_ms: statistics.inference_time_ms,
                 context_tokens: statistics.context_tokens,
                 metrics_known: true,
                 termination: statistics.termination,
+                cache_hit: statistics.cache_hit,
+                reused_prompt_tokens: statistics.reused_prompt_tokens,
             };
             let result = GenerationResult {
                 request_id: request.request_id.clone(),
@@ -870,8 +938,26 @@ impl RuntimeService for MarinaRuntime {
             if let Some((active_id, _, cancellation)) = active.as_ref() {
                 if active_id == request_id {
                     cancellation.store(true, Ordering::SeqCst);
+                    return;
                 }
             }
+        }
+        let pending = self.pending_generations.lock().ok().and_then(|mut queue| {
+            queue
+                .iter()
+                .position(|pending| pending.request.request_id == request_id)
+                .and_then(|position| queue.remove(position))
+        });
+        if let Some(pending) = pending {
+            pending.cancellation.store(true, Ordering::SeqCst);
+            let _ = pending
+                .sender
+                .send(GenerationMessage::Cancelled(GenerationResult {
+                    request_id: pending.request.request_id,
+                    generation_id: String::new(),
+                    text: String::new(),
+                    statistics: GenerationStatistics::default(),
+                }));
         }
     }
 
@@ -940,6 +1026,9 @@ mod tests {
         LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry, ModelStatus, RuntimeService,
     };
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{mpsc, Arc};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn marina_runtime_is_deterministic_and_publishes_events() {
@@ -1071,6 +1160,147 @@ mod tests {
     }
 
     #[test]
+    fn resident_model_is_not_counted_as_a_new_physical_allocation() {
+        let policy = ResourcePolicy::default();
+        let resident = 1_596_822_528;
+        let available = 67_108_864 + SAFETY_MARGIN_BYTES;
+        assert!(
+            super::admit_memory_with_resident(Some(available), resident, 0, 4_096, &policy,)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn aggregate_budget_includes_resident_models_once() {
+        let policy = ResourcePolicy {
+            memory_budget_bytes: Some(2_000),
+            safety_margin_bytes: 100,
+            ..ResourcePolicy::default()
+        };
+        assert!(super::admit_memory_with_resident(Some(10_000), 1_000, 0, 0, &policy).is_ok());
+        assert!(super::admit_memory_with_resident(Some(10_000), 1_900, 1, 0, &policy).is_err());
+    }
+
+    #[test]
+    fn retention_selects_expired_lru_and_respects_pinning_and_active_requests() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.idle_retention = Duration::from_secs(60);
+        runtime.loaded.lock().expect("loaded lock").extend([
+            (
+                "alpha".to_owned(),
+                crate::backends::LoadedModel {
+                    model_id: "alpha".to_owned(),
+                    memory_bytes: 1,
+                },
+            ),
+            (
+                "beta".to_owned(),
+                crate::backends::LoadedModel {
+                    model_id: "beta".to_owned(),
+                    memory_bytes: 1,
+                },
+            ),
+        ]);
+        let expired = Instant::now()
+            .checked_sub(Duration::from_secs(120))
+            .expect("test duration is representable");
+        runtime
+            .last_used
+            .lock()
+            .expect("last-used lock")
+            .extend([("alpha".to_owned(), expired), ("beta".to_owned(), expired)]);
+
+        assert_eq!(runtime.eviction_candidate("none").as_deref(), Some("alpha"));
+        runtime
+            .resource_policy
+            .pinned_models
+            .insert("alpha".to_owned());
+        assert_eq!(runtime.eviction_candidate("none").as_deref(), Some("beta"));
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "beta".to_owned(),
+            "generation".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        assert_eq!(runtime.eviction_candidate("none"), None);
+    }
+
+    #[test]
+    fn retention_keeps_recent_idle_models_until_the_expiry_boundary() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.idle_retention = Duration::from_secs(60);
+        runtime.loaded.lock().expect("loaded lock").insert(
+            "recent".to_owned(),
+            crate::backends::LoadedModel {
+                model_id: "recent".to_owned(),
+                memory_bytes: 1,
+            },
+        );
+        runtime
+            .last_used
+            .lock()
+            .expect("last-used lock")
+            .insert("recent".to_owned(), Instant::now());
+        assert_eq!(runtime.eviction_candidate("none"), None);
+    }
+
+    #[test]
+    fn queue_capacity_and_admission_deadline_are_bounded() {
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig::default(),
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime.resource_policy.queue_capacity = 1;
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "active".to_owned(),
+            "generation".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        let request = |id: &str| GenerationRequest {
+            request_id: id.to_owned(),
+            model_id: "model".to_owned(),
+            prompt: "prompt".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let queued = runtime
+            .generate(request("queued"))
+            .expect("queue one request");
+        assert!(matches!(
+            runtime.generate(request("overflow")),
+            Err(oid_shared::RuntimeError::ResourceAdmission { .. })
+        ));
+        runtime.cancel_generation_for("queued");
+        assert_eq!(runtime.snapshot().pending_requests, 0);
+        let (sender, receiver) = mpsc::channel();
+        runtime
+            .pending_generations
+            .lock()
+            .expect("queue lock")
+            .push_back(super::PendingGeneration {
+                request: request("expired"),
+                sender,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                enqueued_at: Instant::now()
+                    .checked_sub(Duration::from_secs(31))
+                    .expect("test duration is representable"),
+            });
+        runtime.start_next_queued();
+        assert!(matches!(
+            receiver.recv().expect("deadline response"),
+            GenerationMessage::Failed(oid_shared::RuntimeError::ResourceAdmission { .. })
+        ));
+        queued.cancel();
+    }
+
+    #[test]
     fn rejected_model_load_preserves_existing_resident_model() {
         let root = std::env::temp_dir().join(format!(
             "oid-runtime-memory-admission-{}-{}",
@@ -1153,6 +1383,7 @@ mod tests {
                 ..HardwareSnapshot::default()
             }),
         );
+        runtime.resource_policy.max_resident_models = 1;
         for id in ["alpha", "beta"] {
             runtime
                 .models
@@ -1207,7 +1438,8 @@ mod tests {
                 options: GenerationOptions::default(),
             })
             .expect("queued generation");
-        queued.cancel();
+        runtime.cancel_generation_for("queued");
+        assert_eq!(runtime.snapshot().pending_requests, 0);
         first.cancel();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -1312,6 +1544,14 @@ mod tests {
             runtime.snapshot().loaded_models,
             vec!["alpha".to_owned(), "beta".to_owned()]
         );
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.resident_models.len(), 2);
+        assert_eq!(snapshot.pending_requests, 0);
+        assert_eq!(snapshot.active_requests, 0);
+        assert!(snapshot
+            .resident_models
+            .iter()
+            .all(|model| model.memory_bytes == Some(1_048_576)));
         runtime.model_unload("alpha").expect("unload alpha");
         assert_eq!(runtime.snapshot().loaded_models, vec!["beta".to_owned()]);
         runtime.model_unload("beta").expect("unload beta");

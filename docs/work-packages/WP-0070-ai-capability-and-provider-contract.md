@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the canonical AI service contract beneath Ollama, OpenAI, Anthropic,
+Define the canonical AI service contract beneath Reference local runner, OpenAI, Anthropic,
 MCP, and future A2A compatibility edges.
 
 ## Scope

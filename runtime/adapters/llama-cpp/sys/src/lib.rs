@@ -11,9 +11,13 @@
 use std::ffi::c_void;
 #[cfg(native_llama_cpp)]
 use std::ffi::{c_char, c_void, CStr, CString};
-use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicPtr};
+use std::sync::Mutex;
+use std::time::Duration;
+#[cfg(native_llama_cpp)]
+use std::time::Instant;
 
 #[cfg(any(native_llama_cpp, test))]
 const LLAMA_DECODE_ABORTED: i32 = 2;
@@ -133,6 +137,47 @@ struct Batch {
 }
 
 #[cfg(native_llama_cpp)]
+#[derive(Debug)]
+struct PersistentContext {
+    pointer: *mut c_void,
+    context_size: u32,
+    prompt_tokens: Vec<i32>,
+    relay: Box<CancellationRelay>,
+}
+
+#[cfg(native_llama_cpp)]
+unsafe impl Send for PersistentContext {}
+
+#[cfg(native_llama_cpp)]
+#[derive(Debug)]
+struct CancellationRelay {
+    current: AtomicPtr<AtomicBool>,
+}
+
+#[cfg(native_llama_cpp)]
+struct CancellationGuard(*const CancellationRelay);
+
+#[cfg(native_llama_cpp)]
+impl Drop for CancellationGuard {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.0)
+                .current
+                .store(std::ptr::null_mut(), Ordering::SeqCst);
+        }
+    }
+}
+
+#[cfg(native_llama_cpp)]
+impl Drop for PersistentContext {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::llama_free(self.pointer);
+        }
+    }
+}
+
+#[cfg(native_llama_cpp)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SamplerChainParams {
@@ -144,7 +189,9 @@ unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
     if data.is_null() {
         return false;
     }
-    (*data.cast::<AtomicBool>()).load(Ordering::SeqCst)
+    let relay = &*data.cast::<CancellationRelay>();
+    let current = relay.current.load(Ordering::SeqCst);
+    !current.is_null() && (*current).load(Ordering::SeqCst)
 }
 
 #[cfg(native_llama_cpp)]
@@ -180,6 +227,9 @@ mod ffi {
         pub fn llama_context_default_params() -> ContextParams;
         pub fn llama_init_from_model(model: *mut c_void, params: ContextParams) -> *mut c_void;
         pub fn llama_free(ctx: *mut c_void);
+        pub fn llama_get_memory(ctx: *mut c_void) -> *mut c_void;
+        pub fn llama_memory_clear(memory: *mut c_void, data: bool);
+        pub fn llama_memory_seq_rm(memory: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
         pub fn llama_batch_get_one(tokens: *mut i32, n_tokens: i32) -> Batch;
         pub fn llama_decode(ctx: *mut c_void, batch: Batch) -> i32;
         pub fn llama_sampler_chain_default_params() -> SamplerChainParams;
@@ -188,19 +238,24 @@ mod ffi {
         pub fn llama_sampler_init_top_k(k: i32) -> *mut c_void;
         pub fn llama_sampler_init_top_p(p: f32, min_keep: usize) -> *mut c_void;
         pub fn llama_sampler_init_temp(t: f32) -> *mut c_void;
+        pub fn llama_sampler_init_penalties(
+            penalty_last_n: i32,
+            penalty_repeat: f32,
+            penalty_freq: f32,
+            penalty_present: f32,
+        ) -> *mut c_void;
         pub fn llama_sampler_init_dist(seed: u32) -> *mut c_void;
         pub fn llama_sampler_sample(sampler: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
         pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
         pub fn llama_sampler_free(sampler: *mut c_void);
         pub fn llama_vocab_is_eog(vocab: *const c_void, token: i32) -> bool;
-        pub fn llama_detokenize(
+        pub fn llama_token_to_piece(
             vocab: *const c_void,
-            tokens: *const i32,
-            n_tokens: i32,
+            token: i32,
             text: *mut c_char,
             text_len_max: i32,
-            remove_special: bool,
-            unparse_special: bool,
+            lstrip: i32,
+            special: bool,
         ) -> i32;
         pub fn llama_tokenize(
             vocab: *const c_void,
@@ -230,7 +285,7 @@ pub fn initialize() -> Result<(), String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         ffi::llama_backend_init();
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(native_llama_cpp))]
     {
@@ -246,14 +301,97 @@ pub fn shutdown() {
     }
 }
 
+#[cfg(native_llama_cpp)]
+struct OwnedBatch {
+    batch: Batch,
+    _positions: Vec<i32>,
+    _sequence_counts: Vec<i32>,
+    _sequence_id: Box<i32>,
+    _sequence_ids: Vec<*mut i32>,
+    _logits: Vec<i8>,
+}
+
+#[cfg(native_llama_cpp)]
+fn make_batch(tokens: &mut [i32], start_position: usize) -> Result<OwnedBatch, String> {
+    let count = i32::try_from(tokens.len()).map_err(|_| "batch is too large".to_owned())?;
+    let positions = (0..tokens.len())
+        .map(|index| {
+            i32::try_from(start_position + index).map_err(|_| "position is too large".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut sequence_counts = vec![1_i32; tokens.len()];
+    let sequence_id = Box::new(0_i32);
+    let sequence_ids = vec![std::ptr::from_ref(&*sequence_id).cast_mut(); tokens.len()];
+    let mut logits = vec![0_i8; tokens.len()];
+    if let Some(last) = logits.last_mut() {
+        *last = 1;
+    }
+    // Keep the backing allocations alive for the duration of llama_decode by
+    // storing them in a thread-local scratch object is unnecessary: llama.cpp
+    // consumes this batch synchronously. The API only retains the pointers
+    // during the call.
+    let batch = Batch {
+        n_tokens: count,
+        token: tokens.as_mut_ptr(),
+        embd: std::ptr::null_mut(),
+        pos: positions.as_ptr().cast_mut(),
+        n_seq_id: sequence_counts.as_mut_ptr(),
+        seq_id: sequence_ids.as_ptr().cast_mut(),
+        logits: logits.as_mut_ptr(),
+    };
+    Ok(OwnedBatch {
+        batch,
+        _positions: positions,
+        _sequence_counts: sequence_counts,
+        _sequence_id: sequence_id,
+        _sequence_ids: sequence_ids,
+        _logits: logits,
+    })
+}
+
+#[cfg(native_llama_cpp)]
+fn invalidate_context(context: &mut Option<PersistentContext>) {
+    if let Some(cached) = context.as_mut() {
+        let memory = unsafe { ffi::llama_get_memory(cached.pointer) };
+        if !memory.is_null() {
+            unsafe { ffi::llama_memory_clear(memory, true) };
+        }
+        cached.prompt_tokens.clear();
+    }
+}
+
+#[cfg(native_llama_cpp)]
+fn inference_threads() -> i32 {
+    std::env::var("TALVIK_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|count| i32::try_from(count.get()).unwrap_or(i32::MAX))
+                .unwrap_or(0)
+        })
+}
+
+#[cfg(native_llama_cpp)]
+fn compatible_prompt_reuse_len(
+    cached: &PersistentContext,
+    prompt_tokens: &[i32],
+    context_size: u32,
+) -> Option<usize> {
+    (cached.context_size == context_size
+        && cached.prompt_tokens.len() <= prompt_tokens.len()
+        && cached.prompt_tokens == prompt_tokens[..cached.prompt_tokens.len()])
+        .then(|| cached.prompt_tokens.len().saturating_sub(1))
+}
+
 /// Return official llama.cpp system/build information.
 #[must_use]
 pub fn system_info() -> Option<String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let pointer = ffi::llama_print_system_info();
-        return (!pointer.is_null())
-            .then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned());
+        (!pointer.is_null()).then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned())
     }
     #[cfg(not(native_llama_cpp))]
     {
@@ -264,6 +402,8 @@ pub fn system_info() -> Option<String> {
 /// A loaded native model handle.
 #[derive(Debug)]
 pub struct NativeModel {
+    #[cfg(native_llama_cpp)]
+    context: Mutex<Option<PersistentContext>>,
     #[cfg_attr(not(native_llama_cpp), allow(dead_code))]
     pointer: *mut c_void,
     memory_bytes: u64,
@@ -278,8 +418,16 @@ pub struct NativeGenerationStatistics {
     pub generated_tokens: u64,
     /// Context tokens consumed.
     pub context_tokens: u64,
+    /// Time spent evaluating prompt tokens.
+    pub prompt_eval_time: Duration,
+    /// Total native inference time.
+    pub generation_time: Duration,
     /// Why successful generation terminated.
     pub termination: NativeGenerationTermination,
+    /// Whether a compatible prompt prefix was reused.
+    pub cache_hit: bool,
+    /// Number of prompt tokens reused from the persistent context.
+    pub reused_prompt_tokens: u64,
 }
 
 /// Native reason a generation reached its successful terminal boundary.
@@ -331,7 +479,7 @@ impl NativeModel {
                 return false;
             }
             let template = CStr::from_ptr(template).to_string_lossy();
-            return template.contains("custom_tools") || template.contains("tool_calls");
+            template.contains("custom_tools") || template.contains("tool_calls")
         }
         #[cfg(not(native_llama_cpp))]
         {
@@ -387,7 +535,7 @@ impl NativeModel {
                 return Err("llama.cpp tokenization failed".to_owned());
             }
             tokens.truncate(usize::try_from(count).map_err(|_| "token count overflow".to_owned())?);
-            return Ok(tokens);
+            Ok(tokens)
         }
         #[cfg(not(native_llama_cpp))]
         {
@@ -556,29 +704,16 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
-    unsafe fn detokenize(vocabulary: *const c_void, tokens: &[i32]) -> Result<Vec<u8>, String> {
-        let token_count = i32::try_from(tokens.len()).map_err(|_| "too many tokens".to_owned())?;
-        let mut capacity = tokens
-            .len()
-            .checked_mul(16)
-            .and_then(|value| value.checked_add(64))
-            .and_then(|value| i32::try_from(value).ok())
-            .ok_or_else(|| "detokenized text is too large".to_owned())?;
+    unsafe fn token_piece(vocabulary: *const c_void, token: i32) -> Result<Vec<u8>, String> {
+        let mut capacity = 64_i32;
         loop {
             let mut text = vec![
                 0_i8;
                 usize::try_from(capacity)
                     .map_err(|_| "token text is too large".to_owned())?
             ];
-            let length = ffi::llama_detokenize(
-                vocabulary,
-                tokens.as_ptr(),
-                token_count,
-                text.as_mut_ptr(),
-                capacity,
-                true,
-                false,
-            );
+            let length =
+                ffi::llama_token_to_piece(vocabulary, token, text.as_mut_ptr(), capacity, 0, false);
             if length < 0 {
                 capacity = length
                     .checked_neg()
@@ -615,10 +750,7 @@ impl NativeModel {
                 {
                     return Some((&piece[..index], true));
                 }
-                (1..marker.len())
-                    .rev()
-                    .find(|length| piece.ends_with(&marker[..*length]))
-                    .map(|length| (&piece[..piece.len() - length], true))
+                None
             })
             .unwrap_or((piece, false))
     }
@@ -639,6 +771,7 @@ impl NativeModel {
         top_p: f32,
         top_k: i32,
         seed: u32,
+        stop_sequences: &[String],
         mut callback: F,
         cancelled: &AtomicBool,
     ) -> Result<NativeGenerationStatistics, String>
@@ -655,6 +788,7 @@ impl NativeModel {
                 top_p,
                 top_k,
                 seed,
+                stop_sequences,
                 callback,
                 cancelled,
             );
@@ -662,6 +796,7 @@ impl NativeModel {
         }
         #[cfg(native_llama_cpp)]
         {
+            let inference_started = Instant::now();
             let formatted_prompt = self.format_prompt(prompt)?;
             let mut prompt_tokens = self.tokenize(&formatted_prompt)?;
             let prompt_count = prompt_tokens.len() as u64;
@@ -670,30 +805,98 @@ impl NativeModel {
             if prompt_tokens.len() >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
-            let mut context_params = ContextParams {
-                n_ctx: context_size,
-                n_batch: context_size.min(512),
-                n_ubatch: context_size.min(512),
-                ..unsafe { ffi::llama_context_default_params() }
+            let physical_batch = context_size.min(512);
+            let mut persistent = self
+                .context
+                .lock()
+                .map_err(|_| "native context lock poisoned".to_owned())?;
+            let mut cache_hit = false;
+            let mut reused_prompt_tokens = 0_u64;
+            let reuse_len = persistent.as_ref().and_then(|cached| {
+                compatible_prompt_reuse_len(cached, &prompt_tokens, context_size)
+            });
+            let (context, mut prompt_position) = if let Some(reuse_len) = reuse_len {
+                let cached = persistent
+                    .as_mut()
+                    .ok_or_else(|| "native context cache disappeared".to_owned())?;
+                cached
+                    .relay
+                    .current
+                    .store(std::ptr::from_ref(cancelled).cast_mut(), Ordering::SeqCst);
+                let memory = unsafe { ffi::llama_get_memory(cached.pointer) };
+                let removed = !memory.is_null()
+                    && unsafe {
+                        ffi::llama_memory_seq_rm(
+                            memory,
+                            0,
+                            i32::try_from(reuse_len)
+                                .map_err(|_| "cached prompt is too long".to_owned())?,
+                            -1,
+                        )
+                    };
+                if removed {
+                    cache_hit = true;
+                    reused_prompt_tokens = reuse_len as u64;
+                    (cached.pointer, reuse_len)
+                } else {
+                    if !memory.is_null() {
+                        unsafe { ffi::llama_memory_clear(memory, true) };
+                    }
+                    cached.prompt_tokens.clear();
+                    (cached.pointer, 0)
+                }
+            } else {
+                if let Some(cached) = persistent.take() {
+                    drop(cached);
+                }
+                let mut context_params = ContextParams {
+                    n_ctx: context_size,
+                    // Keep graph reservation bounded. Prompts larger than this
+                    // physical batch are decoded incrementally below.
+                    n_batch: physical_batch,
+                    n_ubatch: physical_batch,
+                    n_threads: inference_threads(),
+                    n_threads_batch: inference_threads(),
+                    ..unsafe { ffi::llama_context_default_params() }
+                };
+                let relay = Box::new(CancellationRelay {
+                    current: AtomicPtr::new(std::ptr::from_ref(cancelled).cast_mut()),
+                });
+                context_params.abort_callback = Some(abort_callback);
+                context_params.abort_callback_data = std::ptr::from_ref(&*relay).cast_mut().cast();
+                let pointer = unsafe { ffi::llama_init_from_model(self.pointer, context_params) };
+                if pointer.is_null() {
+                    return Err("llama.cpp could not create a context".to_owned());
+                }
+                persistent.replace(PersistentContext {
+                    pointer,
+                    context_size,
+                    prompt_tokens: Vec::new(),
+                    relay,
+                });
+                (pointer, 0)
             };
-            context_params.abort_callback = Some(abort_callback);
-            context_params.abort_callback_data = std::ptr::from_ref(cancelled).cast_mut().cast();
-            let context = unsafe { ffi::llama_init_from_model(self.pointer, context_params) };
-            if context.is_null() {
-                return Err("llama.cpp could not create a context".to_owned());
-            }
+            let relay = persistent
+                .as_ref()
+                .ok_or_else(|| "native context cache disappeared".to_owned())?
+                .relay
+                .as_ref();
+            let _cancellation_guard = CancellationGuard(std::ptr::from_ref(relay));
             let sampler_params = unsafe { ffi::llama_sampler_chain_default_params() };
             let sampler = unsafe { ffi::llama_sampler_chain_init(sampler_params) };
             if sampler.is_null() {
-                unsafe {
-                    ffi::llama_free(context);
-                }
+                invalidate_context(&mut persistent);
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
             let samplers = unsafe {
                 [
                     ffi::llama_sampler_init_top_k(top_k),
                     ffi::llama_sampler_init_top_p(top_p, 1),
+                    // Match the practical local-runner default: discourage
+                    // runaway repeated fragments while leaving frequency and
+                    // presence penalties disabled unless they become part of
+                    // the public request contract.
+                    ffi::llama_sampler_init_penalties(64, 1.1, 0.0, 0.0),
                     ffi::llama_sampler_init_temp(temperature),
                     ffi::llama_sampler_init_dist(seed),
                 ]
@@ -706,7 +909,7 @@ impl NativeModel {
                         }
                     }
                     ffi::llama_sampler_free(sampler);
-                    ffi::llama_free(context);
+                    invalidate_context(&mut persistent);
                 }
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
@@ -715,43 +918,42 @@ impl NativeModel {
                     ffi::llama_sampler_chain_add(sampler, sampler_part);
                 }
             }
-            let decode_result = unsafe {
-                ffi::llama_decode(
-                    context,
-                    ffi::llama_batch_get_one(
-                        prompt_tokens.as_mut_ptr(),
-                        i32::try_from(prompt_tokens.len())
-                            .map_err(|_| "prompt too long".to_owned())?,
-                    ),
-                )
-            };
-            match classify_decode_result(
-                decode_result,
-                cancelled.load(std::sync::atomic::Ordering::SeqCst),
+            for prompt_batch in prompt_tokens.chunks_mut(
+                usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
             ) {
-                DecodeOutcome::Success => {}
-                DecodeOutcome::Cancelled => {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
+                let decode_result = unsafe {
+                    ffi::llama_decode(context, make_batch(prompt_batch, prompt_position)?.batch)
+                };
+                prompt_position += prompt_batch.len();
+                match classify_decode_result(
+                    decode_result,
+                    cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                ) {
+                    DecodeOutcome::Success => {}
+                    DecodeOutcome::Cancelled => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                        }
+                        invalidate_context(&mut persistent);
+                        return Err("generation cancelled".to_owned());
                     }
-                    return Err("generation cancelled".to_owned());
-                }
-                DecodeOutcome::NativeFailure => {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
+                    DecodeOutcome::NativeFailure => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                        }
+                        invalidate_context(&mut persistent);
+                        return Err(decode_error("prompt", decode_result));
                     }
-                    return Err(decode_error("prompt", decode_result));
                 }
             }
+            let prompt_eval_time = inference_started.elapsed();
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
-            let mut generated_tokens = Vec::new();
-            let mut emitted_bytes = Vec::new();
             let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
             let mut termination = NativeGenerationTermination::Stop;
+            let mut previous_piece = String::new();
+            let mut repeated_piece_count = 0_u8;
             for _ in 0..max_tokens {
                 if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
                     cancelled_result = true;
@@ -761,21 +963,38 @@ impl NativeModel {
                 if unsafe { ffi::llama_vocab_is_eog(vocab, token) } {
                     break;
                 }
-                generated_tokens.push(token);
-                let text = unsafe { Self::detokenize(vocab, &generated_tokens) }?;
+                let text = unsafe { Self::token_piece(vocab, token) }?;
                 let (text, terminal) = Self::terminal_piece_prefix(&text);
-                let delta = if text.starts_with(&emitted_bytes) {
-                    &text[emitted_bytes.len()..]
-                } else {
-                    text
-                };
-                pending_utf8.extend_from_slice(delta);
+                pending_utf8.extend_from_slice(text);
                 let delta = take_complete_utf8(&mut pending_utf8);
+                if !delta.is_empty() {
+                    if delta == previous_piece {
+                        repeated_piece_count = repeated_piece_count.saturating_add(1);
+                    } else {
+                        previous_piece.clear();
+                        previous_piece.push_str(&delta);
+                        repeated_piece_count = 1;
+                    }
+                    if repeated_piece_count >= 8 {
+                        termination = NativeGenerationTermination::Stop;
+                        break;
+                    }
+                }
+                let explicit_stop = stop_sequences
+                    .iter()
+                    .filter(|stop| !stop.is_empty())
+                    .find_map(|stop| delta.find(stop).map(|index| (index, stop.len())));
+                if let Some((index, _)) = explicit_stop {
+                    if index > 0 && !callback(&delta[..index]) {
+                        cancelled_result = true;
+                    }
+                    termination = NativeGenerationTermination::Stop;
+                    break;
+                }
                 if !delta.is_empty() && !callback(&delta) {
                     cancelled_result = true;
                     break;
                 }
-                emitted_bytes = text.to_vec();
                 generated += 1;
                 if terminal {
                     break;
@@ -793,7 +1012,19 @@ impl NativeModel {
                 }
                 let mut next = [token];
                 let result = unsafe {
-                    ffi::llama_decode(context, ffi::llama_batch_get_one(next.as_mut_ptr(), 1))
+                    ffi::llama_decode(
+                        context,
+                        make_batch(
+                            &mut next,
+                            usize::try_from(prompt_count)
+                                .and_then(|value| {
+                                    usize::try_from(generated)
+                                        .map(|generated| value + generated - 1)
+                                })
+                                .map_err(|_| "token position is too large".to_owned())?,
+                        )?
+                        .batch,
+                    )
                 };
                 match classify_decode_result(
                     result,
@@ -803,15 +1034,15 @@ impl NativeModel {
                     DecodeOutcome::Cancelled => {
                         unsafe {
                             ffi::llama_sampler_free(sampler);
-                            ffi::llama_free(context);
                         }
+                        invalidate_context(&mut persistent);
                         return Err("generation cancelled".to_owned());
                     }
                     DecodeOutcome::NativeFailure => {
                         unsafe {
                             ffi::llama_sampler_free(sampler);
-                            ffi::llama_free(context);
                         }
+                        invalidate_context(&mut persistent);
                         return Err(decode_error("token", result));
                     }
                 }
@@ -824,16 +1055,23 @@ impl NativeModel {
             }
             unsafe {
                 ffi::llama_sampler_free(sampler);
-                ffi::llama_free(context);
             }
             if cancelled_result {
+                invalidate_context(&mut persistent);
                 return Err("generation cancelled".to_owned());
+            }
+            if let Some(cached) = persistent.as_mut() {
+                cached.prompt_tokens = prompt_tokens;
             }
             Ok(NativeGenerationStatistics {
                 prompt_tokens: prompt_count,
                 generated_tokens: generated,
                 context_tokens: prompt_count + generated,
+                prompt_eval_time,
+                generation_time: inference_started.elapsed(),
                 termination,
+                cache_hit,
+                reused_prompt_tokens,
             })
         }
     }
@@ -843,6 +1081,40 @@ impl NativeModel {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{classify_decode_result, decode_error, DecodeOutcome};
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn prompt_reuse_requires_matching_context_and_prefix() {
+        let cached = super::PersistentContext {
+            pointer: std::ptr::null_mut(),
+            context_size: 512,
+            prompt_tokens: vec![1, 2, 3],
+            relay: Box::new(super::CancellationRelay {
+                current: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            }),
+        };
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 512),
+            Some(2)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3, 4], 512),
+            Some(2)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 9, 3], 512),
+            None
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2], 512),
+            None
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 1024),
+            None
+        );
+        std::mem::forget(cached);
+    }
 
     #[cfg(native_llama_cpp)]
     #[test]
@@ -858,6 +1130,83 @@ mod tests {
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));
+        drop(model);
+        super::shutdown();
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    fn prompts_larger_than_the_physical_batch_decode_without_aborting() {
+        let model_path = std::env::var("MARINA_TEST_GGUF")
+            .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let prompt = format!("Summarize briefly: {}", "token ".repeat(700));
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let result = model.generate_stream(
+            &prompt,
+            2048,
+            1,
+            0.0,
+            0.95,
+            40,
+            42,
+            &[],
+            |_| true,
+            &cancelled,
+        );
+        assert!(result.is_ok(), "long prompt generation failed: {result:?}");
+        drop(model);
+        super::shutdown();
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    fn persistent_context_reuses_a_compatible_prompt_prefix() {
+        let model_path = std::env::var("MARINA_TEST_GGUF")
+            .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let first = model
+            .generate_stream(
+                "Reply briefly to the user.",
+                512,
+                1,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("initial generation should succeed");
+        assert!(!first.cache_hit);
+        let second = model
+            .generate_stream(
+                "Reply briefly to the user.",
+                512,
+                1,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("extended generation should succeed");
+        eprintln!(
+            "cache benchmark first_prompt_ms={} second_prompt_ms={} second_reused_tokens={}",
+            first.prompt_eval_time.as_millis(),
+            second.prompt_eval_time.as_millis(),
+            second.reused_prompt_tokens
+        );
+        assert!(second.cache_hit);
+        assert!(second.reused_prompt_tokens > 0);
         drop(model);
         super::shutdown();
     }
@@ -890,6 +1239,9 @@ mod tests {
         let (plain, terminal) = super::NativeModel::terminal_piece_prefix(b"answer");
         assert_eq!(plain, b"answer");
         assert!(!terminal);
+        let (partial, terminal) = super::NativeModel::terminal_piece_prefix(b"answer<|im_");
+        assert_eq!(partial, b"answer<|im_");
+        assert!(!terminal);
     }
 }
 
@@ -897,6 +1249,9 @@ impl Drop for NativeModel {
     fn drop(&mut self) {
         #[cfg(native_llama_cpp)]
         unsafe {
+            if let Ok(mut context) = self.context.lock() {
+                context.take();
+            }
             ffi::llama_model_free(self.pointer);
         }
     }
@@ -918,10 +1273,11 @@ pub fn load_model(path: &str) -> Result<NativeModel, String> {
             return Err("llama.cpp rejected the model".to_owned());
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
-        return Ok(NativeModel {
+        Ok(NativeModel {
+            context: Mutex::new(None),
             pointer,
             memory_bytes,
-        });
+        })
     }
     #[cfg(not(native_llama_cpp))]
     {

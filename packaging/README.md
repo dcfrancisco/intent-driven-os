@@ -23,7 +23,7 @@ Build the system package on native Linux from qualified artifacts:
 Install or upgrade on an authorized Debian/Ubuntu host with `dpkg -i`; then
 explicitly enable/start the existing units with `systemctl`. Package removal
 does not purge `/var/lib/marina/models`, `/var/lib/oid/evidence`, or conffiles.
-The package does not bind or claim Ollama's port; Marina retains its documented
+The package does not bind or claim Reference local runner's port; Marina retains its documented
 loopback default and can be configured separately.
 
 For a rootless OID client installation, use `scripts/install-oid-user.sh`.

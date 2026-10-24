@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[path = "../build_info.rs"]
+pub(crate) mod build_info;
 #[path = "http.rs"]
 mod http;
 #[path = "../ipc.rs"]
@@ -20,6 +22,7 @@ static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = logging::initialize();
+    eprintln!("{}", build_info::display("talvikd"));
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
@@ -62,13 +65,21 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
     match fields.first().copied().unwrap_or_default() {
         "status" => {
             let snapshot = runtime.snapshot();
+            let client_version = fields.get(1).copied().unwrap_or_default();
+            let identity = build_info::current();
             writeln!(
                 stream,
-                "OK status\t{}\t{}\t{}\t{}",
+                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 snapshot.health,
                 snapshot.backend,
                 snapshot.loaded_model.clone().unwrap_or_default(),
-                snapshot.loaded_models.join(",")
+                snapshot.loaded_models.join(","),
+                identity.version,
+                identity.git_sha,
+                identity.dirty,
+                identity.target,
+                identity.profile,
+                client_version != identity.version
             )?;
         }
         "model_list" => {

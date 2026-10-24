@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+#[path = "../build_info.rs"]
+mod build_info;
 #[path = "../ipc.rs"]
 mod ipc;
 use serde_json::json;
@@ -52,8 +54,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     match command.as_str() {
         "--help" | "-h" | "help" => println!("{HELP}"),
-        "--version" | "-V" => println!("talvik {}", env!("CARGO_PKG_VERSION")),
-        "status" if args.next().is_none() => request_formatted("status", json_output, "status")?,
+        "--version" | "-V" => {
+            let _ = args.next();
+            println!("{}", build_info::display("talvik"));
+        }
+        "version" if args.next().is_none() => {
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&build_info::json("talvik", None))?
+                );
+            } else {
+                println!("{}", build_info::display("talvik"));
+            }
+        }
+        "status" if args.next().is_none() => request_formatted(
+            &format!("status\t{}", build_info::current().version),
+            json_output,
+            "status",
+        )?,
         "models" if args.next().is_none() => {
             request_formatted("model_list", json_output, "models")?;
         }
@@ -349,7 +368,7 @@ fn request_formatted(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            json!({"object":"status","health":fields.get(1).copied().unwrap_or("unknown"),"backend":fields.get(2).copied().unwrap_or("unknown"),"loaded_model":fields.get(3).copied().unwrap_or(""),"loaded_models":loaded_models})
+            json!({"object":"status","health":fields.get(1).copied().unwrap_or("unknown"),"backend":fields.get(2).copied().unwrap_or("unknown"),"loaded_model":fields.get(3).copied().unwrap_or(""),"loaded_models":loaded_models,"daemon_version":fields.get(5).copied().unwrap_or("unknown"),"daemon_git_sha":fields.get(6).copied().unwrap_or("unknown"),"daemon_dirty":fields.get(7).copied().unwrap_or("unknown"),"daemon_target":fields.get(8).copied().unwrap_or("unknown"),"daemon_profile":fields.get(9).copied().unwrap_or("unknown"),"version_mismatch":fields.get(10).copied().unwrap_or("unknown")})
         }
         "models" => {
             json!({"object":"list","data":values.iter().filter_map(|line| { let fields = line.split('\t').collect::<Vec<_>>(); (fields.len() >= 4).then(|| json!({"id":ipc::decode_field(fields[1]),"name":ipc::decode_field(fields[2]),"status":fields[3]})) }).collect::<Vec<_>>() })

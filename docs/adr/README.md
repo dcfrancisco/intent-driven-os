@@ -25,3 +25,5 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0021 — Marina Transport, API, and Authorization Architecture](0021-marina-transport-api-and-authorization.md)
 - [ADR-0023 — OID Linux Distribution, Boot Lifecycle, and System Services](0023-oid-linux-distribution-boot-lifecycle-and-system-services.md)
 - [ADR-0024 — Marina Windows Native Build and Qualification Requirements](0024-marina-windows-native-build-and-qualification.md)
+- [ADR-0025 — Talvik Runtime Scheduling, Resource Governance, and IDE Interoperability](0025-talvik-runtime-scheduling-and-ide-interoperability.md)
+- [ADR-0026 — Talvik Native Inference Performance and Worker Isolation](0026-talvik-native-inference-performance.md)

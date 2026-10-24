@@ -6,7 +6,7 @@
 
 ## Decision
 
-Marina has one canonical, versioned AI request contract. Ollama-compatible,
+Marina has one canonical, versioned AI request contract. Reference local runner-compatible,
 OpenAI-compatible, Anthropic-compatible, MCP, and future A2A surfaces are
 translation edges. They must not become separate internal execution models.
 

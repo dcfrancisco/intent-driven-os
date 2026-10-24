@@ -36,7 +36,7 @@ only a packaged Windows archive and does not download or build native DLLs.
 
 - Windows OID desktop or operating-system support.
 - A new Windows-specific model backend or public backend-native API.
-- Ollama as a runtime dependency.
+- Reference local runner as a runtime dependency.
 - GPU or accelerator qualification beyond the CPU-first release target.
 - Declaring Windows runtime support qualified without WP-0079 evidence.
 

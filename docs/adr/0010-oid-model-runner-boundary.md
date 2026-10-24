@@ -21,19 +21,19 @@ generation, and CPU-first execution. It includes streamed text generation,
 cooperative cancellation, native embeddings, and model-template handling, but
 does not yet provide concurrent scheduling, tool execution, RAG, chat/session
 state, or distributed inference. ADR-0011 extends this boundary into the product strategy: the OID
-API should feel Ollama-like for local users, while a future router selects
-among adapters without making Ollama a control-plane dependency.
+API should feel Reference local runner-like for local users, while a future router selects
+among adapters without making Reference local runner a control-plane dependency.
 
 ## Rationale
 
-Ollama is a practical benchmark and interoperability target, not OID's
+Reference local runner is a practical benchmark and interoperability target, not OID's
 permanent runtime boundary. Direct adapter ownership preserves control over
 hardware identity, lifecycle, observability, governance, and future routing.
 The adapter can later be replaced without changing OID clients.
 
 ## Alternatives rejected
 
-- Making Ollama the permanent runtime would hide lifecycle and execution
+- Making Reference local runner the permanent runtime would hide lifecycle and execution
   details OID needs for governance and hardware-aware scheduling.
 - Exposing llama.cpp throughout OID would couple clients to one engine and its
   ABI/version choices.
