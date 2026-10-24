@@ -361,6 +361,19 @@ fn invalidate_context(context: &mut Option<PersistentContext>) {
 }
 
 #[cfg(native_llama_cpp)]
+fn inference_threads() -> i32 {
+    std::env::var("TALVIK_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|count| i32::try_from(count.get()).unwrap_or(i32::MAX))
+                .unwrap_or(0)
+        })
+}
+
+#[cfg(native_llama_cpp)]
 fn compatible_prompt_reuse_len(
     cached: &PersistentContext,
     prompt_tokens: &[i32],
@@ -842,6 +855,8 @@ impl NativeModel {
                     // physical batch are decoded incrementally below.
                     n_batch: physical_batch,
                     n_ubatch: physical_batch,
+                    n_threads: inference_threads(),
+                    n_threads_batch: inference_threads(),
                     ..unsafe { ffi::llama_context_default_params() }
                 };
                 let relay = Box::new(CancellationRelay {

@@ -25,11 +25,13 @@ policy, health, and resource fit.
 ## Current truth
 
 - The workspace builds a native llama.cpp boundary behind `LLAMA_CPP_LIB_DIR`.
-- GGUF discovery, one-model load/unload, tokenization, streaming generation,
-  cancellation, and basic generation metrics exist in code.
-- The current runner is CPU-first and single-model/single-generation; it is not
-  yet a production scheduler, model downloader, chat-history system, tool loop,
-  or multi-backend router.
+- GGUF discovery, multi-model load/unload, tokenization, streaming generation,
+  cancellation, persistent per-model native context reuse, sampling controls,
+  and generation metrics exist in code.
+- The current runner is CPU-first with one active generation, bounded queueing,
+  memory admission, and model residency. It is a standalone local model
+  service; remaining usability work must be implemented and measured rather
+  than deferred behind milestone paperwork.
 - The governed operation lifecycle (plan, approval, execution, verification,
   rollback, evidence) is a separate foundation and must remain intact.
 - Reference local runner is an interoperability target and reference UX, not OID's internal
@@ -55,8 +57,9 @@ policy, health, and resource fit.
 4. Preserve security and recoverability: model artifacts, requests, routing
    choices, approvals, failures, and lifecycle transitions need explicit policy
    and observable evidence.
-5. Do not broaden scope silently. If a request implies a new architectural
-   decision, add or update an ADR and link the implementing WP.
+5. Do not let planning or qualification paperwork block feasible runtime
+   improvements. If an implementation changes an architectural invariant, add
+   or update an ADR and link the implementing WP in the same slice.
 6. Do not claim a feature is complete because a placeholder compiles. State
    whether it is implemented, contract-only, unavailable without a native
    dependency, or intentionally deferred.
