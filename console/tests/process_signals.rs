@@ -37,7 +37,13 @@ impl ConsoleProcess {
             .stderr(Stdio::null());
         command
             .env("TALVIK_STATE_DIR", &state_root)
-            .env("TALVIK_MODEL_DIR", state_root.join("models"));
+            .env("TALVIK_HOME", &state_root)
+            .env("TALVIK_CONFIG", state_root.join("config.yaml"))
+            .env("TALVIK_MODEL_DIR", state_root.join("models"))
+            .env("TALVIK_REGISTRY", state_root.join("models.registry"))
+            .env("TALVIK_SOCKET", state_root.join("talvik.sock"))
+            .env("TALVIK_TOKEN_FILE", state_root.join("tokens"))
+            .env("OID_STATE_DIR", &state_root);
         let mut child = command.spawn().expect("console should start");
         let stdin = child.stdin.take().expect("console stdin");
         let stdout = BufReader::new(child.stdout.take().expect("console stdout"));

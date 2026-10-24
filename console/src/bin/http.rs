@@ -435,12 +435,6 @@ fn generate(
         .get("request_id")
         .and_then(Value::as_str)
         .map_or_else(unique_request_id, str::to_owned);
-    let max_tokens = body
-        .get("max_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(128)
-        .min(u64::from(u32::MAX));
-    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let timeout = body
         .get("timeout_ms")
         .and_then(Value::as_u64)
@@ -456,15 +450,22 @@ fn generate(
             format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
         );
     }
+    let options = generation_options(body, u32::try_from(context_size).unwrap_or(u32::MAX));
     if let Err(error) = runtime.model_load(model) {
         return respond_error(stream, 409, error.to_string());
     }
     eprintln!(
-        "Talvik HTTP generation started request_id={} model={} stream={} tools={}",
+        "Talvik HTTP generation started request_id={} model={} stream={} tools={} max_tokens={} context_size={} temperature={} top_p={} top_k={} seed={}",
         request_id,
         model,
         body.get("stream").and_then(Value::as_bool).unwrap_or(false),
-        tool_definitions.is_some()
+        tool_definitions.is_some(),
+        options.max_tokens,
+        options.context_size,
+        options.temperature,
+        options.top_p,
+        options.top_k,
+        options.seed
     );
     if tool_definitions.is_some() {
         let support = runtime.tool_support();
@@ -480,11 +481,7 @@ fn generate(
         request_id: request_id.clone(),
         model_id: model.to_owned(),
         prompt,
-        options: GenerationOptions {
-            max_tokens,
-            context_size: u32::try_from(context_size).unwrap_or(u32::MAX),
-            ..Default::default()
-        },
+        options,
     }) {
         Ok(stream_result) => stream_result,
         Err(error) => return respond_error(stream, 429, error.to_string()),
@@ -574,7 +571,7 @@ fn generate(
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "time_to_first_token_ms": result.statistics.metrics_known.then_some(result.statistics.time_to_first_token_ms), "prompt_eval_time_ms": result.statistics.metrics_known.then_some(result.statistics.prompt_eval_time_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -619,6 +616,43 @@ fn generate(
                 return respond_error(stream, 500, "generation stream closed".to_owned());
             }
         }
+    }
+}
+
+fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
+    let defaults = GenerationOptions::default();
+    let max_tokens = body
+        .get("max_completion_tokens")
+        .or_else(|| body.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(128)
+        .min(u64::from(u32::MAX));
+    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
+    let temperature = body
+        .get("temperature")
+        .and_then(|value| serde_json::from_value::<f32>(value.clone()).ok())
+        .unwrap_or(defaults.temperature);
+    let top_p = body
+        .get("top_p")
+        .and_then(|value| serde_json::from_value::<f32>(value.clone()).ok())
+        .unwrap_or(defaults.top_p);
+    let top_k = body
+        .get("top_k")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(defaults.top_k);
+    let seed = body
+        .get("seed")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(defaults.seed);
+    GenerationOptions {
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        seed,
+        context_size,
     }
 }
 
@@ -736,10 +770,11 @@ fn unique_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        completion_finish_reason, completion_termination_reason, parse_tool_calls,
-        request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
+        completion_finish_reason, completion_termination_reason, generation_options,
+        parse_tool_calls, request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
         MAX_REQUEST_BODY_BYTES,
     };
+    use serde_json::json;
 
     #[test]
     fn rejects_oversized_http_bodies() {
@@ -785,5 +820,26 @@ mod tests {
             completion_termination_reason(GenerationTermination::ContextLength),
             "context_length"
         );
+    }
+
+    #[test]
+    fn maps_openai_generation_controls_without_silently_ignoring_them() {
+        let options = generation_options(
+            &json!({
+                "max_tokens": 7,
+                "max_completion_tokens": 9,
+                "temperature": 0.1,
+                "top_p": 0.8,
+                "top_k": 20,
+                "seed": 42
+            }),
+            2048,
+        );
+        assert_eq!(options.max_tokens, 9);
+        assert!((options.temperature - 0.1).abs() < f32::EPSILON);
+        assert!((options.top_p - 0.8).abs() < f32::EPSILON);
+        assert_eq!(options.top_k, 20);
+        assert_eq!(options.seed, 42);
+        assert_eq!(options.context_size, 2048);
     }
 }

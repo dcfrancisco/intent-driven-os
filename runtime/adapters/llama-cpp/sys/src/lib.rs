@@ -14,6 +14,9 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
+use std::time::Duration;
+#[cfg(native_llama_cpp)]
+use std::time::Instant;
 
 #[cfg(any(native_llama_cpp, test))]
 const LLAMA_DECODE_ABORTED: i32 = 2;
@@ -193,14 +196,13 @@ mod ffi {
         pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
         pub fn llama_sampler_free(sampler: *mut c_void);
         pub fn llama_vocab_is_eog(vocab: *const c_void, token: i32) -> bool;
-        pub fn llama_detokenize(
+        pub fn llama_token_to_piece(
             vocab: *const c_void,
-            tokens: *const i32,
-            n_tokens: i32,
+            token: i32,
             text: *mut c_char,
             text_len_max: i32,
-            remove_special: bool,
-            unparse_special: bool,
+            lstrip: i32,
+            special: bool,
         ) -> i32;
         pub fn llama_tokenize(
             vocab: *const c_void,
@@ -277,6 +279,10 @@ pub struct NativeGenerationStatistics {
     pub generated_tokens: u64,
     /// Context tokens consumed.
     pub context_tokens: u64,
+    /// Time spent evaluating prompt tokens.
+    pub prompt_eval_time: Duration,
+    /// Total native inference time.
+    pub generation_time: Duration,
     /// Why successful generation terminated.
     pub termination: NativeGenerationTermination,
 }
@@ -555,29 +561,16 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
-    unsafe fn detokenize(vocabulary: *const c_void, tokens: &[i32]) -> Result<Vec<u8>, String> {
-        let token_count = i32::try_from(tokens.len()).map_err(|_| "too many tokens".to_owned())?;
-        let mut capacity = tokens
-            .len()
-            .checked_mul(16)
-            .and_then(|value| value.checked_add(64))
-            .and_then(|value| i32::try_from(value).ok())
-            .ok_or_else(|| "detokenized text is too large".to_owned())?;
+    unsafe fn token_piece(vocabulary: *const c_void, token: i32) -> Result<Vec<u8>, String> {
+        let mut capacity = 64_i32;
         loop {
             let mut text = vec![
                 0_i8;
                 usize::try_from(capacity)
                     .map_err(|_| "token text is too large".to_owned())?
             ];
-            let length = ffi::llama_detokenize(
-                vocabulary,
-                tokens.as_ptr(),
-                token_count,
-                text.as_mut_ptr(),
-                capacity,
-                true,
-                false,
-            );
+            let length =
+                ffi::llama_token_to_piece(vocabulary, token, text.as_mut_ptr(), capacity, 0, false);
             if length < 0 {
                 capacity = length
                     .checked_neg()
@@ -614,10 +607,7 @@ impl NativeModel {
                 {
                     return Some((&piece[..index], true));
                 }
-                (1..marker.len())
-                    .rev()
-                    .find(|length| piece.ends_with(&marker[..*length]))
-                    .map(|length| (&piece[..piece.len() - length], true))
+                None
             })
             .unwrap_or((piece, false))
     }
@@ -661,6 +651,7 @@ impl NativeModel {
         }
         #[cfg(native_llama_cpp)]
         {
+            let inference_started = Instant::now();
             let formatted_prompt = self.format_prompt(prompt)?;
             let mut prompt_tokens = self.tokenize(&formatted_prompt)?;
             let prompt_count = prompt_tokens.len() as u64;
@@ -669,14 +660,13 @@ impl NativeModel {
             if prompt_tokens.len() >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
+            let physical_batch = context_size.min(512);
             let mut context_params = ContextParams {
                 n_ctx: context_size,
-                // The prompt is submitted as one logical batch. Keep the
-                // micro-batch bounded for graph evaluation, but ensure the
-                // native batch capacity can hold every valid context-sized
-                // prompt. llama.cpp aborts when n_tokens exceeds n_batch.
-                n_batch: context_size,
-                n_ubatch: context_size.min(512),
+                // Keep graph reservation bounded. Prompts larger than this
+                // physical batch are decoded incrementally below.
+                n_batch: physical_batch,
+                n_ubatch: physical_batch,
                 ..unsafe { ffi::llama_context_default_params() }
             };
             context_params.abort_callback = Some(abort_callback);
@@ -718,39 +708,42 @@ impl NativeModel {
                     ffi::llama_sampler_chain_add(sampler, sampler_part);
                 }
             }
-            let decode_result = unsafe {
-                ffi::llama_decode(
-                    context,
-                    ffi::llama_batch_get_one(
-                        prompt_tokens.as_mut_ptr(),
-                        i32::try_from(prompt_tokens.len())
-                            .map_err(|_| "prompt too long".to_owned())?,
-                    ),
-                )
-            };
-            match classify_decode_result(
-                decode_result,
-                cancelled.load(std::sync::atomic::Ordering::SeqCst),
+            for prompt_batch in prompt_tokens.chunks_mut(
+                usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
             ) {
-                DecodeOutcome::Success => {}
-                DecodeOutcome::Cancelled => {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
+                let decode_result = unsafe {
+                    ffi::llama_decode(
+                        context,
+                        ffi::llama_batch_get_one(
+                            prompt_batch.as_mut_ptr(),
+                            i32::try_from(prompt_batch.len())
+                                .map_err(|_| "prompt batch too long".to_owned())?,
+                        ),
+                    )
+                };
+                match classify_decode_result(
+                    decode_result,
+                    cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                ) {
+                    DecodeOutcome::Success => {}
+                    DecodeOutcome::Cancelled => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
+                        return Err("generation cancelled".to_owned());
                     }
-                    return Err("generation cancelled".to_owned());
-                }
-                DecodeOutcome::NativeFailure => {
-                    unsafe {
-                        ffi::llama_sampler_free(sampler);
-                        ffi::llama_free(context);
+                    DecodeOutcome::NativeFailure => {
+                        unsafe {
+                            ffi::llama_sampler_free(sampler);
+                            ffi::llama_free(context);
+                        }
+                        return Err(decode_error("prompt", decode_result));
                     }
-                    return Err(decode_error("prompt", decode_result));
                 }
             }
+            let prompt_eval_time = inference_started.elapsed();
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
-            let mut generated_tokens = Vec::new();
-            let mut emitted_bytes = Vec::new();
             let mut pending_utf8 = Vec::new();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
@@ -764,21 +757,14 @@ impl NativeModel {
                 if unsafe { ffi::llama_vocab_is_eog(vocab, token) } {
                     break;
                 }
-                generated_tokens.push(token);
-                let text = unsafe { Self::detokenize(vocab, &generated_tokens) }?;
+                let text = unsafe { Self::token_piece(vocab, token) }?;
                 let (text, terminal) = Self::terminal_piece_prefix(&text);
-                let delta = if text.starts_with(&emitted_bytes) {
-                    &text[emitted_bytes.len()..]
-                } else {
-                    text
-                };
-                pending_utf8.extend_from_slice(delta);
+                pending_utf8.extend_from_slice(text);
                 let delta = take_complete_utf8(&mut pending_utf8);
                 if !delta.is_empty() && !callback(&delta) {
                     cancelled_result = true;
                     break;
                 }
-                emitted_bytes = text.to_vec();
                 generated += 1;
                 if terminal {
                     break;
@@ -836,6 +822,8 @@ impl NativeModel {
                 prompt_tokens: prompt_count,
                 generated_tokens: generated,
                 context_tokens: prompt_count + generated,
+                prompt_eval_time,
+                generation_time: inference_started.elapsed(),
                 termination,
             })
         }
@@ -861,6 +849,23 @@ mod tests {
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));
+        drop(model);
+        super::shutdown();
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    fn prompts_larger_than_the_physical_batch_decode_without_aborting() {
+        let model_path = std::env::var("MARINA_TEST_GGUF")
+            .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let prompt = format!("Summarize briefly: {}", "token ".repeat(700));
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let result =
+            model.generate_stream(&prompt, 2048, 1, 0.0, 0.95, 40, 42, |_| true, &cancelled);
+        assert!(result.is_ok(), "long prompt generation failed: {result:?}");
         drop(model);
         super::shutdown();
     }
@@ -892,6 +897,9 @@ mod tests {
         assert!(terminal);
         let (plain, terminal) = super::NativeModel::terminal_piece_prefix(b"answer");
         assert_eq!(plain, b"answer");
+        assert!(!terminal);
+        let (partial, terminal) = super::NativeModel::terminal_piece_prefix(b"answer<|im_");
+        assert_eq!(partial, b"answer<|im_");
         assert!(!terminal);
     }
 }

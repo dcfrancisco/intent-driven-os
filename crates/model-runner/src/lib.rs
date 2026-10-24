@@ -198,6 +198,8 @@ pub struct GenerationStats {
     pub generated_tokens: u64,
     /// Time until the first token, when available.
     pub time_to_first_token: Option<Duration>,
+    /// Time spent evaluating the prompt before token generation.
+    pub prompt_eval_time: Option<Duration>,
     /// Total generation duration.
     pub generation_time: Option<Duration>,
     /// Generated tokens per second, when calculable.
