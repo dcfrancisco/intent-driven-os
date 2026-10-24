@@ -223,3 +223,7 @@ The complete Reference local runner comparison and disposition is maintained in
 implementation gap. Additional compatibility routes, model profiles, GPU scheduling,
 multimodal support, MarinaOS integration, and alternate engines remain visible
 under WP-0096/WP-0097/WP-0100–0103 with explicit later-milestone dispositions.
+ADR-0026 and WP-0098 govern the measured native performance gap: Stage A
+bounded batching, incremental decoding, option mapping, and phase timings are
+implemented; persistent worker/context reuse, termination safety, and native
+failure isolation remain required before interactive performance is qualified.

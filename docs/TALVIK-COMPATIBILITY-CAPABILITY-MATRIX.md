@@ -1,8 +1,8 @@
 # Talvik/Reference local runner Capability Matrix
 
-Date: 2026-10-23
+Date: 2026-10-24
 Talvik branch: `feature/talvik-m2-runtime-ide`
-Reference local runner reference: `/Users/dannyfrancisco/codes/reference-runner` at
+Reference local runner reference: local checkout at
 `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`
 
 This is the authoritative disposition of relevant Reference local runner-style capabilities.
@@ -41,6 +41,15 @@ incomplete.
 | CAP-027 | Multimodal support | Not implemented | Model-dependent Reference local runner APIs | No requirement/model evidence | P2 | ADR-0025 | WP-0101 | Capability contract | Real multimodal client | Future | Scheduled M3 |
 | CAP-028 | MarinaOS service integration | Explicitly out of scope | Not an Reference local runner capability | Future product integration | P2 | ADR-0025 | WP-0102 | MarinaOS architecture | Separate adapter design | Future | Rejected for M2; scheduled later |
 | CAP-029 | Additional inference engines | Explicitly out of scope | Not a Talvik dependency | llama.cpp-only constraint | P2 | ADR-0025 | WP-0103 | Separate authorization | New ADR/backend contract | Future | Rejected for M2 |
+| CAP-030 | Bounded prompt batching | Physical batch capped at 512 and prompts decoded in chunks; deterministic and native smoke evidence | Bounded serving batch in `api/types.go` and `llm/llama_server.go` | Uncontended native benchmark remains open | P0 | ADR-0026 | WP-0098 | Native GGUF | Prompt over 512 tokens | macOS x86_64 | Implemented but not qualified |
+| CAP-031 | Incremental token decoding | One token-piece conversion per sampled token; implemented | Incremental completion stream in `llm/llama_server.go` | Native throughput comparison remains open | P0 | ADR-0026 | WP-0098 | CAP-001 | Long output remains linear and complete | Native host | Implemented but not qualified |
+| CAP-032 | Generation option fidelity | Completion limit, temperature, top-p, top-k, and seed mapped; request stop/repeat/min-p controls missing | Complete option model and forwarding in `api/types.go` and `llm/llama_server.go` | Silently ignored unsupported controls can surprise clients | P0 | ADR-0026 | WP-0098 | CAP-008 | Contract-to-native option tests | Local + native | Partial |
+| CAP-033 | Persistent context and prompt/KV reuse | Fresh context and full prompt evaluation per request | Persistent model server with prompt cache in `llm/llama_server.go` | Dominant warm-request TTFT disadvantage | P0 | ADR-0026 | WP-0098 | CAP-030 | Repeated prefix improves TTFT with isolation | Native hosts | Missing |
+| CAP-034 | Native failure isolation | Direct FFI assertion can abort `talvikd` | Supervised per-model serving process in scheduler/LLM server | One native failure can terminate all service clients | P0 | ADR-0026 | WP-0098 | Worker protocol | Inject crash, preserve daemon/model A | Native hosts | Defective |
+| CAP-035 | Stop and repetition safety | EOG and complete embedded terminal markers; no request stop strings or repetition guard | Explicit stop forwarding and repeated-token guard in `llm/llama_server.go` | Runaway IDE output occupies the single generation slot | P0 | ADR-0026 | WP-0098 | CAP-032 | Stop sequence and repetitive model fixture | Native + fixtures | Partial |
+| CAP-036 | Phase-specific inference metrics | Prompt evaluation and first-token fields implemented; queue/load and prompt tokens/s incomplete | Prompt/token/load timings returned by serving layer | Performance diagnosis remains incomplete | P1 | ADR-0026 | WP-0091/WP-0098 | CAP-031 | Metrics match measured phases | Native host | Partial |
+| CAP-037 | Native CPU build optimization | Current native library works; CPU dispatch and platform optimization are not qualified | Platform-specific optimized runner packaging | Throughput may leave host capabilities unused | P1 | ADR-0026 | WP-0098 | Release packaging | Feature/throughput report per host | Native hosts | Implemented but not qualified |
+| CAP-038 | Per-model capability reporting | Tool support currently aggregates across loaded models | Capabilities follow selected model metadata | A non-tool model may be admitted when another resident model supports tools | P0 | ADR-0026 | WP-0097 | Registry metadata | Alternate capable/incapable models | Local + native | Defective |
 
 No capability may be removed from this table. Promotion to Verified requires
 the listed acceptance evidence. Deferred, Blocked, and Scheduled rows remain

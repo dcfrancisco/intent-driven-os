@@ -93,6 +93,9 @@ sampling-controlled qualification concern, not a process-exit assertion.
   routes only when a real client requires them.
 - [ ] WP-0097: qualify model profiles, aliases, metadata inspection, and
   registry deduplication without introducing OCI distribution.
+- [ ] WP-0098: complete persistent native workers, prompt/KV reuse, request
+  stop and repetition safety, crash isolation, and uncontended performance
+  qualification. Stage A bounded batching and incremental decoding are done.
 - [ ] WP-0100/0101/0102/0103: schedule GPU, multimodal, MarinaOS integration,
   and alternate-engine decisions for later milestones.
 

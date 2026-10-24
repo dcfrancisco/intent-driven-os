@@ -15,8 +15,7 @@ implementation is in `runtime/src/service.rs`, `runtime/src/models.rs`, and
 `console/src/bin/http.rs`. M1 qualification evidence is consolidated in
 `docs/TALVIK-M1-CLOSEOUT.md` and `docs/TALVIK-M1-ACCEPTANCE.md`.
 
-The local Reference local runner reference was inspected at
-`/Users/dannyfrancisco/codes/reference-runner`, commit
+The local reference-runner checkout was inspected at commit
 `f52b9e742d8c9a308f7b23cd1f0ab52c7ddb694d`. Relevant evidence is in
 `server/sched.go` and `server/routes.go`. Reference local runner uses a keyed loaded-runner
 map, serializes loading while allowing requests to an already loaded runner,
@@ -102,3 +101,7 @@ implemented merely for endpoint-count parity: `/api/show`, `/api/chat`,
 a selected client need. GPU scheduling, multimodal support, MarinaOS service
 integration, and alternate inference engines are later-milestone work owned by
 WP-0100 through WP-0103. This preserves the llama.cpp-only, CPU-first boundary.
+
+Native execution performance, persistent context reuse, stop/repetition
+safety, and native crash isolation are governed separately by ADR-0026 and
+WP-0098. That decision preserves this ADR's scheduler and residency model.

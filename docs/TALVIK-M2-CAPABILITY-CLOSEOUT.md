@@ -14,6 +14,14 @@ runs, Docker runtime execution, and full lifecycle qualification remain open.
 The complete inventory is maintained in
 [`TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md`](TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md).
 
+The 2026-10-24 real Continue session established client connectivity but also
+exposed unacceptable warm-request latency and runaway output. ADR-0026 and
+WP-0098 now own CAP-030 through CAP-038. Bounded prompt batching, incremental
+token decoding, generation-option propagation, complete terminal-marker
+matching, and phase-specific metrics are implemented; persistent worker/context
+reuse and native crash isolation remain open. M2 performance qualification is
+therefore **NO-GO** even though the API connection works.
+
 ## Implemented P0
 
 - Build identity for `talvik` and `talvikd`: package version, Git SHA, dirty
@@ -59,6 +67,21 @@ The complete inventory is maintained in
 | WP-0100–0103 | GPU, multimodal, MarinaOS, alternate engines | Scheduled later |
 
 ## Verification evidence
+
+2026-10-24 performance investigation addendum:
+
+- Full workspace tests pass, including all six process-signal tests and the
+  interrupted-download loopback test.
+- Strict workspace Clippy passes with all targets/features and `-D warnings`.
+- Isolated real-Qwen request produced 8 tokens and terminated by the requested
+  completion limit in 12.533 seconds; prompt evaluation/TTFT were 7.410/7.411
+  seconds. This confirms correctness but is not yet an acceptable IDE latency.
+- The prior process-signal failures were a harness isolation defect: child
+  processes inherited production config/registry/socket paths. No timeout was
+  increased.
+- Persistent model workers, prompt/KV reuse, request stop strings, repetition
+  protection, per-model capability reporting, and native crash isolation remain
+  open under WP-0098/WP-0097.
 
 - `cargo fmt --all`: passed.
 - `cargo test -p oid-console --bin talvik --bin talvikd`: passed (5 tests).
