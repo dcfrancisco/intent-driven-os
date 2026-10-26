@@ -46,6 +46,14 @@ fn decode_error(stage: &str, result: i32) -> String {
     }
 }
 
+#[cfg(any(native_llama_cpp, test))]
+const MAX_UBATCH_SIZE: u32 = 512;
+
+#[cfg(any(native_llama_cpp, test))]
+fn generation_batch_sizes(context_size: u32) -> (u32, u32) {
+    (context_size, context_size.min(MAX_UBATCH_SIZE))
+}
+
 #[cfg(native_llama_cpp)]
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -670,10 +678,11 @@ impl NativeModel {
             if prompt_tokens.len() >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
+            let (n_batch, n_ubatch) = generation_batch_sizes(context_size);
             let mut context_params = ContextParams {
                 n_ctx: context_size,
-                n_batch: context_size.min(512),
-                n_ubatch: context_size.min(512),
+                n_batch,
+                n_ubatch,
                 ..unsafe { ffi::llama_context_default_params() }
             };
             context_params.abort_callback = Some(abort_callback);
@@ -842,7 +851,15 @@ impl NativeModel {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{classify_decode_result, decode_error, DecodeOutcome};
+    use super::{
+        classify_decode_result, decode_error, generation_batch_sizes, DecodeOutcome,
+        MAX_UBATCH_SIZE,
+    };
+
+    #[test]
+    fn generation_batch_accepts_full_context_in_bounded_microbatches() {
+        assert_eq!(generation_batch_sizes(4_096), (4_096, MAX_UBATCH_SIZE));
+    }
 
     #[cfg(native_llama_cpp)]
     #[test]
