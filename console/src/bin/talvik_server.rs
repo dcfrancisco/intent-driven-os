@@ -30,7 +30,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let authentication_enabled = http_configuration.authentication_enabled;
         let http_address = address.clone();
         thread::spawn(move || {
-            if let Err(error) = http::serve(&http_address, http_runtime, authentication_enabled) {
+            if let Err(error) = http::serve(&http_address, &http_runtime, authentication_enabled) {
                 eprintln!("Model runtime HTTP server failed: {error}");
             }
         });
@@ -54,6 +54,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
     let mut request = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
@@ -125,17 +126,16 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
         }
         "generate" if fields.len() >= 3 => {
             let request = GenerationRequest {
-                request_id: fields
-                    .get(3)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| ipc::decode_field(value))
-                    .unwrap_or_else(|| {
+                request_id: fields.get(3).filter(|value| !value.is_empty()).map_or_else(
+                    || {
                         format!(
                             "ipc-{}-{}",
                             std::process::id(),
                             REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
                         )
-                    }),
+                    },
+                    |value| ipc::decode_field(value),
+                ),
                 model_id: fields[1].to_owned(),
                 prompt: ipc::decode_field(&fields[4..].join("\t")),
                 options: oid_runtime::GenerationOptions {

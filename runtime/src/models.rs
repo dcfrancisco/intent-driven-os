@@ -303,7 +303,10 @@ impl ModelAcquirer {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| source_name[..source_name.len() - 5].to_owned());
+            .map_or_else(
+                || source_name[..source_name.len() - 5].to_owned(),
+                |value| value,
+            );
         if id.is_empty() || id.contains('/') || id.contains('\\') {
             return Err(RuntimeError::InvalidModel(format!(
                 "invalid model identifier: {id}"
@@ -353,6 +356,7 @@ impl ModelAcquirer {
     }
 }
 
+#[allow(clippy::large_stack_arrays)]
 fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
     if source.starts_with("http://") || source.starts_with("https://") {
         let status = Command::new("curl")
@@ -476,6 +480,7 @@ fn normalize_checksum(value: &str) -> Result<String, RuntimeError> {
     Ok(value.to_ascii_lowercase())
 }
 
+#[allow(clippy::large_stack_arrays)]
 fn sha256_file(path: &Path) -> Result<String, RuntimeError> {
     let mut file =
         File::open(path).map_err(|error| RuntimeError::Persistence(error.to_string()))?;
@@ -501,6 +506,7 @@ struct Sha256 {
     length: u64,
 }
 
+#[allow(clippy::unreadable_literal)]
 impl Default for Sha256 {
     fn default() -> Self {
         Self {
@@ -515,6 +521,11 @@ impl Default for Sha256 {
     }
 }
 
+#[allow(
+    clippy::format_collect,
+    clippy::many_single_char_names,
+    clippy::unreadable_literal
+)]
 impl Sha256 {
     fn update(&mut self, bytes: &[u8]) {
         self.length += bytes.len() as u64;

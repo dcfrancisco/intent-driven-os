@@ -52,11 +52,11 @@ pub fn socket_path() -> PathBuf {
 pub fn endpoint() -> String {
     #[cfg(unix)]
     {
-        return socket_path().display().to_string();
+        socket_path().display().to_string()
     }
     #[cfg(windows)]
     {
-        return env::var("TALVIK_TCP_ADDR")
+        env::var("TALVIK_TCP_ADDR")
             .or_else(|_| env::var("MARINA_TCP_ADDR"))
             .unwrap_or_else(|_| "127.0.0.1:11434".to_owned());
     }
@@ -76,11 +76,11 @@ pub fn bind_listener() -> io::Result<TalvikListener> {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
         }
-        return Ok(listener);
+        Ok(listener)
     }
     #[cfg(windows)]
     {
-        return TcpListener::bind(endpoint());
+        TcpListener::bind(endpoint())
     }
 }
 
@@ -88,11 +88,11 @@ pub fn bind_listener() -> io::Result<TalvikListener> {
 pub fn connect() -> io::Result<TalvikStream> {
     #[cfg(unix)]
     {
-        return UnixStream::connect(socket_path());
+        UnixStream::connect(socket_path())
     }
     #[cfg(windows)]
     {
-        return TcpStream::connect(endpoint());
+        TcpStream::connect(endpoint())
     }
 }
 
@@ -132,7 +132,7 @@ pub fn decode_field(value: &str) -> String {
 }
 
 /// Ensure the socket parent directory exists.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::items_after_statements)]
 pub fn ensure_socket_parent() -> io::Result<()> {
     #[cfg(windows)]
     {

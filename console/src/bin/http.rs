@@ -18,7 +18,7 @@ const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
     address: &str,
-    runtime: Arc<MarinaRuntime>,
+    runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(address)?;
@@ -26,7 +26,7 @@ pub fn serve(
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
-                let runtime = Arc::clone(&runtime);
+                let runtime = Arc::clone(runtime);
                 let owners = Arc::clone(&owners);
                 std::thread::spawn(move || {
                     if let Err(error) =
@@ -42,6 +42,7 @@ pub fn serve(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle(
     mut stream: TcpStream,
     runtime: &dyn RuntimeService,
@@ -76,7 +77,11 @@ fn handle(
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let path = parts.next().unwrap_or_default();
-    let identity = if !authentication_enabled {
+    let identity = if authentication_enabled {
+        header(&headers, "authorization")
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(auth::identity)
+    } else {
         Some(auth::TokenIdentity {
             principal: "anonymous-local".to_owned(),
             scopes: vec![
@@ -87,10 +92,6 @@ fn handle(
                 auth::MODELS_ADMIN.to_owned(),
             ],
         })
-    } else {
-        header(&headers, "authorization")
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .and_then(auth::identity)
     };
     if path != "/healthz" && identity.is_none() {
         return respond_json(
@@ -124,7 +125,7 @@ fn handle(
                 serde_json::from_slice(&body).map_err(|error| invalid_data(error.to_string()))?;
             embeddings(&mut stream, runtime, &request)
         }
-        ("POST", "/v1/chat/completions") | ("POST", "/v1/completions") => {
+        ("POST", "/v1/chat/completions" | "/v1/completions") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
@@ -279,6 +280,7 @@ fn normalize_tool_call(value: &Value, index: usize) -> Value {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn generate(
     stream: &mut TcpStream,
     runtime: &dyn RuntimeService,
@@ -359,7 +361,8 @@ fn generate(
         .get("max_tokens")
         .and_then(Value::as_u64)
         .unwrap_or(128)
-        .min(u64::from(u32::MAX)) as u32;
+        .min(u64::from(u32::MAX));
+    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let timeout = body
         .get("timeout_ms")
         .and_then(Value::as_u64)
@@ -394,7 +397,7 @@ fn generate(
         prompt,
         options: GenerationOptions {
             max_tokens,
-            context_size: context_size as u32,
+            context_size: u32::try_from(context_size).unwrap_or(u32::MAX),
             ..Default::default()
         },
     }) {
@@ -554,8 +557,10 @@ fn drain_cancelled_generation(generation: &GenerationStream) -> bool {
                 | GenerationMessage::Completed(_)
                 | GenerationMessage::Failed(_),
             ) => return true,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return false,
+            Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => return false,
         }
     }
 }
@@ -577,6 +582,7 @@ const fn request_body_size_is_allowed(size: usize) -> bool {
     size <= MAX_REQUEST_BODY_BYTES
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn respond_json(stream: &mut TcpStream, status: u16, body: Value) -> std::io::Result<()> {
     let payload = body.to_string();
     write!(
@@ -587,6 +593,7 @@ fn respond_json(stream: &mut TcpStream, status: u16, body: Value) -> std::io::Re
     )
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn respond_error(stream: &mut TcpStream, status: u16, message: String) -> std::io::Result<()> {
     respond_json(
         stream,

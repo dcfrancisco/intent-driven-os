@@ -53,6 +53,11 @@ pub trait RuntimeService: Send + Sync {
     /// Inspect model metadata by identifier.
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata>;
     /// Pull or import a local/remote GGUF artifact and register it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when acquisition, validation, checksum verification,
+    /// or registry persistence fails.
     fn model_pull(
         &self,
         source: &str,

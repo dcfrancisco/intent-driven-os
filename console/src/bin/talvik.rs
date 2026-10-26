@@ -55,7 +55,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "--version" | "-V" => println!("talvik {}", env!("CARGO_PKG_VERSION")),
         "status" if args.next().is_none() => request_formatted("status", json_output, "status")?,
         "models" if args.next().is_none() => {
-            request_formatted("model_list", json_output, "models")?
+            request_formatted("model_list", json_output, "models")?;
         }
         "import" => {
             if args.next().as_deref() == Some("--help") {
@@ -94,11 +94,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ))?,
         "run" => run_prompt(args)?,
         "routing" if args.next().as_deref() == Some("status") && args.next().is_none() => {
-            routing_status()
+            routing_status();
         }
         "auth" => auth(args)?,
         "status" | "models" if args.next().as_deref() == Some("--help") => {
-            println!("Usage: talvik {} [--json]", command)
+            println!("Usage: talvik {command} [--json]");
         }
         _ => return Err(format!("unknown command `{command}`\n\n{HELP}").into()),
     }

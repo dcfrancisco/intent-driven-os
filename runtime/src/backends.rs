@@ -448,6 +448,10 @@ impl BackendManager {
     }
 
     /// Compute embeddings through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or embedding fails.
     pub fn embeddings(
         &self,
         request: &EmbeddingsRequest,
@@ -465,6 +469,7 @@ impl BackendManager {
     }
 
     /// Return the active backend's tool-call capability.
+    #[must_use]
     pub fn tool_support(&self) -> ToolSupport {
         let Ok(state) = self.state.lock() else {
             return ToolSupport {

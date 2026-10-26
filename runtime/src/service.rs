@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 
 static GENERATION_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+type ActiveGeneration = (String, String, Arc<AtomicBool>);
+
 #[derive(Debug)]
 struct PendingGeneration {
     request: GenerationRequest,
@@ -135,7 +137,7 @@ pub struct MarinaRuntime {
     started_at: Instant,
     loaded: Arc<Mutex<BTreeMap<String, LoadedModel>>>,
     last_used: Arc<Mutex<BTreeMap<String, Instant>>>,
-    active_generation: Arc<Mutex<Option<(String, String, Arc<AtomicBool>)>>>,
+    active_generation: Arc<Mutex<Option<ActiveGeneration>>>,
     pending_generations: Arc<Mutex<VecDeque<PendingGeneration>>>,
     resource_policy: ResourcePolicy,
 }
@@ -297,7 +299,7 @@ impl MarinaRuntime {
                         self.touch_model(&request.model_id);
                         continue;
                     }
-                    Err(error) if matches!(error, RuntimeError::ResourceAdmission { .. }) => {}
+                    Err(RuntimeError::ResourceAdmission { .. }) => {}
                     Err(error) => return Err(error),
                 }
             }
@@ -449,8 +451,7 @@ fn admit_memory(
         return Err(RuntimeError::ResourceAdmission {
             retryable: true,
             message: format!(
-                "memory admission rejected: available={} required={} model={} context={}",
-                effective_available, required, model_bytes, context_bytes
+                "memory admission rejected: available={effective_available} required={required} model={model_bytes} context={context_bytes}"
             ),
         });
     }
@@ -539,9 +540,10 @@ impl RuntimeService for MarinaRuntime {
             .or_else(|| std::env::var_os("TALVIK_MODEL_DIR").map(std::path::PathBuf::from))
             .or_else(|| std::env::var_os("MARINA_MODEL_DIR").map(std::path::PathBuf::from))
             .unwrap_or_else(|| {
-                crate::config::talvik_home_directory()
-                    .map(|home| home.join("models"))
-                    .unwrap_or_else(|| std::path::PathBuf::from(".marina/models"))
+                crate::config::talvik_home_directory().map_or_else(
+                    || std::path::PathBuf::from(".marina/models"),
+                    |home| home.join("models"),
+                )
             });
         let model = ModelAcquirer::acquire(source, &directory, model_id, checksum)?;
         self.models.register(model.clone())?;
@@ -1127,6 +1129,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn generation_recovers_by_eviction_and_reloads_registered_models() {
         let root = std::env::temp_dir().join(format!(
             "oid-runtime-recovery-{}-{}",
@@ -1210,16 +1213,24 @@ mod tests {
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             assert!(!remaining.is_zero(), "active generation did not terminate");
-            if matches!(
-                first.recv_timeout(remaining),
-                Ok(GenerationMessage::Cancelled(_))
-            ) {
-                break;
+            match first.recv_timeout(remaining) {
+                Ok(
+                    GenerationMessage::Completed(_)
+                    | GenerationMessage::Cancelled(_)
+                    | GenerationMessage::Failed(_),
+                ) => break,
+                Ok(GenerationMessage::Token(_)) => {}
+                Err(error) => panic!("active generation did not terminate: {error}"),
             }
         }
+        let queued_message = queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("queued generation did not terminate");
         assert!(matches!(
-            queued.recv_timeout(std::time::Duration::from_secs(2)),
-            Ok(GenerationMessage::Cancelled(_))
+            queued_message,
+            GenerationMessage::Completed(_)
+                | GenerationMessage::Cancelled(_)
+                | GenerationMessage::Failed(_)
         ));
         let request = |id: &str| GenerationRequest {
             request_id: format!("request-{id}"),

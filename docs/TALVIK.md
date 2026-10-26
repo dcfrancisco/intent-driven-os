@@ -82,6 +82,20 @@ Talvik uses the following configuration variables:
 | `TALVIK_HTTP_ADDR` | Optional HTTP listener |
 | `TALVIK_HTTP_AUTH` | HTTP authentication control |
 
+Memory scheduling is bounded and CPU-first: one generation runs at a time,
+idle unpinned residents may be evicted by LRU under pressure, and registered
+model metadata remains available for reload. The policy can be controlled with
+`TALVIK_MAX_RESIDENT_MODELS`, `TALVIK_MEMORY_BUDGET_BYTES`,
+`TALVIK_SAFETY_MARGIN_BYTES`, `TALVIK_AUTOMATIC_EVICTION`,
+`TALVIK_RECOVERY_BUDGET`, `TALVIK_ADMISSION_TIMEOUT_SECONDS`,
+`TALVIK_IDLE_RETENTION_SECONDS`, `TALVIK_QUEUE_CAPACITY`, and
+`TALVIK_PINNED_MODELS`. Defaults preserve multi-model residency where the
+detected budget permits it; explicit context sizes are not silently reduced.
+
+For a container deployment, use `docker/talvik/compose.yaml`. It keeps the
+host port on loopback by default, requires bearer authentication for HTTP API
+requests, and separates model and state volumes.
+
 Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.
 Talvik does not delete or silently migrate existing data.

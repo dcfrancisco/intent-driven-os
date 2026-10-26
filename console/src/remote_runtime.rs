@@ -13,12 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+type ActiveRemoteGeneration = (String, Arc<AtomicBool>);
+
 /// OID-facing runtime that keeps policy/console operations local while routing
 /// model discovery and inference through Marina's provider-neutral HTTP client.
 pub struct RemoteRuntimeService {
     local: Box<dyn RuntimeService>,
     client: MarinaHttpClient,
-    active: Arc<Mutex<Option<(String, Arc<AtomicBool>)>>>,
+    active: Arc<Mutex<Option<ActiveRemoteGeneration>>>,
     evidence: Arc<Mutex<FileEvidenceStore>>,
     session_id: String,
 }
@@ -52,6 +54,7 @@ impl RemoteRuntimeService {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn unavailable(error: impl ToString) -> RuntimeError {
         RuntimeError::ModelLifecycle(error.to_string())
     }
@@ -103,7 +106,7 @@ impl RuntimeService for RemoteRuntimeService {
 
     fn snapshot(&self) -> RuntimeSnapshot {
         let mut snapshot = self.local.snapshot();
-        snapshot.backend = "marina-http".to_owned();
+        "marina-http".clone_into(&mut snapshot.backend);
         let models = self.remote_models();
         snapshot.models = models.len();
         snapshot.loaded_model = std::env::var("OID_MARINA_MODEL")
@@ -153,6 +156,7 @@ impl RuntimeService for RemoteRuntimeService {
         Err(RuntimeError::NotImplemented("remote tokenization"))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
         let cancellation = Arc::new(AtomicBool::new(false));
         let mut active = self.active.lock().map_err(|_| {

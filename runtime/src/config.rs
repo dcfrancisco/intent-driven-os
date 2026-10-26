@@ -16,6 +16,11 @@ pub struct HttpConfig {
 }
 
 /// Load the native HTTP listener configuration.
+///
+/// # Errors
+///
+/// Returns an error when the configuration file cannot be read or the
+/// configured listener address is invalid or unsafe.
 pub fn http_config() -> Result<HttpConfig, String> {
     let values = read_config_file(&config_file())?;
     let configured_address = values
@@ -52,9 +57,7 @@ pub fn http_config() -> Result<HttpConfig, String> {
         .ok()
         .or_else(|| values.get("server.authentication.enabled").cloned())
         .or_else(|| values.get("http_authentication_enabled").cloned())
-        .map_or(true, |value| {
-            !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no")
-        });
+        .is_none_or(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "no"));
     Ok(HttpConfig {
         address,
         authentication_enabled,

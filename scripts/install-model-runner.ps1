@@ -1,17 +1,34 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$ArchivePath,
-    [string]$Prefix = (Join-Path $env:USERPROFILE ".marina")
+    [string]$Prefix = (Join-Path $env:USERPROFILE ".marina"),
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+if (-not $Uninstall -and -not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
     throw "Release archive not found: $ArchivePath"
 }
 
 $prefixPath = [System.IO.Path]::GetFullPath($Prefix)
+$binPath = Join-Path $prefixPath "bin"
+$libPath = Join-Path $prefixPath "lib"
+if ($Uninstall) {
+    Remove-Item -LiteralPath (Join-Path $binPath "talvik.exe") -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $binPath "talvikd.exe") -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $binPath) {
+        Get-ChildItem -LiteralPath $binPath -Filter "*.dll" -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force
+    }
+    if (Test-Path -LiteralPath $libPath) {
+        Get-ChildItem -LiteralPath $libPath -Filter "*.dll" -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force
+    }
+    Write-Host "Removed Talvik executables and native libraries from $prefixPath; models and state were preserved."
+    exit 0
+}
+
 $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("talvik-install-" + [guid]::NewGuid().ToString("N"))
 
 try {
