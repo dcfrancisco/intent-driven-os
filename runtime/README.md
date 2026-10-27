@@ -73,6 +73,11 @@ default model on daemon startup; by default it is
 `qwen2.5-0.5b-instruct-q4_k_m`. If missing, Talvik pulls the pinned artifact
 and verifies its SHA-256 before loading. Set `default_model: none` to opt out.
 Failures are logged as warnings and do not prevent the daemon from starting.
+Bootstrap runs after the local IPC and HTTP listeners are available. `/healthz`
+remains useful during provisioning or failure, while `/readyz` succeeds only
+after a model has actually loaded. Set `TALVIK_AUTO_BOOTSTRAP=false`,
+`TALVIK_AUTO_DOWNLOAD=false`, or `TALVIK_AUTO_LOAD=false` to disable the
+corresponding startup action.
 
 ## Native HTTP API
 

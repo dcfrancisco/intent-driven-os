@@ -1,0 +1,18 @@
+[Unit]
+Description=Talvik local model daemon
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/talvik/bin/talvikd
+Environment=TALVIK_HOME=%h/.marina
+Environment=TALVIK_STATE_DIR=%h/.marina
+Environment=TALVIK_MODEL_DIR=%h/.marina/models
+Environment=TALVIK_REGISTRY=%h/.marina/models.registry
+Environment=TALVIK_TOKEN_FILE=%h/.marina/tokens
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target

@@ -69,7 +69,7 @@ impl IpcRuntimeService {
         Ok(lines)
     }
 
-    fn status_fields(&self) -> io::Result<Vec<String>> {
+    fn status_fields() -> io::Result<Vec<String>> {
         let lines = Self::request("status", false, REQUEST_TIMEOUT)?;
         let line = lines
             .first()
@@ -83,7 +83,7 @@ impl IpcRuntimeService {
         }
     }
 
-    fn remote_models(&self) -> io::Result<Vec<ModelMetadata>> {
+    fn remote_models() -> io::Result<Vec<ModelMetadata>> {
         let lines = Self::request("model_list", true, REQUEST_TIMEOUT)?;
         lines
             .iter()
@@ -112,7 +112,7 @@ impl IpcRuntimeService {
             .collect()
     }
 
-    fn mutation(&self, request: &str, timeout: Duration) -> Result<(), RuntimeError> {
+    fn mutation(request: &str, timeout: Duration) -> Result<(), RuntimeError> {
         let lines = Self::request(request, false, timeout)
             .map_err(|error| RuntimeError::ModelLifecycle(error.to_string()))?;
         let response = lines.first().map(String::as_str).unwrap_or_default();
@@ -120,10 +120,10 @@ impl IpcRuntimeService {
             Ok(())
         } else {
             Err(RuntimeError::ModelLifecycle(
-                response
-                    .strip_prefix("ERROR\t")
-                    .map(ipc::decode_field)
-                    .unwrap_or_else(|| format!("unexpected Talvik response: {response}")),
+                response.strip_prefix("ERROR\t").map_or_else(
+                    || format!("unexpected Talvik response: {response}"),
+                    ipc::decode_field,
+                ),
             ))
         }
     }
@@ -132,7 +132,7 @@ impl IpcRuntimeService {
 impl RuntimeService for IpcRuntimeService {
     fn status(&self) -> RuntimeStatus {
         let mut status = self.local.status();
-        status.state = if self.status_fields().is_ok() {
+        status.state = if Self::status_fields().is_ok() {
             LifecycleState::Ready
         } else {
             LifecycleState::Stopped
@@ -142,7 +142,7 @@ impl RuntimeService for IpcRuntimeService {
 
     fn snapshot(&self) -> RuntimeSnapshot {
         let mut snapshot = self.local.snapshot();
-        match self.status_fields() {
+        match Self::status_fields() {
             Ok(fields) => {
                 snapshot.health = health_label(&fields[1]);
                 snapshot.backend = format!("talvikd ({})", fields[2]);
@@ -152,7 +152,7 @@ impl RuntimeService for IpcRuntimeService {
                     .filter(|model| !model.is_empty())
                     .map(str::to_owned)
                     .collect();
-                match self.remote_models() {
+                match Self::remote_models() {
                     Ok(models) => snapshot.models = models.len(),
                     Err(error) => {
                         self.report_unavailable(&error);
@@ -168,7 +168,7 @@ impl RuntimeService for IpcRuntimeService {
             Err(error) => {
                 self.report_unavailable(&error);
                 snapshot.health = "Unavailable";
-                snapshot.backend = "talvikd (unavailable)".to_owned();
+                "talvikd (unavailable)".clone_into(&mut snapshot.backend);
                 snapshot.models = 0;
                 snapshot.loaded_model = None;
                 snapshot.loaded_models.clear();
@@ -191,7 +191,7 @@ impl RuntimeService for IpcRuntimeService {
     }
 
     fn model_list(&self) -> Vec<ModelMetadata> {
-        match self.remote_models() {
+        match Self::remote_models() {
             Ok(models) => models,
             Err(error) => {
                 self.report_unavailable(&error);
@@ -228,8 +228,10 @@ impl RuntimeService for IpcRuntimeService {
                 fields
                     .get(1)
                     .filter(|_| fields.first() == Some(&"ERROR"))
-                    .map(|error| ipc::decode_field(error))
-                    .unwrap_or_else(|| format!("unexpected Talvik response: {response}")),
+                    .map_or_else(
+                        || format!("unexpected Talvik response: {response}"),
+                        |value| ipc::decode_field(value),
+                    ),
             ));
         }
         Ok(ModelMetadata {
@@ -248,14 +250,14 @@ impl RuntimeService for IpcRuntimeService {
     }
 
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
-        self.mutation(
+        Self::mutation(
             &format!("model_load\t{}", ipc::encode_field(id)),
             REQUEST_TIMEOUT,
         )
     }
 
     fn model_unload(&self, id: &str) -> Result<(), RuntimeError> {
-        self.mutation(
+        Self::mutation(
             &format!("model_unload\t{}", ipc::encode_field(id)),
             REQUEST_TIMEOUT,
         )

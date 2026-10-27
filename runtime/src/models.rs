@@ -302,10 +302,9 @@ impl ModelAcquirer {
         let id = model_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_owned)
             .map_or_else(
                 || source_name[..source_name.len() - 5].to_owned(),
-                |value| value,
+                str::to_owned,
             );
         if id.is_empty() || id.contains('/') || id.contains('\\') {
             return Err(RuntimeError::InvalidModel(format!(

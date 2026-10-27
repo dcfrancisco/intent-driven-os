@@ -76,11 +76,15 @@ Talvik uses the following configuration variables:
 | `TALVIK_CONFIG` | Configuration file |
 | `TALVIK_SOCKET` | Local socket |
 | `TALVIK_MODEL_DIR` | Model store |
+| `TALVIK_MODEL_DIRECTORY` | Canonical alias for the model store |
 | `TALVIK_REGISTRY` | Registry file |
 | `TALVIK_STATE_DIR` | Runtime state |
 | `TALVIK_DEFAULT_MODEL` | Model Talvik loads at daemon startup; defaults to the pinned Qwen 0.5B GGUF |
 | `TALVIK_DEFAULT_MODEL_SOURCE` | Source URL/path for acquiring a missing custom default model |
 | `TALVIK_DEFAULT_MODEL_SHA256` | Expected SHA-256 for the default model download |
+| `TALVIK_AUTO_BOOTSTRAP` | Enable default-model bootstrap; defaults to true |
+| `TALVIK_AUTO_DOWNLOAD` | Permit download of a missing default model; defaults to true |
+| `TALVIK_AUTO_LOAD` | Load the configured default model at startup; defaults to true |
 | `TALVIK_TOKEN_FILE` | Token database |
 | `TALVIK_HTTP_ADDR` | Optional HTTP listener |
 | `TALVIK_HTTP_AUTH` | HTTP authentication control |

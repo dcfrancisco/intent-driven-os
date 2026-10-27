@@ -1,5 +1,29 @@
 # OID/Talvik image packaging
 
+## Standalone Talvik packages
+
+Standalone package builders are separate from the OID image package:
+
+```sh
+./scripts/package-talvik-deb.sh \
+  --version 0.1.0 \
+  --talvikd target/release/talvikd \
+  --talvik target/release/talvik \
+  --native-lib-dir /path/to/llama/lib
+
+./scripts/package-talvik-rpm.sh \
+  --version 0.1.0 \
+  --talvikd target/release/talvikd \
+  --talvik target/release/talvik \
+  --native-lib-dir /path/to/llama/lib
+```
+
+Both builders fail closed when release binaries or native libraries are
+missing. They do not download models, start services, or remove `.marina`
+state. The user systemd unit stores models and registry data under the
+invoking user's `$HOME/.marina`; enabling it remains an explicit operator
+action with `systemctl --user enable --now talvikd.service`.
+
 These files implement the first system-profile image composition described by
 ADR-0023. Marina packaging remains governed by ADR-0014 and WP-0069.
 

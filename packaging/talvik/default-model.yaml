@@ -1,0 +1,25 @@
+schema_version: 1
+
+default_model:
+  id: qwen2.5-0.5b-instruct-q4_k_m
+  format: gguf
+  quantization: Q4_K_M
+  source:
+    repository: Qwen/Qwen2.5-0.5B-Instruct-GGUF
+    revision: 6dd44a1
+    filename: qwen2.5-0.5b-instruct-q4_k_m.gguf
+    url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf
+    sha256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+  runtime:
+    backend: auto
+    context_size: 4096
+    gpu_layers: auto
+  bootstrap:
+    enabled: true
+    auto_download: true
+    auto_register: true
+    auto_load: true
+
+# The artifact revision, URL, and SHA-256 were verified against the upstream
+# model repository on 2026-10-28. This manifest is metadata only; packaging
+# never downloads model files.

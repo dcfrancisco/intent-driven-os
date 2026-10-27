@@ -28,7 +28,7 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Arc::new(Runtime::start(configuration)?);
     let default_model = config::default_model().map_err(std::io::Error::other)?;
     let default_model_id = default_model.as_ref().map(|model| model.id.clone());
-    load_default_model(runtime.as_ref(), default_model);
+    let readiness = Arc::new(http::Readiness::new());
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
     let http_configuration = config::http_config().map_err(std::io::Error::other)?;
     if let Some(address) = http_configuration.address {
@@ -36,12 +36,14 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let authentication_enabled = http_configuration.authentication_enabled;
         let http_default_model_id = default_model_id.clone();
         let http_address = address.clone();
+        let http_readiness = Arc::clone(&readiness);
         thread::spawn(move || {
             if let Err(error) = http::serve(
                 &http_address,
                 &http_runtime,
                 authentication_enabled,
-                http_default_model_id,
+                http_default_model_id.as_ref(),
+                &http_readiness,
             ) {
                 eprintln!("Model runtime HTTP server failed: {error}");
             }
@@ -50,6 +52,18 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = ipc::bind_listener()?;
     eprintln!("Model runtime listening on {}", ipc::endpoint());
+    let bootstrap_runtime = Arc::clone(&runtime);
+    let bootstrap_readiness = Arc::clone(&readiness);
+    thread::spawn(move || {
+        let ready = load_default_model(
+            bootstrap_runtime.as_ref(),
+            default_model,
+            &bootstrap_readiness,
+        );
+        if ready {
+            bootstrap_readiness.set(true, "ready");
+        }
+    });
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
@@ -69,19 +83,39 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
 fn load_default_model(
     runtime: &dyn RuntimeService,
     default_model: Option<config::DefaultModelConfig>,
-) {
+    readiness: &http::Readiness,
+) -> bool {
+    readiness.set(false, "provisioning");
     let Some(default_model) = default_model else {
-        return;
+        eprintln!("No default model configured; inference is not ready");
+        readiness.set(false, "no_default_model");
+        return false;
     };
 
+    if !default_model.auto_load {
+        eprintln!("Default model auto-load disabled; inference is not ready");
+        readiness.set(false, "auto_load_disabled");
+        return false;
+    }
+
     if runtime.model_inspect(&default_model.id).is_none() {
+        if !default_model.auto_download {
+            report_default_model_failure(
+                runtime,
+                &default_model.id,
+                "model is not installed and automatic download is disabled",
+            );
+            readiness.set(false, "auto_download_disabled");
+            return false;
+        }
         let Some(source) = default_model.source.as_deref() else {
             report_default_model_failure(
                 runtime,
                 &default_model.id,
-                "model is not installed and no acquisition source is configured".to_owned(),
+                "model is not installed and no acquisition source is configured",
             );
-            return;
+            readiness.set(false, "missing_download_source");
+            return false;
         };
         eprintln!(
             "Default model {} is not installed; pulling it from {}",
@@ -92,18 +126,24 @@ fn load_default_model(
             Some(&default_model.id),
             default_model.checksum.as_deref(),
         ) {
-            report_default_model_failure(runtime, &default_model.id, error.to_string());
-            return;
+            report_default_model_failure(runtime, &default_model.id, &error.to_string());
+            readiness.set(false, "download_failed");
+            return false;
         }
     }
 
     match runtime.model_load(&default_model.id) {
         Ok(()) => eprintln!("Loaded default model: {}", default_model.id),
-        Err(error) => report_default_model_failure(runtime, &default_model.id, error.to_string()),
+        Err(error) => {
+            report_default_model_failure(runtime, &default_model.id, &error.to_string());
+            readiness.set(false, "load_failed");
+            return false;
+        }
     }
+    true
 }
 
-fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, reason: String) {
+fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, reason: &str) {
     let warning = format!("default model {model_id} was not loaded; continuing: {reason}");
     eprintln!("Warning: {warning}");
     runtime.publish(RuntimeEvent::WarningRaised(warning));

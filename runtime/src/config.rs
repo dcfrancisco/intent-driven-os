@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 const DEFAULT_MODEL_ID: &str = "qwen2.5-0.5b-instruct-q4_k_m";
-const DEFAULT_MODEL_SOURCE: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+const DEFAULT_MODEL_SOURCE: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf";
 const DEFAULT_MODEL_SHA256: &str =
     "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db";
 
@@ -20,6 +20,10 @@ pub struct DefaultModelConfig {
     pub source: Option<String>,
     /// Optional expected SHA-256 for acquisition.
     pub checksum: Option<String>,
+    /// Whether startup should provision this model when it is unavailable.
+    pub auto_download: bool,
+    /// Whether startup should load this model after it is available.
+    pub auto_load: bool,
 }
 
 /// Native HTTP listener configuration.
@@ -159,10 +163,50 @@ pub fn default_model() -> Result<Option<DefaultModelConfig>, String> {
         |value| setting_value(&value),
     );
 
+    let auto_bootstrap = configured_bool(
+        "TALVIK_AUTO_BOOTSTRAP",
+        "MARINA_AUTO_BOOTSTRAP",
+        "auto_bootstrap",
+        &values,
+        true,
+    )?;
+    let auto_download = configured_bool(
+        "TALVIK_AUTO_DOWNLOAD",
+        "MARINA_AUTO_DOWNLOAD",
+        "auto_download",
+        &values,
+        auto_bootstrap,
+    )?;
+    let auto_load = configured_bool(
+        "TALVIK_AUTO_LOAD",
+        "MARINA_AUTO_LOAD",
+        "auto_load",
+        &values,
+        auto_bootstrap,
+    )?;
+
     Ok(Some(DefaultModelConfig {
         id,
         source,
         checksum,
+        auto_download,
+        auto_load,
+    }))
+}
+
+fn configured_bool(
+    primary: &str,
+    compatibility: &str,
+    key: &str,
+    values: &BTreeMap<String, String>,
+    default: bool,
+) -> Result<bool, String> {
+    let value = configured_value(primary, compatibility, key, values)?;
+    Ok(value.map_or(default, |value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        )
     }))
 }
 
@@ -226,7 +270,9 @@ pub fn load() -> Result<RuntimeConfig, String> {
     // runtime then uses its complete discovery set, including the canonical
     // Talvik store and compatible local caches. An explicit directory is an
     // isolation boundary used by tests and operators.
-    config.model_directory = std::env::var_os("TALVIK_MODEL_DIR")
+    config.model_directory = std::env::var_os("TALVIK_MODEL_DIRECTORY")
+        .or_else(|| std::env::var_os("TALVIK_MODEL_DIR"))
+        .or_else(|| std::env::var_os("MARINA_MODEL_DIRECTORY"))
         .or_else(|| std::env::var_os("MARINA_MODEL_DIR"))
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -324,7 +370,8 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
 
 #[cfg(test)]
 mod tests {
-    use super::{http_config, read_config_file, setting_value, DEFAULT_MODEL_ID};
+    use super::{configured_bool, http_config, read_config_file, setting_value, DEFAULT_MODEL_ID};
+    use std::collections::BTreeMap;
 
     #[test]
     fn default_model_can_be_disabled_or_overridden() {
@@ -338,6 +385,29 @@ mod tests {
             setting_value("custom-model"),
             Some("custom-model".to_owned())
         );
+    }
+
+    #[test]
+    fn bootstrap_flags_default_to_enabled_and_accept_false_values() {
+        let values = BTreeMap::new();
+        assert!(configured_bool(
+            "TALVIK_AUTO_BOOTSTRAP",
+            "MARINA_AUTO_BOOTSTRAP",
+            "auto_bootstrap",
+            &values,
+            true,
+        )
+        .expect("default bootstrap flag"));
+
+        let values = BTreeMap::from([("auto_download".to_owned(), "false".to_owned())]);
+        assert!(!configured_bool(
+            "TALVIK_AUTO_DOWNLOAD",
+            "MARINA_AUTO_DOWNLOAD",
+            "auto_download",
+            &values,
+            true,
+        )
+        .expect("configured download flag"));
     }
 
     #[test]

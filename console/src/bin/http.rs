@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -15,14 +16,48 @@ const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
 const MAX_CONTEXT_TOKENS: u64 = 32_768;
 const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Process-local bootstrap and inference readiness shared by health routes.
+#[derive(Debug, Default)]
+pub(crate) struct Readiness {
+    ready: AtomicBool,
+    state: Mutex<String>,
+}
+
+impl Readiness {
+    pub(crate) fn new() -> Self {
+        Self {
+            ready: AtomicBool::new(false),
+            state: Mutex::new("starting".to_owned()),
+        }
+    }
+
+    pub(crate) fn set(&self, ready: bool, state: impl Into<String>) {
+        if let Ok(mut current) = self.state.lock() {
+            *current = state.into();
+        }
+        self.ready.store(ready, Ordering::Release);
+    }
+
+    fn snapshot(&self) -> (bool, String) {
+        (
+            self.ready.load(Ordering::Acquire),
+            self.state
+                .lock()
+                .map_or_else(|_| "unknown".to_owned(), |state| state.clone()),
+        )
+    }
+}
+
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
     address: &str,
     runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
-    default_model_id: Option<String>,
+    default_model_id: Option<&String>,
+    readiness: &Arc<Readiness>,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(address)?;
+    let default_model_id = default_model_id.cloned();
     let owners = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     for connection in listener.incoming() {
         match connection {
@@ -30,6 +65,7 @@ pub fn serve(
                 let runtime = Arc::clone(runtime);
                 let owners = Arc::clone(&owners);
                 let default_model_id = default_model_id.clone();
+                let readiness = Arc::clone(readiness);
                 std::thread::spawn(move || {
                     if let Err(error) = handle(
                         stream,
@@ -37,6 +73,7 @@ pub fn serve(
                         authentication_enabled,
                         default_model_id.as_deref(),
                         &owners,
+                        &readiness,
                     ) {
                         eprintln!("Marina HTTP request failed: {error}");
                     }
@@ -55,6 +92,7 @@ fn handle(
     authentication_enabled: bool,
     default_model_id: Option<&str>,
     owners: &Arc<Mutex<HashMap<String, String>>>,
+    readiness: &Readiness,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     reader
@@ -100,7 +138,7 @@ fn handle(
             ],
         })
     };
-    if path != "/healthz" && identity.is_none() {
+    if path != "/healthz" && path != "/readyz" && identity.is_none() {
         return respond_json(
             &mut stream,
             401,
@@ -112,7 +150,30 @@ fn handle(
         scopes: Vec::new(),
     });
     match (method, path) {
-        ("GET", "/healthz") => respond_json(&mut stream, 200, json!({"status": "ok"})),
+        ("GET", "/healthz") => {
+            let (ready, bootstrap) = readiness.snapshot();
+            respond_json(
+                &mut stream,
+                200,
+                json!({"status": "ok", "service_available": true, "inference_ready": ready, "bootstrap": bootstrap}),
+            )
+        }
+        ("GET", "/readyz") => {
+            let (ready, bootstrap) = readiness.snapshot();
+            if ready {
+                respond_json(
+                    &mut stream,
+                    200,
+                    json!({"status": "ready", "inference_ready": true}),
+                )
+            } else {
+                respond_json(
+                    &mut stream,
+                    503,
+                    json!({"status": "not_ready", "inference_ready": false, "bootstrap": bootstrap}),
+                )
+            }
+        }
         ("GET", "/version" | "/v1/version") => respond_json(
             &mut stream,
             200,

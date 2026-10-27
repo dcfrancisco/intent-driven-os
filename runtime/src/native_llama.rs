@@ -138,6 +138,7 @@ impl Backend for LlamaCppAdapter {
         Ok(chunks)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn generate_streaming(
         &self,
         request: &GenerationRequest,
