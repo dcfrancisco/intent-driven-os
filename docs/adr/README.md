@@ -26,3 +26,5 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0023 — OID Linux Distribution, Boot Lifecycle, and System Services](0023-oid-linux-distribution-boot-lifecycle-and-system-services.md)
 - [ADR-0024 — Marina Windows Native Build and Qualification Requirements](0024-marina-windows-native-build-and-qualification.md)
 - [ADR-0025 — MarinaOS Product and Execution Architecture Proposal](0025-marinaos-product-and-execution-architecture.md)
+- [ADR-0026 — Inference Performance Measurement](0026-inference-performance-measurement.md)
+- [ADR-0027 — Talvik Optional Vulkan Acceleration](0027-talvik-optional-vulkan-acceleration.md)

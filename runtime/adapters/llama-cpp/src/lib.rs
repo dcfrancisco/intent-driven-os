@@ -198,6 +198,7 @@ impl ModelRunner for LlamaCppModelRunner {
                         .lock()
                         .ok()
                         .and_then(|value| value.map(|time| time.duration_since(started))),
+                    prompt_evaluation_time: None,
                     generation_time: Some(elapsed),
                     tokens_per_second: (elapsed.as_secs_f64() > 0.0)
                         .then_some(native_stats.generated_tokens as f64 / elapsed.as_secs_f64()),

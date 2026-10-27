@@ -89,6 +89,12 @@ surface includes `/healthz`, `/v1/models`, `/v1/models/{id}/load`,
 `/v1/chat/completions`, `/v1/completions`, and request cancellation at
 `/v1/generations/{request_id}/cancel`. The existing Unix socket remains the
 default local transport and uses the same `RuntimeService` application layer.
+`GET /v1/models` reports whether a model is resident, its conservative
+`estimated_memory_mib`, and the configured default model. `oid-marina-chat`
+honors `OID_MARINA_MODEL`, otherwise selects the configured default, then a
+resident model, then the model with the smallest reported estimate. These
+selection hints do not bypass admission: the runtime remains authoritative
+and can still reject a model when live memory is insufficient.
 The HTTP server is loopback-only when configured locally; non-loopback
 addresses are rejected unless `MARINA_HTTP_ALLOW_NON_LOOPBACK=true` is set for
 an explicitly secured deployment. Network exposure is not enabled by default.

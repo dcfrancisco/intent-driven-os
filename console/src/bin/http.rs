@@ -20,6 +20,7 @@ pub fn serve(
     address: &str,
     runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
+    default_model_id: Option<String>,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(address)?;
     let owners = Arc::new(Mutex::new(HashMap::<String, String>::new()));
@@ -28,10 +29,15 @@ pub fn serve(
             Ok(stream) => {
                 let runtime = Arc::clone(runtime);
                 let owners = Arc::clone(&owners);
+                let default_model_id = default_model_id.clone();
                 std::thread::spawn(move || {
-                    if let Err(error) =
-                        handle(stream, runtime.as_ref(), authentication_enabled, &owners)
-                    {
+                    if let Err(error) = handle(
+                        stream,
+                        runtime.as_ref(),
+                        authentication_enabled,
+                        default_model_id.as_deref(),
+                        &owners,
+                    ) {
                         eprintln!("Marina HTTP request failed: {error}");
                     }
                 });
@@ -47,6 +53,7 @@ fn handle(
     mut stream: TcpStream,
     runtime: &dyn RuntimeService,
     authentication_enabled: bool,
+    default_model_id: Option<&str>,
     owners: &Arc<Mutex<HashMap<String, String>>>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -113,7 +120,16 @@ fn handle(
             let data = runtime
                 .model_list()
                 .into_iter()
-                .map(|model| json!({"id": model.id, "object": "model", "owned_by": "marina"}))
+                .map(|model| {
+                    json!({
+                        "id": model.id,
+                        "object": "model",
+                        "owned_by": "marina",
+                        "default": default_model_id.is_some_and(|id| id == model.id),
+                        "resident": matches!(model.status, oid_runtime::ModelStatus::Loaded),
+                        "estimated_memory_mib": model.memory_requirement_mb
+                    })
+                })
                 .collect::<Vec<_>>();
             respond_json(&mut stream, 200, json!({"object": "list", "data": data}))
         }
@@ -378,9 +394,16 @@ fn generate(
             format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
         );
     }
+    let was_resident = runtime
+        .model_inspect(model)
+        .map(|metadata| matches!(metadata.status, oid_runtime::ModelStatus::Loaded));
+    let load_started = Instant::now();
     if let Err(error) = runtime.model_load(model) {
         return respond_error(stream, 409, error.to_string());
     }
+    let model_load_time_ms = was_resident
+        .filter(|resident| !resident)
+        .map(|_| load_started.elapsed().as_millis());
     if tool_definitions.is_some() {
         let support = runtime.tool_support();
         if !support.supported {
@@ -482,7 +505,30 @@ fn generate(
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}], "termination_reason": termination_reason, "usage": {"prompt_tokens": result.statistics.prompt_tokens, "completion_tokens": result.statistics.generated_tokens, "total_tokens": result.statistics.context_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({
+                        "id": result.request_id,
+                        "generation_id": result.generation_id,
+                        "object": "chat.completion",
+                        "model": model,
+                        "backend": runtime.snapshot().backend,
+                        "choices": [{"index": 0, "message": message, "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}}],
+                        "termination_reason": termination_reason,
+                        "usage": {
+                            "prompt_tokens": result.statistics.metrics_known.then_some(result.statistics.prompt_tokens),
+                            "completion_tokens": result.statistics.metrics_known.then_some(result.statistics.generated_tokens),
+                            "total_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)
+                        },
+                        "metrics": {
+                            "tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second),
+                            "latency_ms": result.statistics.latency_ms,
+                            "inference_time_ms": result.statistics.backend_inference_time_ms,
+                            "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
+                            "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "generation_time_ms": result.statistics.generation_time_ms,
+                            "model_load_time_ms": model_load_time_ms,
+                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)
+                        }
+                    }),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
@@ -494,7 +540,25 @@ fn generate(
                 return respond_json(
                     stream,
                     200,
-                    json!({"id": result.request_id, "generation_id": result.generation_id, "object": "chat.completion", "model": model, "choices": [{"index": 0, "message": {"role": "assistant", "content": output}, "finish_reason": "cancelled"}], "usage": {"completion_tokens": result.statistics.generated_tokens}, "metrics": {"tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second), "latency_ms": result.statistics.metrics_known.then_some(result.statistics.latency_ms), "inference_time_ms": result.statistics.metrics_known.then_some(result.statistics.inference_time_ms), "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)}}),
+                    json!({
+                        "id": result.request_id,
+                        "generation_id": result.generation_id,
+                        "object": "chat.completion",
+                        "model": model,
+                        "backend": runtime.snapshot().backend,
+                        "choices": [{"index": 0, "message": {"role": "assistant", "content": output}, "finish_reason": "cancelled"}],
+                        "usage": {"completion_tokens": result.statistics.metrics_known.then_some(result.statistics.generated_tokens)},
+                        "metrics": {
+                            "tokens_per_second": result.statistics.metrics_known.then_some(result.statistics.tokens_per_second),
+                            "latency_ms": result.statistics.latency_ms,
+                            "inference_time_ms": result.statistics.backend_inference_time_ms,
+                            "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
+                            "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "generation_time_ms": result.statistics.generation_time_ms,
+                            "model_load_time_ms": model_load_time_ms,
+                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)
+                        }
+                    }),
                 );
             }
             Ok(GenerationMessage::Failed(error)) => {

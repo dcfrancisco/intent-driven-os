@@ -825,15 +825,15 @@ impl RuntimeService for MarinaRuntime {
             let statistics = GenerationStatistics {
                 prompt_tokens: statistics.prompt_tokens,
                 generated_tokens: statistics.generated_tokens,
-                tokens_per_second: if latency_ms == 0 {
-                    statistics.generated_tokens as f64
-                } else {
-                    statistics.generated_tokens as f64 / (latency_ms as f64 / 1000.0)
-                },
+                tokens_per_second: statistics.tokens_per_second,
                 latency_ms,
-                inference_time_ms: latency_ms,
+                inference_time_ms: statistics.inference_time_ms,
+                backend_inference_time_ms: statistics.backend_inference_time_ms,
+                time_to_first_token_ms: statistics.time_to_first_token_ms,
+                prompt_evaluation_time_ms: statistics.prompt_evaluation_time_ms,
+                generation_time_ms: statistics.generation_time_ms,
                 context_tokens: statistics.context_tokens,
-                metrics_known: true,
+                metrics_known: statistics.metrics_known,
                 termination: statistics.termination,
             };
             let result = GenerationResult {

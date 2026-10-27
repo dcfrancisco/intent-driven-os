@@ -16,6 +16,12 @@ use std::time::{Duration, Instant};
 pub struct ModelDescriptor {
     /// Stable Marina model identifier.
     pub id: String,
+    /// Whether the daemon marks this as its configured default model.
+    pub is_default: Option<bool>,
+    /// Whether the daemon reported the model resident at discovery time.
+    pub resident: Option<bool>,
+    /// Conservative estimated model memory requirement in MiB, when reported.
+    pub estimated_memory_mib: Option<u64>,
 }
 
 /// A provider-neutral chat request.
@@ -44,6 +50,8 @@ pub struct ChatResponse {
     pub request_id: String,
     /// Marina-owned generation identity, separate from the caller request ID.
     pub generation_id: String,
+    /// Backend identifier reported by Marina, when available.
+    pub backend: Option<String>,
     /// Measurements returned by Marina. Missing fields remain unknown.
     pub metrics: RemoteGenerationMetrics,
 }
@@ -63,6 +71,14 @@ pub struct RemoteGenerationMetrics {
     pub latency_ms: Option<u128>,
     /// Backend inference time in milliseconds, if reported.
     pub inference_time_ms: Option<u128>,
+    /// Time to first token in milliseconds, if reported.
+    pub time_to_first_token_ms: Option<u128>,
+    /// Prompt evaluation duration in milliseconds, if reported.
+    pub prompt_evaluation_time_ms: Option<u128>,
+    /// Backend generation duration in milliseconds, if reported.
+    pub generation_time_ms: Option<u128>,
+    /// Model load duration in milliseconds, if reported for this request.
+    pub model_load_time_ms: Option<u128>,
 }
 
 /// Structured failure from a model client.
@@ -236,17 +252,7 @@ impl ModelClient for MarinaHttpClient {
             .ok_or_else(|| {
                 ModelClientError::MalformedResponse("models data is missing".to_owned())
             })?;
-        data.iter()
-            .map(|model| {
-                model
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map(|id| ModelDescriptor { id: id.to_owned() })
-                    .ok_or_else(|| {
-                        ModelClientError::MalformedResponse("model id is missing".to_owned())
-                    })
-            })
-            .collect()
+        data.iter().map(parse_model_descriptor).collect()
     }
 
     fn chat(
@@ -307,6 +313,10 @@ impl ModelClient for MarinaHttpClient {
                 .or_else(|| response.get("id").and_then(Value::as_str))
                 .unwrap_or(&request.request_id)
                 .to_owned(),
+            backend: response
+                .get("backend")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             metrics: parse_metrics(&response),
         })
     }
@@ -331,7 +341,36 @@ fn parse_metrics(response: &Value) -> RemoteGenerationMetrics {
             .get("inference_time_ms")
             .and_then(Value::as_u64)
             .map(u128::from),
+        time_to_first_token_ms: metrics
+            .get("time_to_first_token_ms")
+            .and_then(Value::as_u64)
+            .map(u128::from),
+        prompt_evaluation_time_ms: metrics
+            .get("prompt_evaluation_time_ms")
+            .and_then(Value::as_u64)
+            .map(u128::from),
+        generation_time_ms: metrics
+            .get("generation_time_ms")
+            .and_then(Value::as_u64)
+            .map(u128::from),
+        model_load_time_ms: metrics
+            .get("model_load_time_ms")
+            .and_then(Value::as_u64)
+            .map(u128::from),
     }
+}
+
+fn parse_model_descriptor(model: &Value) -> Result<ModelDescriptor, ModelClientError> {
+    model
+        .get("id")
+        .and_then(Value::as_str)
+        .map(|id| ModelDescriptor {
+            id: id.to_owned(),
+            is_default: model.get("default").and_then(Value::as_bool),
+            resident: model.get("resident").and_then(Value::as_bool),
+            estimated_memory_mib: model.get("estimated_memory_mib").and_then(Value::as_u64),
+        })
+        .ok_or_else(|| ModelClientError::MalformedResponse("model id is missing".to_owned()))
 }
 
 impl MarinaHttpClient {
@@ -451,7 +490,8 @@ fn io_error(error: &io::Error) -> ModelClientError {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_metrics, parse_response, MarinaHttpClient, MarinaHttpConfig, ModelClientError,
+        parse_metrics, parse_model_descriptor, parse_response, MarinaHttpClient, MarinaHttpConfig,
+        ModelClientError,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -491,5 +531,44 @@ mod tests {
         assert_eq!(metrics.latency_ms, Some(12));
         assert_eq!(metrics.context_tokens, None);
         assert_eq!(metrics.tokens_per_second, None);
+        assert_eq!(metrics.time_to_first_token_ms, None);
+        assert_eq!(metrics.prompt_evaluation_time_ms, None);
+        assert_eq!(metrics.generation_time_ms, None);
+        assert_eq!(metrics.model_load_time_ms, None);
+    }
+
+    #[test]
+    fn parses_backend_timing_metrics_without_estimation() {
+        let metrics = parse_metrics(&json!({
+            "metrics": {
+                "time_to_first_token_ms": 42,
+                "prompt_evaluation_time_ms": 22,
+                "generation_time_ms": 87,
+                "model_load_time_ms": 1200
+            }
+        }));
+        assert_eq!(metrics.time_to_first_token_ms, Some(42));
+        assert_eq!(metrics.prompt_evaluation_time_ms, Some(22));
+        assert_eq!(metrics.generation_time_ms, Some(87));
+        assert_eq!(metrics.model_load_time_ms, Some(1200));
+        assert_eq!(metrics.tokens_per_second, None);
+    }
+
+    #[test]
+    fn model_residency_is_optional_for_older_api_responses() {
+        let resident = parse_model_descriptor(&json!({
+            "id": "test",
+            "default": true,
+            "resident": true,
+            "estimated_memory_mib": 512
+        }))
+        .expect("model descriptor");
+        assert_eq!(resident.is_default, Some(true));
+        assert_eq!(resident.resident, Some(true));
+        assert_eq!(resident.estimated_memory_mib, Some(512));
+        let older = parse_model_descriptor(&json!({"id": "older"})).expect("older descriptor");
+        assert_eq!(older.is_default, None);
+        assert_eq!(older.resident, None);
+        assert_eq!(older.estimated_memory_mib, None);
     }
 }

@@ -23,18 +23,23 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
-    load_default_model(
-        runtime.as_ref(),
-        config::default_model().map_err(std::io::Error::other)?,
-    );
+    let default_model = config::default_model().map_err(std::io::Error::other)?;
+    let default_model_id = default_model.as_ref().map(|model| model.id.clone());
+    load_default_model(runtime.as_ref(), default_model);
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
     let http_configuration = config::http_config().map_err(std::io::Error::other)?;
     if let Some(address) = http_configuration.address {
         let http_runtime = Arc::clone(&runtime);
         let authentication_enabled = http_configuration.authentication_enabled;
+        let http_default_model_id = default_model_id.clone();
         let http_address = address.clone();
         thread::spawn(move || {
-            if let Err(error) = http::serve(&http_address, &http_runtime, authentication_enabled) {
+            if let Err(error) = http::serve(
+                &http_address,
+                &http_runtime,
+                authentication_enabled,
+                http_default_model_id,
+            ) {
                 eprintln!("Model runtime HTTP server failed: {error}");
             }
         });
