@@ -93,5 +93,6 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0091 | User/System Execution Capability Contract | Proposed boundary and trust model for user-scoped and privileged Linux executors |
 | WP-0092 | Inference Performance Measurement | Client timing, backend metrics, benchmark summaries, and cold/warm qualification |
 | WP-0093 | Talvik Optional Vulkan Acceleration | Optional Vulkan backend, runtime placement, fallback, memory admission, and qualification |
+| WP-0094 | Talvik Per-User Windows MSI | Build, sign, release, upgrade, and uninstall a user-scoped Talvik MSI |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

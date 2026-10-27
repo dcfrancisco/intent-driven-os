@@ -28,3 +28,4 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0025 — MarinaOS Product and Execution Architecture Proposal](0025-marinaos-product-and-execution-architecture.md)
 - [ADR-0026 — Inference Performance Measurement](0026-inference-performance-measurement.md)
 - [ADR-0027 — Talvik Optional Vulkan Acceleration](0027-talvik-optional-vulkan-acceleration.md)
+- [ADR-0028 — Per-User MSI Packaging for Talvik on Windows](0028-talvik-per-user-windows-msi.md)
