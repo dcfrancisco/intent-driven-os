@@ -75,6 +75,22 @@ remain outside this milestone.
 
 Dependencies point toward contracts and stable inner boundaries. Execution adapters must not own policy decisions, and model assistance must not bypass authorization or evidence recording. Cross-crate dependencies should be introduced only when a type is truly shared.
 
+## Proposed MarinaOS execution architecture
+
+ADR-0027 records a **proposed, not accepted** product evolution: MarinaOS as a
+possible umbrella identity, with Talvik remaining the independent model
+runtime and separate user/system execution contexts as a design candidate.
+The proposed rule is that models produce interpretations or typed proposals,
+while an orchestrator and execution boundary enforce policy, approval,
+verification, rollback, and evidence. Talvik receives no OS execution
+authority.
+
+The repository's current accepted ownership remains unchanged: OID owns its
+governed operation lifecycle, and Talvik provides model execution. Whether a
+future orchestrator is OID-owned or Marina-branded is an explicit open decision.
+WP-0104 is design-only until ADR-0027 and the capability contract are reviewed;
+no system or user executor daemon is implied to exist.
+
 ## Operation lifecycle
 
 ```mermaid

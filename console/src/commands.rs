@@ -122,6 +122,8 @@ pub fn execute_with_operations_and_signals(
                 "  :status   Show runtime status".to_owned(),
                 "  :runtime  Show runtime service details".to_owned(),
                 "  :models   List registered model metadata".to_owned(),
+                "  :generate <prompt>  Prompt the configured model".to_owned(),
+                "  :explain <prompt>   Ask the model to explain a topic".to_owned(),
                 "  :audio [status|1x|2x|3x|mute|unmute|toggle-mute]  Control system audio"
                     .to_owned(),
                 "  :intent create a directory <path>  Plan a governed operation".to_owned(),
@@ -434,7 +436,10 @@ fn generate_lines_result_with_interrupt(
             std::process::id(),
             GENERATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ),
-        model_id: runtime.snapshot().loaded_model.unwrap_or_default(),
+        model_id: select_generation_model(
+            runtime.snapshot().loaded_model,
+            std::env::var("OID_MARINA_MODEL").ok(),
+        )?,
         prompt: prompt.to_owned(),
         options,
     };
@@ -493,6 +498,21 @@ fn generate_lines_result_with_interrupt(
         }
     }
     Ok(lines)
+}
+
+fn select_generation_model(
+    loaded_model: Option<String>,
+    configured_model: Option<String>,
+) -> Result<String, oid_runtime::RuntimeError> {
+    loaded_model
+        .or(configured_model)
+        .map(|model| model.trim().to_owned())
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| {
+            oid_runtime::RuntimeError::ModelLifecycle(
+                "no model selected; load a model or set OID_MARINA_MODEL".to_owned(),
+            )
+        })
 }
 
 fn operation_result<T: std::fmt::Display>(
@@ -602,10 +622,24 @@ fn backend_health_label(health: &BackendHealth) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{execute, CommandAction, HistoryView};
+    use super::{execute, select_generation_model, CommandAction, HistoryView};
     use crate::operations::ConsoleOperations;
     use oid_runtime::MarinaRuntime;
     use oid_shared::{EventBus, RuntimeConfig};
+
+    #[test]
+    fn generation_uses_configured_model_when_http_residency_is_unknown() {
+        assert_eq!(
+            select_generation_model(None, Some("qwen-default".to_owned()))
+                .expect("configured model"),
+            "qwen-default"
+        );
+        assert_eq!(
+            select_generation_model(Some("resident".to_owned()), None).expect("loaded model"),
+            "resident"
+        );
+        assert!(select_generation_model(None, None).is_err());
+    }
 
     #[test]
     fn built_in_commands_return_mock_information() {

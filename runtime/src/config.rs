@@ -6,6 +6,22 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+const DEFAULT_MODEL_ID: &str = "qwen2.5-0.5b-instruct-q4_k_m";
+const DEFAULT_MODEL_SOURCE: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+const DEFAULT_MODEL_SHA256: &str =
+    "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db";
+
+/// Default model to acquire and load when Talvik starts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefaultModelConfig {
+    /// Model identifier to load.
+    pub id: String,
+    /// Optional source used to acquire a missing model.
+    pub source: Option<String>,
+    /// Optional expected SHA-256 for acquisition.
+    pub checksum: Option<String>,
+}
+
 /// Native HTTP listener configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HttpConfig {
@@ -97,6 +113,88 @@ pub fn config_file() -> PathBuf {
             },
             PathBuf::from,
         )
+}
+
+/// Load the configured default model.
+///
+/// The built-in Qwen default is acquired from its pinned Hugging Face GGUF
+/// artifact when no local registration exists. Set `default_model` to `none`
+/// to disable automatic loading.
+///
+/// # Errors
+///
+/// Returns an error when the configuration file or an environment override
+/// contains invalid non-UTF-8 data.
+pub fn default_model() -> Result<Option<DefaultModelConfig>, String> {
+    let values = read_config_file(&config_file())?;
+    let model_value = configured_value(
+        "TALVIK_DEFAULT_MODEL",
+        "MARINA_DEFAULT_MODEL",
+        "default_model",
+        &values,
+    )?
+    .unwrap_or_else(|| DEFAULT_MODEL_ID.to_owned());
+    let Some(id) = setting_value(&model_value) else {
+        return Ok(None);
+    };
+
+    let source = configured_value(
+        "TALVIK_DEFAULT_MODEL_SOURCE",
+        "MARINA_DEFAULT_MODEL_SOURCE",
+        "default_model_source",
+        &values,
+    )?
+    .map_or_else(
+        || (id == DEFAULT_MODEL_ID).then(|| DEFAULT_MODEL_SOURCE.to_owned()),
+        |value| setting_value(&value),
+    );
+    let checksum = configured_value(
+        "TALVIK_DEFAULT_MODEL_SHA256",
+        "MARINA_DEFAULT_MODEL_SHA256",
+        "default_model_sha256",
+        &values,
+    )?
+    .map_or_else(
+        || (id == DEFAULT_MODEL_ID).then(|| DEFAULT_MODEL_SHA256.to_owned()),
+        |value| setting_value(&value),
+    );
+
+    Ok(Some(DefaultModelConfig {
+        id,
+        source,
+        checksum,
+    }))
+}
+
+fn configured_value(
+    primary: &str,
+    compatibility: &str,
+    key: &str,
+    values: &BTreeMap<String, String>,
+) -> Result<Option<String>, String> {
+    for name in [primary, compatibility] {
+        if let Some(value) = std::env::var_os(name) {
+            return value
+                .into_string()
+                .map(Some)
+                .map_err(|_| format!("{name} must contain valid UTF-8"));
+        }
+    }
+    Ok(values.get(key).cloned())
+}
+
+fn setting_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "none" | "disabled" | "off"
+        )
+    {
+        None
+    } else {
+        Some(value.to_owned())
+    }
 }
 
 /// Load the deterministic Phase 1 configuration.
@@ -226,7 +324,21 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
 
 #[cfg(test)]
 mod tests {
-    use super::{http_config, read_config_file};
+    use super::{http_config, read_config_file, setting_value, DEFAULT_MODEL_ID};
+
+    #[test]
+    fn default_model_can_be_disabled_or_overridden() {
+        assert_eq!(
+            setting_value(DEFAULT_MODEL_ID),
+            Some(DEFAULT_MODEL_ID.to_owned())
+        );
+        assert_eq!(setting_value("none"), None);
+        assert_eq!(setting_value("  "), None);
+        assert_eq!(
+            setting_value("custom-model"),
+            Some("custom-model".to_owned())
+        );
+    }
 
     #[test]
     fn reads_small_yaml_key_value_config() {

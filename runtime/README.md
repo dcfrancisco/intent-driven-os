@@ -68,7 +68,11 @@ Set `MARINA_TOKEN_FILE` to use another secret-store integration point.
 
 Persistent runner settings belong in `$HOME/.marina/config.yaml` on Unix or
 `%USERPROFILE%\.marina\config.yaml` on Windows. Environment variables override
-file values for tests and deployment automation.
+file values for tests and deployment automation. Talvik loads the configured
+default model on daemon startup; by default it is
+`qwen2.5-0.5b-instruct-q4_k_m`. If missing, Talvik pulls the pinned artifact
+and verifies its SHA-256 before loading. Set `default_model: none` to opt out.
+Failures are logged as warnings and do not prevent the daemon from starting.
 
 ## Native HTTP API
 
@@ -85,6 +89,12 @@ surface includes `/healthz`, `/v1/models`, `/v1/models/{id}/load`,
 `/v1/chat/completions`, `/v1/completions`, and request cancellation at
 `/v1/generations/{request_id}/cancel`. The existing Unix socket remains the
 default local transport and uses the same `RuntimeService` application layer.
+`GET /v1/models` reports whether a model is resident, its conservative
+`estimated_memory_mib`, and the configured default model. `oid-marina-chat`
+honors `OID_MARINA_MODEL`, otherwise selects the configured default, then a
+resident model, then the model with the smallest reported estimate. These
+selection hints do not bypass admission: the runtime remains authoritative
+and can still reject a model when live memory is insufficient.
 The HTTP server is loopback-only when configured locally; non-loopback
 addresses are rejected unless `MARINA_HTTP_ALLOW_NON_LOOPBACK=true` is set for
 an explicitly secured deployment. Network exposure is not enabled by default.
@@ -106,13 +116,34 @@ be exposed publicly without the planned authenticated service boundary.
 
 The provider-neutral OID client uses `OID_MARINA_URL`, `OID_MARINA_TOKEN`, and
 optional `OID_MARINA_MODEL`. Its default endpoint is
-`http://127.0.0.1:11434`; the first client slice rejects remote endpoints until
-a trusted TLS boundary is implemented.
+`http://127.0.0.1:11435` on Windows, where port 11434 is reserved for local
+IPC, and `http://127.0.0.1:11434` on Linux/macOS. The first client slice rejects
+remote endpoints until a trusted TLS boundary is implemented.
 
-To select the remote model backend for the OID console explicitly, set
-`OID_RUNTIME_BACKEND=marina-http`. The default console backend remains the
-in-process runtime until governed-session cancellation and evidence integration
-are fully verified.
+When the Talvik local IPC daemon is available, the OID console reads its model
+inventory, health, and loaded-model state and routes model import/load/unload
+commands to it. Without a daemon, the console uses the in-process runtime.
+Generation remains in-process by default until governed-session cancellation
+and evidence integration are fully verified.
+
+To route OID inference through Talvik's native HTTP API explicitly, set
+`OID_RUNTIME_BACKEND=marina-http` and configure `OID_MARINA_URL` plus any
+required `OID_MARINA_TOKEN`. Set `OID_MARINA_MODEL` to override model selection; otherwise OID follows the
+API-reported configured default and then available residency hints.
+For example, on Windows with Talvik HTTP listening on port 11435:
+
+```powershell
+$env:OID_RUNTIME_BACKEND = "marina-http"
+$env:OID_MARINA_URL = "http://127.0.0.1:11435"
+$env:OID_MARINA_MODEL = "qwen2.5-0.5b-instruct-q4_k_m"
+$env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-console).Trim()
+.\target\release\oid-console.exe
+```
+
+At the OID prompt, enter `:generate <your prompt>`. The token command creates
+a local credential with model-read, inference, and cancellation scopes. The
+HTTP model-list API reports residency and the configured default; OID uses
+those fields to display the loaded model and select the default consistently.
 
 Remote OID inference uses the existing OID file evidence store at
 `$OID_STATE_DIR/evidence.log` (or the console temporary state directory). It

@@ -78,6 +78,9 @@ Talvik uses the following configuration variables:
 | `TALVIK_MODEL_DIR` | Model store |
 | `TALVIK_REGISTRY` | Registry file |
 | `TALVIK_STATE_DIR` | Runtime state |
+| `TALVIK_DEFAULT_MODEL` | Model Talvik loads at daemon startup; defaults to the pinned Qwen 0.5B GGUF |
+| `TALVIK_DEFAULT_MODEL_SOURCE` | Source URL/path for acquiring a missing custom default model |
+| `TALVIK_DEFAULT_MODEL_SHA256` | Expected SHA-256 for the default model download |
 | `TALVIK_TOKEN_FILE` | Token database |
 | `TALVIK_HTTP_ADDR` | Optional HTTP listener |
 | `TALVIK_HTTP_AUTH` | HTTP authentication control |
@@ -104,6 +107,13 @@ remains the primary OpenAI-compatible inference API.
 Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.
 Talvik does not delete or silently migrate existing data.
+
+At startup, `talvikd` loads `qwen2.5-0.5b-instruct-q4_k_m` by default. If it is
+not registered, Talvik acquires the pinned GGUF artifact from Hugging Face and
+verifies its SHA-256 before loading. A pull or load failure is reported as a
+warning and the daemon continues. Set `default_model: none` or
+`TALVIK_DEFAULT_MODEL=none` to disable automatic loading. For another default
+model, configure its source and optional checksum as well.
 
 ## Security defaults
 

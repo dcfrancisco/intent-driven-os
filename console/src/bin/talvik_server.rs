@@ -26,14 +26,23 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
+    let default_model = config::default_model().map_err(std::io::Error::other)?;
+    let default_model_id = default_model.as_ref().map(|model| model.id.clone());
+    load_default_model(runtime.as_ref(), default_model);
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
     let http_configuration = config::http_config().map_err(std::io::Error::other)?;
     if let Some(address) = http_configuration.address {
         let http_runtime = Arc::clone(&runtime);
         let authentication_enabled = http_configuration.authentication_enabled;
+        let http_default_model_id = default_model_id.clone();
         let http_address = address.clone();
         thread::spawn(move || {
-            if let Err(error) = http::serve(&http_address, &http_runtime, authentication_enabled) {
+            if let Err(error) = http::serve(
+                &http_address,
+                &http_runtime,
+                authentication_enabled,
+                http_default_model_id,
+            ) {
                 eprintln!("Model runtime HTTP server failed: {error}");
             }
         });
@@ -55,6 +64,49 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn load_default_model(
+    runtime: &dyn RuntimeService,
+    default_model: Option<config::DefaultModelConfig>,
+) {
+    let Some(default_model) = default_model else {
+        return;
+    };
+
+    if runtime.model_inspect(&default_model.id).is_none() {
+        let Some(source) = default_model.source.as_deref() else {
+            report_default_model_failure(
+                runtime,
+                &default_model.id,
+                "model is not installed and no acquisition source is configured".to_owned(),
+            );
+            return;
+        };
+        eprintln!(
+            "Default model {} is not installed; pulling it from {}",
+            default_model.id, source
+        );
+        if let Err(error) = runtime.model_pull(
+            source,
+            Some(&default_model.id),
+            default_model.checksum.as_deref(),
+        ) {
+            report_default_model_failure(runtime, &default_model.id, error.to_string());
+            return;
+        }
+    }
+
+    match runtime.model_load(&default_model.id) {
+        Ok(()) => eprintln!("Loaded default model: {}", default_model.id),
+        Err(error) => report_default_model_failure(runtime, &default_model.id, error.to_string()),
+    }
+}
+
+fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, reason: String) {
+    let warning = format!("default model {model_id} was not loaded; continuing: {reason}");
+    eprintln!("Warning: {warning}");
+    runtime.publish(RuntimeEvent::WarningRaised(warning));
 }
 
 #[allow(clippy::too_many_lines)]

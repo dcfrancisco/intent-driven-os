@@ -6,8 +6,7 @@ use oid_model_client::{ChatRequest, MarinaHttpClient, ModelClient, ModelClientEr
 use oid_runtime::{
     BackendHealth, BackendSummary, GenerationMessage, GenerationRequest, GenerationResult,
     GenerationStatistics, GenerationStream, HardwareSnapshot, MarinaRuntime, ModelMetadata,
-    ModelStatus, ResidentModelSnapshot, RuntimeError, RuntimeService, RuntimeSnapshot,
-    RuntimeStatus,
+    ModelStatus, RuntimeError, RuntimeService, RuntimeSnapshot, RuntimeStatus,
 };
 use oid_shared::{EventBus, RuntimeEvent};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,30 +72,13 @@ impl RemoteRuntimeService {
             .map_err(|error| RuntimeError::ModelLifecycle(error.to_string()))
     }
 
-    fn remote_models(&self) -> Vec<ModelMetadata> {
-        let models = match self.client.list_models() {
-            Ok(models) => models,
-            Err(error) => {
-                eprintln!("OID Marina model discovery failed: {error}");
-                return Vec::new();
-            }
-        };
-        models
+    fn remote_models(&self) -> Result<Vec<ModelMetadata>, ModelClientError> {
+        Ok(self
+            .client
+            .list_models()?
             .into_iter()
-            .map(|model| ModelMetadata {
-                name: model.id.clone(),
-                id: model.id,
-                family: "remote".to_owned(),
-                backend: "marina".to_owned(),
-                quantization: "unknown".to_owned(),
-                context_window: 32_768,
-                memory_requirement_mb: 0,
-                capabilities: vec!["chat".to_owned()],
-                status: ModelStatus::Registered,
-                checksum: None,
-                location: "marina-http".to_owned(),
-            })
-            .collect()
+            .map(remote_model_metadata)
+            .collect())
     }
 }
 
@@ -108,24 +90,28 @@ impl RuntimeService for RemoteRuntimeService {
     fn snapshot(&self) -> RuntimeSnapshot {
         let mut snapshot = self.local.snapshot();
         "marina-http".clone_into(&mut snapshot.backend);
-        let models = self.remote_models();
-        snapshot.models = models.len();
-        snapshot.loaded_model = std::env::var("OID_MARINA_MODEL")
-            .ok()
-            .or_else(|| models.first().map(|model| model.id.clone()));
-        snapshot.loaded_models = snapshot.loaded_model.clone().into_iter().collect();
-        snapshot.resident_models = snapshot
-            .loaded_models
-            .iter()
-            .map(|id| ResidentModelSnapshot {
-                id: id.clone(),
-                memory_bytes: None,
-                idle_seconds: 0,
-            })
-            .collect();
+        match self.remote_models() {
+            Ok(models) => {
+                snapshot.models = models.len();
+                snapshot.health = "Healthy";
+                snapshot.loaded_models = loaded_model_ids(&models);
+                snapshot.loaded_model = snapshot.loaded_models.first().cloned();
+            }
+            Err(error) => {
+                eprintln!("OID Marina model discovery failed: {error}");
+                snapshot.models = 0;
+                snapshot.health = "Unavailable";
+                snapshot.loaded_model = None;
+                snapshot.loaded_models.clear();
+            }
+        }
+        snapshot.resident_models.clear();
         snapshot.pending_requests = 0;
-        snapshot.active_requests = usize::from(snapshot.generating);
         snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
+        snapshot.active_requests = usize::from(snapshot.generating);
+        snapshot.model_memory_bytes = None;
+        snapshot.loaded_context = None;
+        snapshot.current_tokens_per_second = None;
         snapshot
     }
 
@@ -138,11 +124,18 @@ impl RuntimeService for RemoteRuntimeService {
     }
 
     fn model_list(&self) -> Vec<ModelMetadata> {
-        self.remote_models()
+        self.remote_models().unwrap_or_else(|error| {
+            eprintln!("OID Marina model discovery failed: {error}");
+            Vec::new()
+        })
     }
 
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata> {
         self.remote_models()
+            .unwrap_or_else(|error| {
+                eprintln!("OID Marina model discovery failed: {error}");
+                Vec::new()
+            })
             .into_iter()
             .find(|model| model.id == id)
     }
@@ -390,6 +383,34 @@ fn timestamp() -> String {
     )
 }
 
+fn remote_model_metadata(model: oid_model_client::ModelDescriptor) -> ModelMetadata {
+    ModelMetadata {
+        name: model.id.clone(),
+        id: model.id,
+        family: "remote".to_owned(),
+        backend: "marina".to_owned(),
+        quantization: "unknown".to_owned(),
+        context_window: 32_768,
+        memory_requirement_mb: model.estimated_memory_mib.unwrap_or_default(),
+        capabilities: vec!["chat".to_owned()],
+        status: if model.resident == Some(true) {
+            ModelStatus::Loaded
+        } else {
+            ModelStatus::Registered
+        },
+        checksum: None,
+        location: "marina-http".to_owned(),
+    }
+}
+
+fn loaded_model_ids(models: &[ModelMetadata]) -> Vec<String> {
+    models
+        .iter()
+        .filter(|model| model.status == ModelStatus::Loaded)
+        .map(|model| model.id.clone())
+        .collect()
+}
+
 fn error_class(error: &ModelClientError) -> String {
     match error {
         ModelClientError::Unavailable(_) => "unavailable",
@@ -438,4 +459,35 @@ fn render_metrics(metrics: &oid_model_client::RemoteGenerationMetrics) -> String
 
 fn option_display<T: ToString>(value: Option<T>) -> String {
     value.map_or_else(|| "unknown".to_owned(), |value| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{loaded_model_ids, remote_model_metadata};
+    use oid_model_client::ModelDescriptor;
+    use oid_runtime::ModelStatus;
+
+    #[test]
+    fn remote_model_status_preserves_talvik_residency() {
+        let loaded = remote_model_metadata(ModelDescriptor {
+            id: "qwen-default".to_owned(),
+            is_default: Some(true),
+            resident: Some(true),
+            estimated_memory_mib: Some(512),
+        });
+        let registered = remote_model_metadata(ModelDescriptor {
+            id: "other".to_owned(),
+            is_default: Some(false),
+            resident: Some(false),
+            estimated_memory_mib: Some(1530),
+        });
+
+        assert_eq!(loaded.status, ModelStatus::Loaded);
+        assert_eq!(loaded.memory_requirement_mb, 512);
+        assert_eq!(registered.status, ModelStatus::Registered);
+        assert_eq!(
+            loaded_model_ids(&[registered, loaded]),
+            ["qwen-default".to_owned()]
+        );
+    }
 }

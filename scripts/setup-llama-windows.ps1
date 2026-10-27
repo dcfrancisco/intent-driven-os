@@ -1,13 +1,31 @@
 [CmdletBinding()]
 param(
     [string]$LlamaRoot = (Join-Path $env:TEMP "talvik-llama.cpp"),
-    [string]$LlamaBuild = (Join-Path $env:TEMP "talvik-llama-windows-cpu-build"),
-    [string]$NativeLibDir = (Join-Path $(if ($env:TALVIK_HOME) { $env:TALVIK_HOME } elseif ($env:MARINA_HOME) { $env:MARINA_HOME } else { Join-Path $env:USERPROFILE ".marina" }) "lib"),
+    [string]$LlamaBuild,
+    [string]$NativeLibDir,
+    [switch]$Vulkan,
     [string]$Repository = "https://github.com/ggml-org/llama.cpp.git",
     [string]$Commit = "18443257a30c884d5332abb8e7dc43c7ffe42fda"
 )
 
 $ErrorActionPreference = "Stop"
+
+$nativeHome = if ($env:TALVIK_HOME) {
+    $env:TALVIK_HOME
+} elseif ($env:MARINA_HOME) {
+    $env:MARINA_HOME
+} else {
+    Join-Path $env:USERPROFILE ".marina"
+}
+
+if (-not $LlamaBuild) {
+    $buildDirectory = if ($Vulkan) { "vk" } else { "talvik-llama-windows-cpu-build" }
+    $LlamaBuild = Join-Path $env:TEMP $buildDirectory
+}
+if (-not $NativeLibDir) {
+    $nativeLibFlavor = if ($Vulkan) { "lib-vulkan" } else { "lib" }
+    $NativeLibDir = Join-Path $nativeHome $nativeLibFlavor
+}
 
 function Require-Command([string]$Name, [string]$Hint) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -22,6 +40,18 @@ Require-Command "rustup" "Install Rust with rustup."
 Require-Command "cl" "Run this script from a Visual Studio Developer PowerShell with the C++ workload installed."
 Require-Command "link" "Run this script from a Visual Studio Developer PowerShell with the C++ workload installed."
 Require-Command "lib" "Run this script from a Visual Studio Developer PowerShell with the C++ workload installed."
+
+if ($Vulkan) {
+    if (-not $env:VULKAN_SDK) {
+        throw "The Vulkan SDK is required for -Vulkan. Install it and open a new Developer PowerShell so VULKAN_SDK is set."
+    }
+
+    foreach ($sdkFile in @("Include\vulkan\vulkan.h", "Lib\vulkan-1.lib")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $env:VULKAN_SDK $sdkFile))) {
+            throw "Vulkan SDK file is missing: $(Join-Path $env:VULKAN_SDK $sdkFile)"
+        }
+    }
+}
 
 $installedTargets = & rustup target list --installed
 if ($LASTEXITCODE -ne 0 -or -not ($installedTargets | Select-String -SimpleMatch "x86_64-pc-windows-msvc")) {
@@ -38,7 +68,10 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to fetch llama.cpp revision $Commit." }
 & git -C $LlamaRoot checkout --detach $Commit
 if ($LASTEXITCODE -ne 0) { throw "Failed to select llama.cpp revision $Commit." }
 
+$vulkanOption = if ($Vulkan) { "ON" } else { "OFF" }
+$toolsOption = if ($Vulkan) { "ON" } else { "OFF" }
 & cmake -S $LlamaRoot -B $LlamaBuild `
+    "-DGGML_VULKAN=$vulkanOption" `
     "-DGGML_NATIVE=OFF" `
     "-DGGML_AVX=OFF" `
     "-DGGML_AVX2=OFF" `
@@ -52,11 +85,13 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to select llama.cpp revision $Commit." 
     "-DGGML_BLAS=OFF" `
     "-DLLAMA_BUILD_TESTS=OFF" `
     "-DLLAMA_BUILD_EXAMPLES=OFF" `
+    "-DLLAMA_BUILD_TOOLS=$toolsOption" `
     "-DLLAMA_CURL=OFF" `
     "-DCMAKE_BUILD_TYPE=Release"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
 
-& cmake --build $LlamaBuild --config Release --target llama --parallel 2
+$buildTargets = if ($Vulkan) { @("llama", "llama-cli") } else { @("llama") }
+& cmake --build $LlamaBuild --config Release --target $buildTargets --parallel 2
 if ($LASTEXITCODE -ne 0) { throw "llama.cpp build failed." }
 
 New-Item -ItemType Directory -Force -Path $NativeLibDir | Out-Null
@@ -70,7 +105,17 @@ foreach ($nativeFile in $nativeFiles) {
 }
 
 Write-Host "Native Windows x86_64 llama.cpp is installed at: $NativeLibDir"
+if ($Vulkan) {
+    Write-Host "This builds Vulkan-capable llama.cpp; Talvik GPU layer selection and offload verification are not implemented yet."
+}
 Write-Host "Build Talvik with:"
 Write-Host "`$env:LLAMA_CPP_LIB_DIR = '$NativeLibDir'"
 Write-Host "`$env:LLAMA_CPP_REQUIRED = '1'"
 Write-Host "cargo build --release -p oid-console --bin talvik --bin talvikd"
+if ($Vulkan) {
+    $llamaCli = Get-ChildItem -Path $LlamaBuild -Recurse -File -Filter "llama-cli.exe" |
+        Select-Object -First 1
+    if (-not $llamaCli) { throw "Vulkan build completed without producing llama-cli.exe." }
+    Write-Host "Vulkan device probe: $($llamaCli.FullName) --list-devices"
+    Write-Host "Vulkan libraries were kept separate from the CPU installation."
+}

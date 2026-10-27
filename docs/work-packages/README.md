@@ -102,5 +102,9 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0101 | Talvik M3 Multimodal Capability | Broader model modality and client qualification |
 | WP-0102 | MarinaOS Talvik Service Adapter | Future governed system-service integration |
 | WP-0103 | Talvik Backend Expansion Review | Separate authorization for any inference engine beyond llama.cpp |
+| WP-0104 | User/System Execution Capability Contract | Proposed boundary and trust model for user-scoped and privileged Linux executors |
+| WP-0105 | Inference Performance Measurement | Client timing, backend metrics, benchmark summaries, and cold/warm qualification |
+| WP-0106 | Talvik Optional Vulkan Acceleration | Optional Vulkan backend, runtime placement, fallback, memory admission, and qualification |
+| WP-0107 | Talvik Per-User Windows MSI | Build, sign, release, upgrade, and uninstall a user-scoped Talvik MSI |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

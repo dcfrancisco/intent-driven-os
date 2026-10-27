@@ -43,17 +43,25 @@ impl Application {
         bus.publish(&RuntimeEvent::LoggingInitialized);
         let local_runtime = Runtime::start_with_bus(configuration, bus.clone())
             .expect("Marina production runtime configuration is valid");
-        let runtime: Box<dyn RuntimeService> =
-            if std::env::var("OID_RUNTIME_BACKEND").is_ok_and(|backend| backend == "marina-http") {
-                let client = MarinaHttpClient::from_environment()
-                    .expect("OID Marina HTTP configuration is valid");
-                Box::new(crate::remote_runtime::RemoteRuntimeService::new(
-                    local_runtime,
-                    client,
-                ))
-            } else {
-                Box::new(local_runtime)
-            };
+        let runtime: Box<dyn RuntimeService> = if std::env::var("OID_RUNTIME_BACKEND")
+            .is_ok_and(|backend| backend == "marina-http")
+        {
+            let client = MarinaHttpClient::from_environment()
+                .expect("OID Marina HTTP configuration is valid");
+            Box::new(crate::remote_runtime::RemoteRuntimeService::new(
+                local_runtime,
+                client,
+            ))
+        } else {
+            let local: Box<dyn RuntimeService> = Box::new(local_runtime);
+            match crate::ipc_runtime::IpcRuntimeService::probe() {
+                Ok(()) => Box::new(crate::ipc_runtime::IpcRuntimeService::new(local)),
+                Err(error) => {
+                    eprintln!("Talvik daemon not detected; using the in-process runtime: {error}");
+                    local
+                }
+            }
+        };
         Self {
             runtime,
             bus,
@@ -81,7 +89,7 @@ impl Application {
 
     /// Run the interactive console until exit, cancellation, or end-of-file.
     pub fn run(mut self) -> io::Result<()> {
-        Renderer::render_startup();
+        Renderer::render_startup(self.runtime.as_ref());
         self.presence.refresh();
         Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
         loop {

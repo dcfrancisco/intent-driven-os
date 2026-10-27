@@ -1,6 +1,6 @@
 //! Permanent runtime status bar.
 
-use oid_runtime::RuntimeService;
+use oid_runtime::{RuntimeService, RuntimeSnapshot};
 use std::process::Command;
 
 /// Runtime status display mode.
@@ -49,7 +49,7 @@ impl StatusBar {
         format!(
             "[OID {} | model {}]",
             snapshot.health,
-            snapshot.loaded_model.as_deref().unwrap_or("none")
+            loaded_model_label(&snapshot, "none")
         )
     }
 
@@ -62,7 +62,7 @@ impl StatusBar {
             snapshot.health,
             snapshot.backend,
             snapshot.backend_version.as_deref().unwrap_or("--"),
-            snapshot.loaded_model.as_deref().unwrap_or("None"),
+            loaded_model_label(&snapshot, "None"),
             snapshot.model_memory_bytes.map_or_else(|| "--".to_owned(), |bytes| format!("{} MB", bytes / 1_048_576)),
             snapshot.loaded_context.map_or_else(|| "--".to_owned(), |context| context.to_string()),
             snapshot.current_tokens_per_second.map_or_else(|| "--".to_owned(), |tps| format!("{tps:.1}")),
@@ -70,6 +70,19 @@ impl StatusBar {
             time
         )
     }
+}
+
+fn loaded_model_label<'a>(snapshot: &'a RuntimeSnapshot, empty_label: &'static str) -> &'a str {
+    snapshot.loaded_model.as_deref().unwrap_or_else(|| {
+        if snapshot.health == "Unavailable"
+            || snapshot.backend == "marina-http"
+            || snapshot.backend.ends_with("(unavailable)")
+        {
+            "unknown"
+        } else {
+            empty_label
+        }
+    })
 }
 
 fn local_time() -> String {
@@ -86,7 +99,7 @@ fn local_time() -> String {
 #[cfg(test)]
 mod tests {
     use super::StatusBar;
-    use oid_runtime::MarinaRuntime;
+    use oid_runtime::{MarinaRuntime, RuntimeService};
     use oid_shared::{EventBus, RuntimeConfig};
 
     #[test]
@@ -115,5 +128,15 @@ mod tests {
         );
         assert_eq!(StatusBar::mode("full"), super::StatusDisplayMode::Full);
         assert_eq!(StatusBar::mode("hidden"), super::StatusDisplayMode::Hidden);
+    }
+
+    #[test]
+    fn unavailable_runtime_does_not_claim_that_no_model_is_loaded() {
+        let runtime = MarinaRuntime::start(RuntimeConfig::default(), EventBus::new());
+        let mut snapshot = runtime.snapshot();
+        snapshot.health = "Unavailable";
+        snapshot.backend = "talvikd (unavailable)".to_owned();
+
+        assert_eq!(super::loaded_model_label(&snapshot, "none"), "unknown");
     }
 }

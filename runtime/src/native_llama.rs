@@ -196,16 +196,24 @@ impl Backend for LlamaCppAdapter {
                     return Ok(GenerationStatistics {
                         prompt_tokens,
                         generated_tokens: stats.generated_tokens,
+                        tokens_per_second: stats.tokens_per_second.unwrap_or_default(),
                         latency_ms: started.elapsed().as_millis(),
+                        inference_time_ms: stats.generation_time.unwrap_or_default().as_millis(),
+                        backend_inference_time_ms: stats
+                            .generation_time
+                            .map(|duration| duration.as_millis()),
                         time_to_first_token_ms: stats
                             .time_to_first_token
-                            .unwrap_or_default()
-                            .as_millis(),
-                        prompt_eval_time_ms: stats.prompt_eval_time.unwrap_or_default().as_millis(),
-                        inference_time_ms: stats.generation_time.unwrap_or_default().as_millis(),
-                        tokens_per_second: stats.tokens_per_second.unwrap_or_default(),
+                            .map(|duration| duration.as_millis()),
+                        prompt_evaluation_time_ms: stats
+                            .prompt_eval_time
+                            .map(|duration| duration.as_millis()),
+                        generation_time_ms: stats
+                            .generation_time
+                            .map(|duration| duration.as_millis()),
                         context_tokens: prompt_tokens + stats.generated_tokens,
-                        metrics_known: true,
+                        metrics_known: stats.prompt_tokens.is_some()
+                            && stats.tokens_per_second.is_some(),
                         termination: match stats.termination {
                             oid_model_runner::GenerationTermination::Stop => {
                                 GenerationTermination::Stop

@@ -9,6 +9,8 @@ mod editor;
 mod foundation;
 mod history;
 mod input_router;
+mod ipc;
+mod ipc_runtime;
 mod operations;
 mod presence;
 mod prompt;

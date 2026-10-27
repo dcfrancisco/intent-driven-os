@@ -25,6 +25,18 @@ export LLAMA_CPP_LIB_DIR="${LLAMA_CPP_LIB_DIR:-$HOME/.marina/lib}"
 Without this configuration, normal workspace builds remain portable and the
 adapter reports `BackendUnavailable`.
 
+On Windows, `scripts/setup-llama-windows.ps1` builds the pinned CPU library by
+default. Pass `-Vulkan` from a Visual Studio Developer PowerShell after
+installing the Vulkan SDK to build a separate Vulkan-enabled library and
+`llama-cli` under the temporary build directory. The Vulkan native libraries
+are placed in `$HOME/.marina/lib-vulkan` by default, leaving the CPU library
+untouched. Run the printed `llama-cli --list-devices` command to confirm
+llama.cpp can enumerate the GPU.
+
+This only builds the Vulkan-capable llama.cpp artifacts. Talvik does not yet
+select GPU layers or qualify Vulkan inference; see
+[WP-0107](../../../docs/work-packages/WP-0107-talvik-vulkan-acceleration.md).
+
 The native wrapper treats `llama_decode` return value `2` as cancellation only
 when Marina's cancellation flag is active. The same status without an active
 cancellation, and all other nonzero decode statuses, remain native failures.

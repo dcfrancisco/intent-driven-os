@@ -63,12 +63,16 @@ pub struct GenerationStatistics {
     pub tokens_per_second: f64,
     /// End-to-end latency in milliseconds.
     pub latency_ms: u128,
-    /// Time until the first generated token in milliseconds.
-    pub time_to_first_token_ms: u128,
-    /// Time spent evaluating the prompt in milliseconds.
-    pub prompt_eval_time_ms: u128,
     /// Total backend inference time in milliseconds.
     pub inference_time_ms: u128,
+    /// Backend-measured aggregate inference duration, when available.
+    pub backend_inference_time_ms: Option<u128>,
+    /// Time to first output token in milliseconds, when measured by the backend.
+    pub time_to_first_token_ms: Option<u128>,
+    /// Prompt evaluation duration in milliseconds, when measured by the backend.
+    pub prompt_evaluation_time_ms: Option<u128>,
+    /// Backend generation duration in milliseconds, when measured.
+    pub generation_time_ms: Option<u128>,
     /// Context tokens used.
     pub context_tokens: u64,
     /// Whether the numeric measurements are available and trustworthy.
