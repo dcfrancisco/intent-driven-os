@@ -169,8 +169,13 @@ impl std::fmt::Debug for MarinaHttpConfig {
 
 impl Default for MarinaHttpConfig {
     fn default() -> Self {
+        #[cfg(windows)]
+        let base_url = "http://127.0.0.1:11435";
+        #[cfg(not(windows))]
+        let base_url = "http://127.0.0.1:11434";
+
         Self {
-            base_url: "http://127.0.0.1:11434".to_owned(),
+            base_url: base_url.to_owned(),
             bearer_token: None,
             timeout: Duration::from_secs(10),
         }
@@ -495,6 +500,16 @@ mod tests {
     };
     use serde_json::json;
     use std::time::Duration;
+
+    #[test]
+    fn default_endpoint_uses_platform_http_port() {
+        let expected = if cfg!(windows) {
+            "http://127.0.0.1:11435"
+        } else {
+            "http://127.0.0.1:11434"
+        };
+        assert_eq!(MarinaHttpConfig::default().base_url, expected);
+    }
 
     #[test]
     fn rejects_remote_endpoints_and_redacts_tokens() {

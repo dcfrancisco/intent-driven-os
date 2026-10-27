@@ -116,8 +116,9 @@ be exposed publicly without the planned authenticated service boundary.
 
 The provider-neutral OID client uses `OID_MARINA_URL`, `OID_MARINA_TOKEN`, and
 optional `OID_MARINA_MODEL`. Its default endpoint is
-`http://127.0.0.1:11434`; the first client slice rejects remote endpoints until
-a trusted TLS boundary is implemented.
+`http://127.0.0.1:11435` on Windows, where port 11434 is reserved for local
+IPC, and `http://127.0.0.1:11434` on Linux/macOS. The first client slice rejects
+remote endpoints until a trusted TLS boundary is implemented.
 
 When the Talvik local IPC daemon is available, the OID console reads its model
 inventory, health, and loaded-model state and routes model import/load/unload
@@ -127,8 +128,8 @@ and evidence integration are fully verified.
 
 To route OID inference through Talvik's native HTTP API explicitly, set
 `OID_RUNTIME_BACKEND=marina-http` and configure `OID_MARINA_URL` plus any
-required `OID_MARINA_TOKEN`. Set `OID_MARINA_MODEL` to the desired model ID;
-OID uses it for generation when the HTTP API cannot report model residency.
+required `OID_MARINA_TOKEN`. Set `OID_MARINA_MODEL` to override model selection; otherwise OID follows the
+API-reported configured default and then available residency hints.
 For example, on Windows with Talvik HTTP listening on port 11435:
 
 ```powershell
@@ -141,8 +142,8 @@ $env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-con
 
 At the OID prompt, enter `:generate <your prompt>`. The token command creates
 a local credential with model-read, inference, and cancellation scopes. The
-HTTP model-list API does not expose residency, so OID reports the loaded model
-as unknown in this mode rather than guessing from the first available model.
+HTTP model-list API reports residency and the configured default; OID uses
+those fields to display the loaded model and select the default consistently.
 
 Remote OID inference uses the existing OID file evidence store at
 `$OID_STATE_DIR/evidence.log` (or the console temporary state directory). It
