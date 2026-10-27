@@ -113,6 +113,11 @@ fn handle(
     });
     match (method, path) {
         ("GET", "/healthz") => respond_json(&mut stream, 200, json!({"status": "ok"})),
+        ("GET", "/version" | "/v1/version") => respond_json(
+            &mut stream,
+            200,
+            super::build_info::json("talvikd", runtime.snapshot().backend_version.as_deref()),
+        ),
         ("GET", "/v1/models") => {
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);
@@ -132,6 +137,18 @@ fn handle(
                 })
                 .collect::<Vec<_>>();
             respond_json(&mut stream, 200, json!({"object": "list", "data": data}))
+        }
+        ("GET", "/api/tags") => {
+            if !scope_allowed(&identity, auth::MODELS_READ) {
+                return respond_scope_error(&mut stream, auth::MODELS_READ);
+            }
+            respond_json(&mut stream, 200, compatibility_tags(runtime))
+        }
+        ("GET", "/api/ps") => {
+            if !scope_allowed(&identity, auth::MODELS_READ) {
+                return respond_scope_error(&mut stream, auth::MODELS_READ);
+            }
+            respond_json(&mut stream, 200, compatibility_ps(runtime))
         }
         ("POST", "/v1/embeddings") => {
             if !scope_allowed(&identity, auth::INFERENCE) {
@@ -243,6 +260,67 @@ fn embeddings(
         200,
         json!({"object":"list","data":data,"model":model,"usage":{"prompt_tokens":0,"total_tokens":0}}),
     )
+}
+
+fn compatibility_tags(runtime: &dyn RuntimeService) -> Value {
+    let models = runtime
+        .model_list()
+        .into_iter()
+        .map(|model| {
+            json!({
+                "name": model.id.clone(),
+                "model": model.id,
+                "modified_at": null,
+                "size": null,
+                "memory_requirement_bytes": model.memory_requirement_mb.saturating_mul(1_048_576),
+                "digest": model.checksum,
+                "details": {
+                    "family": model.family,
+                    "quantization_level": model.quantization,
+                    "parameter_size": null,
+                    "format": "gguf"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"models": models})
+}
+
+fn compatibility_ps(runtime: &dyn RuntimeService) -> Value {
+    let snapshot = runtime.snapshot();
+    let metadata = runtime
+        .model_list()
+        .into_iter()
+        .map(|model| (model.id.clone(), model))
+        .collect::<HashMap<_, _>>();
+    let models = snapshot
+        .resident_models
+        .into_iter()
+        .map(|resident| {
+            let model = metadata.get(&resident.id);
+            json!({
+                "name": resident.id,
+                "model": resident.id,
+                "size": resident.memory_bytes,
+                "size_vram": null,
+                "expires_at": null,
+                "idle_seconds": resident.idle_seconds,
+                "details": {
+                    "family": model.map_or("unknown", |model| model.family.as_str()),
+                    "quantization_level": model.map_or("unknown", |model| model.quantization.as_str()),
+                    "format": "gguf"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "models": models,
+        "active_requests": snapshot.active_requests,
+        "pending_requests": snapshot.pending_requests,
+        "queue_capacity": snapshot.queue_capacity,
+        "automatic_eviction": snapshot.automatic_eviction,
+        "idle_retention_seconds": snapshot.idle_retention_seconds
+    })
 }
 
 fn scope_allowed(identity: &auth::TokenIdentity, scope: &str) -> bool {
@@ -373,12 +451,6 @@ fn generate(
         .get("request_id")
         .and_then(Value::as_str)
         .map_or_else(unique_request_id, str::to_owned);
-    let max_tokens = body
-        .get("max_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(128)
-        .min(u64::from(u32::MAX));
-    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let timeout = body
         .get("timeout_ms")
         .and_then(Value::as_u64)
@@ -394,6 +466,7 @@ fn generate(
             format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
         );
     }
+    let options = generation_options(body, u32::try_from(context_size).unwrap_or(u32::MAX));
     let was_resident = runtime
         .model_inspect(model)
         .map(|metadata| matches!(metadata.status, oid_runtime::ModelStatus::Loaded));
@@ -404,6 +477,19 @@ fn generate(
     let model_load_time_ms = was_resident
         .filter(|resident| !resident)
         .map(|_| load_started.elapsed().as_millis());
+    eprintln!(
+        "Talvik HTTP generation started request_id={} model={} stream={} tools={} max_tokens={} context_size={} temperature={} top_p={} top_k={} seed={}",
+        request_id,
+        model,
+        body.get("stream").and_then(Value::as_bool).unwrap_or(false),
+        tool_definitions.is_some(),
+        options.max_tokens,
+        options.context_size,
+        options.temperature,
+        options.top_p,
+        options.top_k,
+        options.seed
+    );
     if tool_definitions.is_some() {
         let support = runtime.tool_support();
         if !support.supported {
@@ -418,11 +504,7 @@ fn generate(
         request_id: request_id.clone(),
         model_id: model.to_owned(),
         prompt,
-        options: GenerationOptions {
-            max_tokens,
-            context_size: u32::try_from(context_size).unwrap_or(u32::MAX),
-            ..Default::default()
-        },
+        options,
     }) {
         Ok(stream_result) => stream_result,
         Err(error) => return respond_error(stream, 429, error.to_string()),
@@ -472,6 +554,13 @@ fn generate(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation completed request_id={} model={} termination={:?} generated_tokens={}",
+                    request_id,
+                    model,
+                    result.statistics.termination,
+                    result.statistics.generated_tokens
+                );
                 let finish_reason = completion_finish_reason(result.statistics.termination);
                 let termination_reason =
                     completion_termination_reason(result.statistics.termination);
@@ -524,15 +613,22 @@ fn generate(
                             "inference_time_ms": result.statistics.backend_inference_time_ms,
                             "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
                             "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "prompt_eval_time_ms": result.statistics.prompt_evaluation_time_ms,
                             "generation_time_ms": result.statistics.generation_time_ms,
                             "model_load_time_ms": model_load_time_ms,
-                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)
+                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens),
+                            "cache_hit": result.statistics.cache_hit,
+                            "reused_prompt_tokens": result.statistics.reused_prompt_tokens
                         }
                     }),
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation cancelled request_id={} model={} generated_tokens={}",
+                    request_id, model, result.statistics.generated_tokens
+                );
                 if streaming {
                     write!(stream, "data: [DONE]\n\n")?;
                     return stream.flush();
@@ -554,20 +650,27 @@ fn generate(
                             "inference_time_ms": result.statistics.backend_inference_time_ms,
                             "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
                             "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "prompt_eval_time_ms": result.statistics.prompt_evaluation_time_ms,
                             "generation_time_ms": result.statistics.generation_time_ms,
                             "model_load_time_ms": model_load_time_ms,
-                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens)
+                            "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens),
+                            "cache_hit": result.statistics.cache_hit,
+                            "reused_prompt_tokens": result.statistics.reused_prompt_tokens
                         }
                     }),
                 );
             }
             Ok(GenerationMessage::Failed(error)) => {
                 finish_owner(owners, &request_id);
+                eprintln!(
+                    "Talvik HTTP generation failed request_id={request_id} model={model} error={error}"
+                );
                 return respond_error(stream, 500, error.to_string());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
                 finish_owner(owners, &request_id);
+                eprintln!("Talvik HTTP generation timed_out request_id={request_id} model={model}");
                 if drain_cancelled_generation(&generation) {
                     return respond_error(stream, 504, "generation request timed out".to_owned());
                 }
@@ -583,6 +686,56 @@ fn generate(
                 return respond_error(stream, 500, "generation stream closed".to_owned());
             }
         }
+    }
+}
+
+fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
+    let defaults = GenerationOptions::default();
+    let max_tokens = body
+        .get("max_completion_tokens")
+        .or_else(|| body.get("max_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(128)
+        .min(u64::from(u32::MAX));
+    let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
+    let temperature = body
+        .get("temperature")
+        .and_then(|value| serde_json::from_value::<f32>(value.clone()).ok())
+        .unwrap_or(defaults.temperature);
+    let top_p = body
+        .get("top_p")
+        .and_then(|value| serde_json::from_value::<f32>(value.clone()).ok())
+        .unwrap_or(defaults.top_p);
+    let top_k = body
+        .get("top_k")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .unwrap_or(defaults.top_k);
+    let seed = body
+        .get("seed")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(defaults.seed);
+    let stop_sequences = body
+        .get("stop")
+        .map(|value| match value {
+            Value::String(stop) => vec![stop.clone()],
+            Value::Array(values) => values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
+    GenerationOptions {
+        temperature,
+        top_p,
+        top_k,
+        max_tokens,
+        seed,
+        context_size,
+        stop_sequences,
     }
 }
 
@@ -700,10 +853,11 @@ fn unique_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        completion_finish_reason, completion_termination_reason, parse_tool_calls,
-        request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
+        completion_finish_reason, completion_termination_reason, generation_options,
+        parse_tool_calls, request_body_size_is_allowed, GenerationTermination, MAX_CONTEXT_TOKENS,
         MAX_REQUEST_BODY_BYTES,
     };
+    use serde_json::json;
 
     #[test]
     fn rejects_oversized_http_bodies() {
@@ -749,5 +903,26 @@ mod tests {
             completion_termination_reason(GenerationTermination::ContextLength),
             "context_length"
         );
+    }
+
+    #[test]
+    fn maps_openai_generation_controls_without_silently_ignoring_them() {
+        let options = generation_options(
+            &json!({
+                "max_tokens": 7,
+                "max_completion_tokens": 9,
+                "temperature": 0.1,
+                "top_p": 0.8,
+                "top_k": 20,
+                "seed": 42
+            }),
+            2048,
+        );
+        assert_eq!(options.max_tokens, 9);
+        assert!((options.temperature - 0.1).abs() < f32::EPSILON);
+        assert!((options.top_p - 0.8).abs() < f32::EPSILON);
+        assert_eq!(options.top_k, 20);
+        assert_eq!(options.seed, 42);
+        assert_eq!(options.context_size, 2048);
     }
 }

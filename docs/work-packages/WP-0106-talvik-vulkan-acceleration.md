@@ -1,4 +1,4 @@
-# WP-0093: Talvik Optional Vulkan Acceleration
+# WP-0106: Talvik Optional Vulkan Acceleration
 
 ## Status
 
@@ -146,8 +146,8 @@ inference correctness, memory admission, fallback, or performance.
 
 ## Dependencies
 
-ADR-0027; ADR-0007, ADR-0010, ADR-0024; WP-0027, WP-0025, WP-0058, WP-0060,
-WP-0078, WP-0079, WP-0080, WP-0090, WP-0092.
+ADR-0029; ADR-0007, ADR-0010, ADR-0024; WP-0027, WP-0025, WP-0058, WP-0060,
+WP-0078, WP-0079, WP-0080, WP-0090, WP-0105.
 
 ## Next dependency
 

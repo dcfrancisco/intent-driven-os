@@ -44,7 +44,7 @@ require manually installed MSVC/CMake/Git tooling and a manually prepared
 llama.cpp native payload until a Windows setup path is delivered.
 
 Windows release archives SHALL bundle the matching llama.cpp and ggml DLLs.
-Consumers must not need Ollama, a system-wide llama.cpp installation, a
+Consumers must not need Reference local runner, a system-wide llama.cpp installation, a
 machine-wide PATH change, or administrator privileges to run the packaged
 Marina binaries. Installation and transport behavior remain governed by
 ADR-0012, ADR-0013, and ADR-0021.
@@ -60,7 +60,7 @@ This ADR governs native Windows build and release evidence for Marina. It does
 not redefine Marina's product boundary, installation layout, transport,
 authorization model, or OID's Linux-first scope.
 
-It does not authorize a Windows-specific backend API, GPU support, or Ollama
+It does not authorize a Windows-specific backend API, GPU support, or Reference local runner
 as a runtime dependency.
 
 ## Consequences

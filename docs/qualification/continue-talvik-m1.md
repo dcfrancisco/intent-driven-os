@@ -36,7 +36,7 @@ Write a Python function named add that returns the sum of two numbers. Reply wit
 ```
 
 Expected evidence is a relevant function response, a daemon HTTP request in
-the captured log, no Ollama process/request, and no remote endpoint in the
+the captured log, no Reference local runner process/request, and no remote endpoint in the
 temporary config. Capture VS Code/Continue version, config hash, daemon log,
 prompt/response transcript, and process/network evidence. For Cline, repeat
 with a tool-using coding task only after a real Cline extension/session is

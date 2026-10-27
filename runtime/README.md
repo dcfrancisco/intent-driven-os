@@ -34,7 +34,7 @@ silent mock fallback. Configured builds link directly to `libllama` and never
 launch `llama-cli`.
 
 The runtime recursively discovers `.gguf` files from configured local model
-roots, including common Hugging Face/Python and Ollama cache directories.
+roots, including common Hugging Face/Python and Reference local runner cache directories.
 `ModelAcquirer` imports local paths, `file://` URLs, or explicit HTTP(S) URLs
 into the managed store with atomic writes and optional SHA-256 verification.
 The registry persists when Marina is started through `config::load()`.

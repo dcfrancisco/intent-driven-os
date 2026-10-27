@@ -187,10 +187,10 @@ impl ModelRunner for LlamaCppModelRunner {
                     request.top_p,
                     request.top_k,
                     request.seed.unwrap_or(0),
+                    &request.stop_sequences,
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;
-                let elapsed = started.elapsed();
                 let stats = GenerationStats {
                     prompt_tokens: Some(native_stats.prompt_tokens),
                     generated_tokens: native_stats.generated_tokens,
@@ -198,10 +198,13 @@ impl ModelRunner for LlamaCppModelRunner {
                         .lock()
                         .ok()
                         .and_then(|value| value.map(|time| time.duration_since(started))),
-                    prompt_evaluation_time: None,
-                    generation_time: Some(elapsed),
-                    tokens_per_second: (elapsed.as_secs_f64() > 0.0)
-                        .then_some(native_stats.generated_tokens as f64 / elapsed.as_secs_f64()),
+                    prompt_eval_time: Some(native_stats.prompt_eval_time),
+                    generation_time: Some(native_stats.generation_time),
+                    tokens_per_second: (native_stats.generation_time.as_secs_f64() > 0.0)
+                        .then_some(
+                            native_stats.generated_tokens as f64
+                                / native_stats.generation_time.as_secs_f64(),
+                        ),
                     termination: match native_stats.termination {
                         native::NativeGenerationTermination::Stop => GenerationTermination::Stop,
                         native::NativeGenerationTermination::Length => {
@@ -211,6 +214,8 @@ impl ModelRunner for LlamaCppModelRunner {
                             GenerationTermination::ContextLength
                         }
                     },
+                    cache_hit: native_stats.cache_hit,
+                    reused_prompt_tokens: native_stats.reused_prompt_tokens,
                 };
                 Ok(stats)
             })();

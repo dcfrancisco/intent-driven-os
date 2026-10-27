@@ -674,8 +674,6 @@ impl ModelDiscovery {
             add_directory(user_home.join("Models"));
             add_directory(user_home.join(".cache/huggingface/hub"));
             add_directory(user_home.join(".cache/modelscope/hub"));
-            add_directory(user_home.join(".ollama/models"));
-            add_directory(user_home.join(".cache/ollama/models"));
         }
         if let Some(hf_home) = std::env::var_os("HF_HOME") {
             add_directory(PathBuf::from(hf_home).join("hub"));
@@ -687,7 +685,6 @@ impl ModelDiscovery {
             let xdg_cache_home = PathBuf::from(xdg_cache_home);
             add_directory(xdg_cache_home.join("huggingface/hub"));
             add_directory(xdg_cache_home.join("modelscope/hub"));
-            add_directory(xdg_cache_home.join("ollama/models"));
         }
         directories
     }

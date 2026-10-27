@@ -1,9 +1,9 @@
-# ADR-0026: Inference Performance Measurement
+# ADR-0028: Inference Performance Measurement
 
 - Status: Accepted
 - Date: 2026-10-27
 - Related: ADR-0003, ADR-0013, ADR-0021; WP-0034, WP-0057, WP-0059, WP-0067,
-  WP-0068, WP-0092
+  WP-0068, WP-0105
 
 ## Context
 
@@ -116,7 +116,7 @@ Benchmark comparisons require controlled model, backend, hardware, context,
 sampling options, and warm/cold state. Numbers from different conditions must
 not be presented as directly comparable.
 
-## WP-0092 implementation notes
+## WP-0105 implementation notes
 
 `oid-marina-chat --timing` includes OID client configuration, one model
 discovery call, and the chat request. `--benchmark` reports only chat-request
@@ -127,6 +127,6 @@ unavailable rather than being inferred from aggregate inference time.
 
 ## Implementation work package
 
-WP-0092 SHALL implement the bounded CLI timing and benchmark surface and close
+WP-0105 SHALL implement the bounded CLI timing and benchmark surface and close
 any required Talvik metric-contract gaps. It depends on WP-0034, WP-0057,
 WP-0059, and the authenticated OID/Talvik integration in WP-0068.

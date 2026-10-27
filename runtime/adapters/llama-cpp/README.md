@@ -35,7 +35,7 @@ llama.cpp can enumerate the GPU.
 
 This only builds the Vulkan-capable llama.cpp artifacts. Talvik does not yet
 select GPU layers or qualify Vulkan inference; see
-[WP-0093](../../../docs/work-packages/WP-0093-talvik-vulkan-acceleration.md).
+[WP-0107](../../../docs/work-packages/WP-0107-talvik-vulkan-acceleration.md).
 
 The native wrapper treats `llama_decode` return value `2` as cancellation only
 when Marina's cancellation flag is active. The same status without an active

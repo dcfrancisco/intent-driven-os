@@ -112,7 +112,7 @@ The test suite is therefore not accepted as proof of inference. The prior valida
 
 ```text
 Darwin x86_64
-ollama: /usr/local/bin/ollama
+reference-runner: /usr/local/bin/reference-runner
 LLAMA_CPP_LIB_DIR=/Users/dannyfrancisco/.marina/models
 Default form: $HOME/.marina/models
 GGUF found in checked locations: none
@@ -185,14 +185,14 @@ The current macOS environment could not run raw llama.cpp because no GGUF and no
 
 The project correctly warns these are not apples-to-apples because raw CLI and OID expose different timing and prompt/template semantics (`docs/validation/local-llm-runtime.md:88-125`). There is no evidence of pathological adapter overhead, but the measurements do not isolate orchestration cost.
 
-## 10. Ollama comparison
+## 10. Reference local runner comparison
 
-`ollama` is installed on the current machine, but no equivalent local model was available and no download was initiated. Retained Ubuntu structured API evidence reports:
+`reference-runner` is installed on the current machine, but no equivalent local model was available and no download was initiated. Retained Ubuntu structured API evidence reports:
 
 | Engine/state | Generation | tok/s | Total |
 | --- | ---: | ---: | ---: |
-| Ollama cold | 128 tokens | 1.22 | 298.80 s |
-| Ollama warm | 128 tokens | 1.22 | 118.86 s median of two |
+| Reference local runner cold | 128 tokens | 1.22 | 298.80 s |
+| Reference local runner warm | 128 tokens | 1.22 | 118.86 s median of two |
 
 These values are observational only and are documented at `docs/validation/local-llm-runtime.md:93-102`, `:127-135`.
 
@@ -366,7 +366,7 @@ a controllable backend. They are not proof of native llama.cpp cancellation.
 ### Real GGUF validation
 
 **SKIPPED — BLOCKED BY ENVIRONMENT.** This macOS x86_64 environment has no
-GGUF in the checked model locations. `ollama` is installed, but no equivalent
+GGUF in the checked model locations. `reference-runner` is installed, but no equivalent
 GGUF/native `llama-cli` path is available. No model was downloaded. The known
 Ubuntu model remains `/home/danny/Models/llama3.2-1b.gguf`, as recorded in the
 original audit.

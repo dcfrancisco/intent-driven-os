@@ -105,10 +105,13 @@ impl RuntimeService for RemoteRuntimeService {
                 snapshot.loaded_models.clear();
             }
         }
+        snapshot.resident_models.clear();
+        snapshot.pending_requests = 0;
+        snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
+        snapshot.active_requests = usize::from(snapshot.generating);
         snapshot.model_memory_bytes = None;
         snapshot.loaded_context = None;
         snapshot.current_tokens_per_second = None;
-        snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
         snapshot
     }
 

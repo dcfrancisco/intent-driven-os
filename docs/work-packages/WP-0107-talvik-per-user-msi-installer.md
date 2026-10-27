@@ -1,4 +1,4 @@
-# WP-0094: Talvik Per-User Windows MSI
+# WP-0107: Talvik Per-User Windows MSI
 
 ## Status
 
@@ -97,7 +97,7 @@ MarinaOS, administrator privileges, or a Windows service.
 
 ## Dependencies
 
-ADR-0028; ADR-0012, ADR-0013, ADR-0021, ADR-0024; WP-0064, WP-0065, WP-0079,
+ADR-0030; ADR-0012, ADR-0013, ADR-0021, ADR-0024; WP-0064, WP-0065, WP-0079,
 WP-0090; the existing Windows build and release workflow.
 
 ## Decisions to resolve before implementation
@@ -112,6 +112,6 @@ WP-0090; the existing Windows build and release workflow.
 
 ## Next dependency
 
-Review ADR-0028 and select the open installer/runtime/signing details above.
+Review ADR-0030 and select the open installer/runtime/signing details above.
 Then update the Windows release workflow and add isolated MSI lifecycle smoke
 tests without removing the current ZIP installer.

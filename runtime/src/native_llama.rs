@@ -154,6 +154,7 @@ impl Backend for LlamaCppAdapter {
             top_k: request.options.top_k,
             context_size: request.options.context_size,
             seed: Some(request.options.seed),
+            stop_sequences: request.options.stop_sequences.clone(),
         };
         let stream = self
             .runner
@@ -205,7 +206,10 @@ impl Backend for LlamaCppAdapter {
                             .time_to_first_token
                             .map(|duration| duration.as_millis()),
                         prompt_evaluation_time_ms: stats
-                            .prompt_evaluation_time
+                            .prompt_eval_time
+                            .map(|duration| duration.as_millis()),
+                        generation_time_ms: stats
+                            .generation_time
                             .map(|duration| duration.as_millis()),
                         context_tokens: prompt_tokens + stats.generated_tokens,
                         metrics_known: stats.prompt_tokens.is_some()
@@ -221,7 +225,8 @@ impl Backend for LlamaCppAdapter {
                                 GenerationTermination::ContextLength
                             }
                         },
-                        ..GenerationStatistics::default()
+                        cache_hit: stats.cache_hit,
+                        reused_prompt_tokens: stats.reused_prompt_tokens,
                     });
                 }
                 Ok(GenerationEvent::Cancelled(_)) => {

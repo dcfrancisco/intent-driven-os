@@ -121,6 +121,8 @@ pub struct GenerationRequest {
     pub context_size: u32,
     /// Optional deterministic seed.
     pub seed: Option<u32>,
+    /// Explicit strings that terminate generation without being emitted.
+    pub stop_sequences: Vec<String>,
 }
 
 impl GenerationRequest {
@@ -198,14 +200,18 @@ pub struct GenerationStats {
     pub generated_tokens: u64,
     /// Time until the first token, when available.
     pub time_to_first_token: Option<Duration>,
-    /// Prompt evaluation duration, when reported by the backend.
-    pub prompt_evaluation_time: Option<Duration>,
+    /// Time spent evaluating the prompt before token generation.
+    pub prompt_eval_time: Option<Duration>,
     /// Total generation duration.
     pub generation_time: Option<Duration>,
     /// Generated tokens per second, when calculable.
     pub tokens_per_second: Option<f64>,
     /// Why successful generation terminated.
     pub termination: GenerationTermination,
+    /// Whether a compatible prompt prefix was reused.
+    pub cache_hit: bool,
+    /// Number of prompt tokens reused from the persistent native context.
+    pub reused_prompt_tokens: u64,
 }
 
 /// Runtime-level model statistics.

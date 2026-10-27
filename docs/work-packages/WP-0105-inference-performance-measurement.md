@@ -1,4 +1,4 @@
-# WP-0092: Inference Performance Measurement
+# WP-0105: Inference Performance Measurement
 
 ## Status
 
@@ -114,7 +114,7 @@ print or persist prompts or generated responses.
 
 ## Dependencies
 
-ADR-0026; WP-0034, WP-0057, WP-0059, WP-0067, WP-0068.
+ADR-0028; WP-0034, WP-0057, WP-0059, WP-0067, WP-0068.
 
 ## Separate follow-up
 

@@ -77,7 +77,7 @@ Dependencies point toward contracts and stable inner boundaries. Execution adapt
 
 ## Proposed MarinaOS execution architecture
 
-ADR-0025 records a **proposed, not accepted** product evolution: MarinaOS as a
+ADR-0027 records a **proposed, not accepted** product evolution: MarinaOS as a
 possible umbrella identity, with Talvik remaining the independent model
 runtime and separate user/system execution contexts as a design candidate.
 The proposed rule is that models produce interpretations or typed proposals,
@@ -88,7 +88,7 @@ authority.
 The repository's current accepted ownership remains unchanged: OID owns its
 governed operation lifecycle, and Talvik provides model execution. Whether a
 future orchestrator is OID-owned or Marina-branded is an explicit open decision.
-WP-0091 is design-only until ADR-0025 and the capability contract are reviewed;
+WP-0104 is design-only until ADR-0027 and the capability contract are reviewed;
 no system or user executor daemon is implied to exist.
 
 ## Operation lifecycle

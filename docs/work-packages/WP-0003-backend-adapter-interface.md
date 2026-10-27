@@ -14,7 +14,7 @@ Capability reporting, model compatibility, lifecycle calls, streaming, cancellat
 - Backend-neutral request, response, stream-event, and error semantics.
 - Adapter lifecycle and crash boundary.
 - Version and compatibility policy.
-- Mapping notes for future vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Ollama, and Docker Model Runner adapters.
+- Mapping notes for future vLLM, ONNX Runtime, OpenVINO, TensorRT-LLM, Reference local runner, and Docker Model Runner adapters.
 
 ## Acceptance Criteria
 

@@ -12,7 +12,7 @@ OID Console → Intelligent Runtime → ModelRunner → llama.cpp Adapter → GG
 ## WP-LLM-002 Status
 
 **SUBSTANTIALLY VALIDATED** — Ubuntu live inference, raw llama.cpp comparison,
-Ollama API measurements, streaming, loading, completion, unload, cancellation,
+Reference local runner API measurements, streaming, loading, completion, unload, cancellation,
 post-cancel inference, reload, and shutdown were exercised. Retained native
 acceptance evidence and its maturity assessment are in
 `docs/reviews/model-runner-reality-review.md`. Remaining gaps are persistent
@@ -34,7 +34,7 @@ Swap:            4 GiB, initially unused
 Rust:            1.96.0
 GCC:             15.2.0
 CMake:           4.2.3
-Ollama:          0.30.10
+Reference local runner:          0.30.10
 OID commit:      67c0bbde59833fe7572b9ac7bca14d70a2bf4f9c
 llama.cpp:       18443257a30c884d5332abb8e7dc43c7ffe42fda (0.3.0-dev)
 ```
@@ -66,11 +66,11 @@ Temperature:       0.8
 Seed:              0
 Maximum output:    128 tokens
 Primary prompt:    Reply with exactly: OID inference works.
-Repetitions:       5 raw, 5 OID, 1 Ollama cold, 2 Ollama warm
+Repetitions:       5 raw, 5 OID, 1 Reference local runner cold, 2 Reference local runner warm
 ```
 
 The Q8_0 artifact was selected because it is the exact local GGUF underlying
-the installed Ollama `llama3.2:1b` model. It is not the preferred Q4_K_M
+the installed Reference local runner `llama3.2:1b` model. It is not the preferred Q4_K_M
 quantization, but it proves artifact identity across the three paths.
 
 ## Functional validation
@@ -83,24 +83,24 @@ quantization, but it proves artifact identity across the three paths.
 | OID completion and statistics | PASS | five OID run logs |
 | OID cancellation | NOT VALIDATED | live PTY control-C did not stop generation |
 | OID unload | PASS | each OID run returned to `model none` |
-| Ollama inference | PASS | structured `/api/generate` responses |
+| Reference local runner inference | PASS | structured `/api/generate` responses |
 
 ## Performance results
 
 The primary values below are observed medians for Prompt A. Raw llama.cpp and
 OID report backend generation differently enough that their throughput is an
 observed CLI-versus-adapter comparison, not a clean proof of backend
-efficiency. Ollama values are server-reported.
+efficiency. Reference local runner values are server-reported.
 
 | Engine | State | Load | TTFT | Prompt eval | Generation | tok/s | Total | RSS |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | llama.cpp | cold process | included | unavailable | unavailable | 128 tokens | 3.9 | 19.94 s external | 1,505,856 KiB |
 | OID | cold process | included | unavailable | unavailable | 128 tokens | 5.2 | 25.35 s external | 1,484,848 KiB |
-| Ollama | cold API | 0.81 s | unavailable | 0.88 s | 128 tokens | 1.22 | 298.80 s | server observed ~1.14 GiB |
-| Ollama | warm API | resident | unavailable | 0.84–16.25 s | 128 tokens | 1.22 | 118.86 s median of 2 | server observed ~1.14 GiB |
+| Reference local runner | cold API | 0.81 s | unavailable | 0.88 s | 128 tokens | 1.22 | 298.80 s | server observed ~1.14 GiB |
+| Reference local runner | warm API | resident | unavailable | 0.84–16.25 s | 128 tokens | 1.22 | 118.86 s median of 2 | server observed ~1.14 GiB |
 
 Raw observations and the source payloads are retained under
-`docs/validation/benchmarks/wp-llm-002/`. The Ollama cold run reported
+`docs/validation/benchmarks/wp-llm-002/`. The Reference local runner cold run reported
 105.353 s generation and the two warm runs reported 105.001 s and 105.132 s.
 
 ## OID overhead and efficiency
@@ -126,13 +126,13 @@ not a clean attribution of the 5.41-second cold difference to orchestration.
 The OID adapter did not show pathological steady-state overhead in its own
 generation timing, but direct apples-to-apples attribution remains open.
 
-## OID versus Ollama
+## OID versus Reference local runner
 
-For this artifact and machine, Ollama was slower in the measured server-side
+For this artifact and machine, Reference local runner was slower in the measured server-side
 generation phase: about 1.22 tok/s versus 3.9 tok/s raw CLI and 5.2 tok/s OID
-observed adapter throughput. Ollama also showed materially different cold and
+observed adapter throughput. Reference local runner also showed materially different cold and
 warm lifecycle timings. These are observations under the captured settings,
-not a general performance claim. Ollama's model was resident during warm
+not a general performance claim. Reference local runner's model was resident during warm
 requests and its default runtime produced different response text despite
 `raw` generation mode.
 
@@ -141,9 +141,9 @@ requests and its default runtime produced different response text despite
 - The Phenom II lacks modern SIMD features; an explicit portable llama.cpp
   build succeeded without AVX-family assumptions.
 - The same 1.22 GiB Q8_0 GGUF artifact was loaded by raw llama.cpp and OID and
-  used as the source for the Ollama benchmark model.
+  used as the source for the Reference local runner benchmark model.
 - OID produced incremental output, completion statistics, and clean unloads.
-- Ollama's structured API is required for useful phase timings; its CLI client
+- Reference local runner's structured API is required for useful phase timings; its CLI client
   RSS was not a valid server memory measurement.
 - The current evidence cannot account for every raw/OID timing difference
   because raw llama-cli and the OID adapter expose different prompt/template
@@ -155,7 +155,7 @@ requests and its default runtime produced different response text despite
   not produce a cancellation event while generation was active. This is a
   validation gap or console signal-wiring defect; it is not being silently
   marked PASS.
-- The initial Ollama API capture was malformed and retained as an error
+- The initial Reference local runner API capture was malformed and retained as an error
   observation; it was excluded from metrics and replaced with valid JSON
   captures.
 

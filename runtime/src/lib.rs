@@ -21,7 +21,7 @@ pub mod native_llama;
 pub mod security;
 pub mod service;
 
-pub use api::{RuntimeApi, RuntimeService, RuntimeSnapshot};
+pub use api::{ResidentModelSnapshot, RuntimeApi, RuntimeService, RuntimeSnapshot};
 pub use backends::{
     Backend, BackendDescriptor, BackendHealth, BackendManager, BackendSummary, LoadedModel,
     MockBackend,

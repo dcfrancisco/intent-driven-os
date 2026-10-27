@@ -3,7 +3,7 @@
 ## Purpose
 
 Add an OID-owned, deterministic router that can choose a backend without
-coupling callers to llama.cpp, Ollama, or a remote provider.
+coupling callers to llama.cpp, Reference local runner, or a remote provider.
 
 ## Scope
 

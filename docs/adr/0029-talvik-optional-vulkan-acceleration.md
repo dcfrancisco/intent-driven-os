@@ -1,11 +1,11 @@
-# ADR-0027: Optional Vulkan Acceleration for Talvik
+# ADR-0029: Optional Vulkan Acceleration for Talvik
 
 - Status: Proposed
 - Date: 2026-10-27
 - System: Talvik Model Runtime
 - Related: ADR-0003, ADR-0007, ADR-0010, ADR-0013, ADR-0024;
-  WP-0027, WP-0058, WP-0060, WP-0078, WP-0079, WP-0080, WP-0090, WP-0092,
-  WP-0093
+  WP-0027, WP-0058, WP-0060, WP-0078, WP-0079, WP-0080, WP-0090, WP-0105,
+  WP-0106
 
 ## Context
 
@@ -93,7 +93,7 @@ prompt/context, token limits, sampling options, and test procedure.
 
 ## Implementation work package
 
-WP-0093 SHALL deliver the optional Vulkan llama.cpp path, backend-neutral
+WP-0106 SHALL deliver the optional Vulkan llama.cpp path, backend-neutral
 runtime reporting, safe fallback/admission behavior, and a repeatable CPU
 versus Vulkan qualification procedure. GPU qualification remains pending
 until real hardware evidence is recorded.

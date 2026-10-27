@@ -9,18 +9,41 @@ struct ConsoleProcess {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    state_root: std::path::PathBuf,
+    cleanup_state: bool,
 }
 
 impl ConsoleProcess {
     fn start_with_state(state: Option<&std::path::Path>) -> Self {
+        let cleanup_state = state.is_none();
+        let state_root = state.map_or_else(
+            || {
+                std::env::temp_dir().join(format!(
+                    "talvik-console-signal-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("clock")
+                        .as_nanos()
+                ))
+            },
+            std::path::Path::to_path_buf,
+        );
+        std::fs::create_dir_all(state_root.join("models")).expect("console state");
         let mut command = Command::new(env!("CARGO_BIN_EXE_oid-console"));
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if let Some(state) = state {
-            command.env("OID_STATE_DIR", state);
-        }
+        command
+            .env("TALVIK_STATE_DIR", &state_root)
+            .env("TALVIK_HOME", &state_root)
+            .env("TALVIK_CONFIG", state_root.join("config.yaml"))
+            .env("TALVIK_MODEL_DIR", state_root.join("models"))
+            .env("TALVIK_REGISTRY", state_root.join("models.registry"))
+            .env("TALVIK_SOCKET", state_root.join("talvik.sock"))
+            .env("TALVIK_TOKEN_FILE", state_root.join("tokens"))
+            .env("OID_STATE_DIR", &state_root);
         let mut child = command.spawn().expect("console should start");
         let stdin = child.stdin.take().expect("console stdin");
         let stdout = BufReader::new(child.stdout.take().expect("console stdout"));
@@ -28,6 +51,8 @@ impl ConsoleProcess {
             child,
             stdin,
             stdout,
+            state_root,
+            cleanup_state,
         };
         process.wait_for_text("✓ Console ready");
         process
@@ -74,6 +99,14 @@ impl ConsoleProcess {
             }
             assert!(Instant::now() < deadline, "console did not terminate");
             std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for ConsoleProcess {
+    fn drop(&mut self) {
+        if self.cleanup_state {
+            let _ = std::fs::remove_dir_all(&self.state_root);
         }
     }
 }

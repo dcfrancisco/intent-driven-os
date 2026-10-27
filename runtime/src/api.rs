@@ -24,6 +24,18 @@ pub struct RuntimeSnapshot {
     pub loaded_model: Option<String>,
     /// All resident models in stable identifier order.
     pub loaded_models: Vec<String>,
+    /// Resident model details reported by the runtime-owned scheduler.
+    pub resident_models: Vec<ResidentModelSnapshot>,
+    /// Number of requests waiting for the single active generation slot.
+    pub pending_requests: usize,
+    /// Number of active generations.
+    pub active_requests: usize,
+    /// Configured maximum FIFO queue capacity.
+    pub queue_capacity: usize,
+    /// Whether bounded automatic idle-model eviction is enabled.
+    pub automatic_eviction: bool,
+    /// Configured idle retention in seconds.
+    pub idle_retention_seconds: u64,
     /// Seconds since the mock/runtime service started.
     pub uptime_seconds: u64,
     /// Backend-reported library information.
@@ -36,6 +48,17 @@ pub struct RuntimeSnapshot {
     pub current_tokens_per_second: Option<f64>,
     /// Current context usage.
     pub loaded_context: Option<u64>,
+}
+
+/// Truthful scheduler-owned information about one resident model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResidentModelSnapshot {
+    /// Registered model identifier.
+    pub id: String,
+    /// Backend-reported or registry-estimated resident bytes, when measurable.
+    pub memory_bytes: Option<u64>,
+    /// Seconds since the runtime last used this resident model.
+    pub idle_seconds: u64,
 }
 
 /// Runtime-facing service contract used by clients.

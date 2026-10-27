@@ -54,6 +54,7 @@ fn generation_request_rejects_invalid_controls() {
         top_k: 40,
         context_size: 4096,
         seed: None,
+        stop_sequences: Vec::new(),
     };
     assert_eq!(
         request.validate(),
@@ -76,6 +77,7 @@ fn generation_request_accepts_default_controls() {
         top_k: 40,
         context_size: 4096,
         seed: Some(7),
+        stop_sequences: Vec::new(),
     };
     assert!(request.validate().is_ok());
 }
@@ -93,6 +95,7 @@ fn generation_request_rejects_empty_prompts() {
         top_k: 1,
         context_size: 1,
         seed: None,
+        stop_sequences: Vec::new(),
     };
     assert_eq!(
         request.validate(),

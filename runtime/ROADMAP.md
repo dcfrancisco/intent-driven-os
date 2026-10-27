@@ -1,7 +1,7 @@
 # Talvik / Intelligent Runtime Roadmap
 
 This roadmap sequences the control plane from the current local runner to an
-Ollama-like service and OID-owned multi-backend router. Milestones are
+Reference local runner-like service and OID-owned multi-backend router. Milestones are
 capability boundaries, not promises of implementation in the current
 repository. See `docs/PROJECT-OPERATING-BRIEF.md` and ADR-0011.
 
@@ -43,6 +43,17 @@ real-GGUF rerun found and corrected a second terminal-ordering race in the
 llama.cpp adapter itself. This does not complete the capability-aware
 multi-backend router: policy snapshots, route evidence, remote providers,
 health scoring, and circuit breaking remain WP-0060 work.
+
+## M1 closeout and M2 starting point — 2026-10-23
+
+Talvik M1 development scope is closed at baseline `1ade5f1`; the recorded
+macOS x86_64 CPU-first qualification is GO, while cross-platform product
+qualification remains incomplete. M2 starts on
+`feature/talvik-m2-runtime-ide` with ADR-0025 and WP-0091 through WP-0094.
+The first implementation slice is truthful resident/scheduler diagnostics and
+the justified `/api/tags` and `/api/ps` compatibility edge. Real IDE
+qualification remains a separate external gate under WP-0092. One active
+generation remains the baseline until WP-0094 measurements justify otherwise.
 
 ## v0.2 — Resource and policy control
 
@@ -204,3 +215,15 @@ The legacy CA-Clipper archive is a separate Linux product input, not a Marina
 backend. WP-0074 first inventories and legally clears the archive, then builds
 a Rust/Linux vertical slice, data compatibility layer, and governed OID
 integration before adding it to distro packaging.
+
+## Talvik M2 capability register — 2026-10-23
+
+The complete Reference local runner comparison and disposition is maintained in
+`docs/TALVIK-COMPATIBILITY-CAPABILITY-MATRIX.md`. WP-0095 closes the build-identity
+implementation gap. Additional compatibility routes, model profiles, GPU scheduling,
+multimodal support, MarinaOS integration, and alternate engines remain visible
+under WP-0096/WP-0097/WP-0100–0103 with explicit later-milestone dispositions.
+ADR-0026 and WP-0098 govern the measured native performance gap: Stage A
+bounded batching, incremental decoding, option mapping, and phase timings are
+implemented; persistent worker/context reuse, termination safety, and native
+failure isolation remain required before interactive performance is qualified.

@@ -1,10 +1,10 @@
-# ADR-0028: Per-User MSI Packaging for Talvik on Windows
+# ADR-0030: Per-User MSI Packaging for Talvik on Windows
 
 - Status: Proposed
 - Date: 2026-10-27
 - System: Talvik Model Runner
 - Related: ADR-0012, ADR-0013, ADR-0021, ADR-0024; WP-0064, WP-0079,
-  WP-0090, WP-0094
+  WP-0090, WP-0107
 
 ## Context
 
@@ -49,11 +49,11 @@ The MSI SHALL:
 
 Any optional user-`PATH` integration must be limited to the current user,
 reversible on uninstall, and must not alter machine `PATH`. Its default
-behavior is left for WP-0094 to resolve before implementation.
+behavior is left for WP-0107 to resolve before implementation.
 
 The installer authoring tool, exact Microsoft C/C++ runtime distribution
 strategy, and upgrade behavior when Talvik binaries are in use must be
-selected and pinned in WP-0094. Custom actions that require elevation or
+selected and pinned in WP-0107. Custom actions that require elevation or
 perform unrelated system changes are not permitted.
 
 ## Alternatives considered
@@ -80,7 +80,7 @@ must use protected CI credentials or a separate trusted signing process.
 
 ## Implementation work package
 
-WP-0094 SHALL define the MSI authoring/runtime prerequisites, add MSI
+WP-0107 SHALL define the MSI authoring/runtime prerequisites, add MSI
 construction to the Windows release pipeline, and verify per-user install,
 upgrade, repair, uninstall, data preservation, DLL loading, checksums, and
 signing evidence.

@@ -1,9 +1,9 @@
-# ADR-0025: MarinaOS Product and Execution Architecture Proposal
+# ADR-0027: MarinaOS Product and Execution Architecture Proposal
 
 - Status: Proposed
 - Date: 2026-10-27
 - Related: ADR-0004, ADR-0005, ADR-0006, ADR-0014, ADR-0016, ADR-0019,
-  ADR-0023; WP-0068, WP-0069, WP-0072, WP-0088, WP-0091
+  ADR-0023; WP-0068, WP-0069, WP-0072, WP-0088, WP-0104
 
 ## Context
 
@@ -127,7 +127,7 @@ around unrestricted shell or root access.
 
 ## Next design work
 
-WP-0091 is proposed to define the backend-neutral capability contract and
+WP-0104 is proposed to define the backend-neutral capability contract and
 trust boundaries before any executor implementation. It must compare the
 existing OID-owned operation coordinator with the candidate Marina-branded
 orchestration layer and resolve ownership without weakening approval,
