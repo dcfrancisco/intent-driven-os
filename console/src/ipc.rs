@@ -58,7 +58,7 @@ pub fn endpoint() -> String {
     {
         env::var("TALVIK_TCP_ADDR")
             .or_else(|_| env::var("MARINA_TCP_ADDR"))
-            .unwrap_or_else(|_| "127.0.0.1:11434".to_owned());
+            .unwrap_or_else(|_| "127.0.0.1:11434".to_owned())
     }
 }
 

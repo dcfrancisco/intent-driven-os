@@ -68,7 +68,11 @@ Set `MARINA_TOKEN_FILE` to use another secret-store integration point.
 
 Persistent runner settings belong in `$HOME/.marina/config.yaml` on Unix or
 `%USERPROFILE%\.marina\config.yaml` on Windows. Environment variables override
-file values for tests and deployment automation.
+file values for tests and deployment automation. Talvik loads the configured
+default model on daemon startup; by default it is
+`qwen2.5-0.5b-instruct-q4_k_m`. If missing, Talvik pulls the pinned artifact
+and verifies its SHA-256 before loading. Set `default_model: none` to opt out.
+Failures are logged as warnings and do not prevent the daemon from starting.
 
 ## Native HTTP API
 
@@ -109,10 +113,30 @@ optional `OID_MARINA_MODEL`. Its default endpoint is
 `http://127.0.0.1:11434`; the first client slice rejects remote endpoints until
 a trusted TLS boundary is implemented.
 
-To select the remote model backend for the OID console explicitly, set
-`OID_RUNTIME_BACKEND=marina-http`. The default console backend remains the
-in-process runtime until governed-session cancellation and evidence integration
-are fully verified.
+When the Talvik local IPC daemon is available, the OID console reads its model
+inventory, health, and loaded-model state and routes model import/load/unload
+commands to it. Without a daemon, the console uses the in-process runtime.
+Generation remains in-process by default until governed-session cancellation
+and evidence integration are fully verified.
+
+To route OID inference through Talvik's native HTTP API explicitly, set
+`OID_RUNTIME_BACKEND=marina-http` and configure `OID_MARINA_URL` plus any
+required `OID_MARINA_TOKEN`. Set `OID_MARINA_MODEL` to the desired model ID;
+OID uses it for generation when the HTTP API cannot report model residency.
+For example, on Windows with Talvik HTTP listening on port 11435:
+
+```powershell
+$env:OID_RUNTIME_BACKEND = "marina-http"
+$env:OID_MARINA_URL = "http://127.0.0.1:11435"
+$env:OID_MARINA_MODEL = "qwen2.5-0.5b-instruct-q4_k_m"
+$env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-console).Trim()
+.\target\release\oid-console.exe
+```
+
+At the OID prompt, enter `:generate <your prompt>`. The token command creates
+a local credential with model-read, inference, and cancellation scopes. The
+HTTP model-list API does not expose residency, so OID reports the loaded model
+as unknown in this mode rather than guessing from the first available model.
 
 Remote OID inference uses the existing OID file evidence store at
 `$OID_STATE_DIR/evidence.log` (or the console temporary state directory). It

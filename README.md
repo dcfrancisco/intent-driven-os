@@ -50,11 +50,15 @@ name: Talvik
 model_directory: ~/.marina/models
 registry_path: ~/.marina/models.registry
 state_directory: ~/.marina
+default_model: qwen2.5-0.5b-instruct-q4_k_m
 ```
 
 Environment variables such as `TALVIK_HOME`, `TALVIK_CONFIG`,
-`TALVIK_MODEL_DIR`, `TALVIK_REGISTRY`, and `TALVIK_STATE_DIR` override the YAML
-file. The equivalent `MARINA_*` variables remain compatibility aliases. See
+`TALVIK_MODEL_DIR`, `TALVIK_REGISTRY`, `TALVIK_STATE_DIR`, and
+`TALVIK_DEFAULT_MODEL` override the YAML file. On daemon startup, Talvik loads
+the default model and downloads its pinned GGUF artifact if it is not installed.
+Set `default_model: none` to disable automatic loading. The equivalent
+`MARINA_*` variables remain compatibility aliases. See
 [Talvik Model Runtime](docs/TALVIK.md)
 for commands, routing configuration, security defaults, and migration rules.
 
@@ -143,7 +147,7 @@ workload and Windows SDK available, then run:
 .\scripts\setup-llama-windows.ps1
 $env:LLAMA_CPP_LIB_DIR = "$env:USERPROFILE\.marina\lib"
 $env:LLAMA_CPP_REQUIRED = "1"
-cargo build --release -p oid-console --bin talvik --bin talvikd
+cargo build --release -p oid-console --bin talvik --bin talvikd --bin oid-console
 ```
 
 Place a GGUF model under `%USERPROFILE%\.marina\models`, then create a Talvik
@@ -157,8 +161,20 @@ $env:MARINA_HTTP_ADDR = "127.0.0.1:11435"
 $env:Path = "$env:USERPROFILE\.marina\lib;$env:Path"
 ```
 
-Start `target\release\talvikd.exe` in that environment. In a second PowerShell
-window, run the basic HTTP smoke test:
+Start `target\release\talvikd.exe` in that environment. To prompt Talvik from
+OID, open another PowerShell window and configure the HTTP-backed client:
+
+```powershell
+$env:OID_RUNTIME_BACKEND = "marina-http"
+$env:OID_MARINA_URL = "http://127.0.0.1:11435"
+$env:OID_MARINA_MODEL = "qwen2.5-0.5b-instruct-q4_k_m"
+$env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-console).Trim()
+.\target\release\oid-console.exe
+```
+
+At the OID prompt, enter `:generate <your prompt>`.
+
+In another PowerShell window, run the basic HTTP smoke test:
 
 ```powershell
 $env:MARINA_MODEL = "your-model-id"

@@ -9,21 +9,24 @@ use std::io::{self, Write};
 pub struct Renderer;
 
 impl Renderer {
-    /// Render the startup banner and lifecycle milestones.
-    pub fn render_startup() {
+    /// Render the startup banner and current runtime/model state.
+    pub fn render_startup(runtime: &dyn RuntimeService) {
+        let snapshot = runtime.snapshot();
+        let models = runtime.model_list();
         println!("=================================================");
         println!(" AI CONSOLE");
         println!(" Intelligent Runtime v0.1");
         println!("=================================================");
         println!();
-        println!("Initializing...");
-        println!();
-        println!("✓ Configuration loaded");
-        println!("✓ Event bus started");
-        println!("✓ Runtime initialized");
-        println!("✓ Console ready");
-        println!();
-        println!("No models installed.");
+        println!("Runtime: {} ({})", snapshot.health, snapshot.backend);
+        if models.is_empty() {
+            println!("No models found in the active runtime.");
+        } else {
+            println!("Available models:");
+            for model in models {
+                println!("  {} [{:?}]", model.id, model.status);
+            }
+        }
         println!();
         println!("Type");
         println!("help");

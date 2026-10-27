@@ -72,15 +72,10 @@ impl RemoteRuntimeService {
             .map_err(|error| RuntimeError::ModelLifecycle(error.to_string()))
     }
 
-    fn remote_models(&self) -> Vec<ModelMetadata> {
-        let models = match self.client.list_models() {
-            Ok(models) => models,
-            Err(error) => {
-                eprintln!("OID Marina model discovery failed: {error}");
-                return Vec::new();
-            }
-        };
-        models
+    fn remote_models(&self) -> Result<Vec<ModelMetadata>, ModelClientError> {
+        Ok(self
+            .client
+            .list_models()?
             .into_iter()
             .map(|model| ModelMetadata {
                 name: model.id.clone(),
@@ -95,7 +90,7 @@ impl RemoteRuntimeService {
                 checksum: None,
                 location: "marina-http".to_owned(),
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -107,12 +102,22 @@ impl RuntimeService for RemoteRuntimeService {
     fn snapshot(&self) -> RuntimeSnapshot {
         let mut snapshot = self.local.snapshot();
         "marina-http".clone_into(&mut snapshot.backend);
-        let models = self.remote_models();
-        snapshot.models = models.len();
-        snapshot.loaded_model = std::env::var("OID_MARINA_MODEL")
-            .ok()
-            .or_else(|| models.first().map(|model| model.id.clone()));
-        snapshot.loaded_models = snapshot.loaded_model.clone().into_iter().collect();
+        match self.remote_models() {
+            Ok(models) => {
+                snapshot.models = models.len();
+                snapshot.health = "Healthy";
+            }
+            Err(error) => {
+                eprintln!("OID Marina model discovery failed: {error}");
+                snapshot.models = 0;
+                snapshot.health = "Unavailable";
+            }
+        }
+        snapshot.loaded_model = None;
+        snapshot.loaded_models.clear();
+        snapshot.model_memory_bytes = None;
+        snapshot.loaded_context = None;
+        snapshot.current_tokens_per_second = None;
         snapshot.generating = self.active.lock().is_ok_and(|active| active.is_some());
         snapshot
     }
@@ -126,11 +131,18 @@ impl RuntimeService for RemoteRuntimeService {
     }
 
     fn model_list(&self) -> Vec<ModelMetadata> {
-        self.remote_models()
+        self.remote_models().unwrap_or_else(|error| {
+            eprintln!("OID Marina model discovery failed: {error}");
+            Vec::new()
+        })
     }
 
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata> {
         self.remote_models()
+            .unwrap_or_else(|error| {
+                eprintln!("OID Marina model discovery failed: {error}");
+                Vec::new()
+            })
             .into_iter()
             .find(|model| model.id == id)
     }

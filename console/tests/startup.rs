@@ -10,7 +10,8 @@ fn console_binary_starts_with_runtime_prompt() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("startup output is UTF-8");
     assert!(stdout.contains("AI CONSOLE"));
-    assert!(stdout.contains("✓ Runtime initialized"));
-    assert!(stdout.contains("[OID Healthy | model none]"));
+    assert!(stdout.contains("Runtime:"));
+    assert!(stdout.contains("Available models:") || stdout.contains("No models found"));
+    assert!(!stdout.contains("No models installed."));
     assert!(stdout.contains("$ "));
 }

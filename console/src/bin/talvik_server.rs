@@ -23,6 +23,10 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     ipc::ensure_socket_parent()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
+    load_default_model(
+        runtime.as_ref(),
+        config::default_model().map_err(std::io::Error::other)?,
+    );
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
     let http_configuration = config::http_config().map_err(std::io::Error::other)?;
     if let Some(address) = http_configuration.address {
@@ -52,6 +56,49 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn load_default_model(
+    runtime: &dyn RuntimeService,
+    default_model: Option<config::DefaultModelConfig>,
+) {
+    let Some(default_model) = default_model else {
+        return;
+    };
+
+    if runtime.model_inspect(&default_model.id).is_none() {
+        let Some(source) = default_model.source.as_deref() else {
+            report_default_model_failure(
+                runtime,
+                &default_model.id,
+                "model is not installed and no acquisition source is configured".to_owned(),
+            );
+            return;
+        };
+        eprintln!(
+            "Default model {} is not installed; pulling it from {}",
+            default_model.id, source
+        );
+        if let Err(error) = runtime.model_pull(
+            source,
+            Some(&default_model.id),
+            default_model.checksum.as_deref(),
+        ) {
+            report_default_model_failure(runtime, &default_model.id, error.to_string());
+            return;
+        }
+    }
+
+    match runtime.model_load(&default_model.id) {
+        Ok(()) => eprintln!("Loaded default model: {}", default_model.id),
+        Err(error) => report_default_model_failure(runtime, &default_model.id, error.to_string()),
+    }
+}
+
+fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, reason: String) {
+    let warning = format!("default model {model_id} was not loaded; continuing: {reason}");
+    eprintln!("Warning: {warning}");
+    runtime.publish(RuntimeEvent::WarningRaised(warning));
 }
 
 #[allow(clippy::too_many_lines)]
