@@ -103,6 +103,22 @@ enumerated the Intel device. No adapter-memory capacity was reported in this
 summary. This is host discovery evidence only; it does not demonstrate that
 the current Talvik build includes Vulkan or offloads any model layers.
 
+## Standalone Windows llama.cpp Vulkan build (2026-10-27)
+
+The pinned llama.cpp revision `18443257a30c884d5332abb8e7dc43c7ffe42fda`
+was built with `GGML_VULKAN=ON` using Vulkan SDK 1.4.363.0 and the installed
+Visual Studio C++ toolchain. CMake reported `Found Vulkan` and `Including
+Vulkan backend`. The resulting `llama-cli --list-devices` output reported:
+
+```text
+Vulkan0: Intel(R) Iris(R) Xe Graphics (8018 MiB, 7361 MiB free)
+```
+
+This confirms the pinned standalone llama.cpp build can enumerate the Iris Xe.
+The reported memory is not evidence of dedicated VRAM on this integrated GPU.
+No model was loaded, so this does not verify layer offloading, Talvik linkage,
+inference correctness, memory admission, fallback, or performance.
+
 ## Qualification procedure
 
 1. Record the pinned llama.cpp and Vulkan SDK/toolchain versions. Verify
