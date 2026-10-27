@@ -90,5 +90,6 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0088 | OID Bootable Linux Image | Reproducible image, boot lifecycle, services, and governed-operation proof |
 | WP-0089 | OID/Marina Packaged Linux Environment | Versioned Debian artifact and isolated install/upgrade/removal qualification |
 | WP-0090 | Marina Windows Support Readiness | Windows native prerequisites, build setup, packaging checks, and support documentation |
+| WP-0091 | User/System Execution Capability Contract | Proposed boundary and trust model for user-scoped and privileged Linux executors |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

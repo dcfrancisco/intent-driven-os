@@ -25,3 +25,4 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0021 — Marina Transport, API, and Authorization Architecture](0021-marina-transport-api-and-authorization.md)
 - [ADR-0023 — OID Linux Distribution, Boot Lifecycle, and System Services](0023-oid-linux-distribution-boot-lifecycle-and-system-services.md)
 - [ADR-0024 — Marina Windows Native Build and Qualification Requirements](0024-marina-windows-native-build-and-qualification.md)
+- [ADR-0025 — MarinaOS Product and Execution Architecture Proposal](0025-marinaos-product-and-execution-architecture.md)
