@@ -5,12 +5,15 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod support;
+
 struct ConsoleProcess {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     state_root: std::path::PathBuf,
     cleanup_state: bool,
+    _daemon: support::MockTalvik,
 }
 
 impl ConsoleProcess {
@@ -30,6 +33,7 @@ impl ConsoleProcess {
             std::path::Path::to_path_buf,
         );
         std::fs::create_dir_all(state_root.join("models")).expect("console state");
+        let daemon = support::MockTalvik::start(&state_root);
         let mut command = Command::new(env!("CARGO_BIN_EXE_oid-console"));
         command
             .stdin(Stdio::piped())
@@ -43,7 +47,9 @@ impl ConsoleProcess {
             .env("TALVIK_REGISTRY", state_root.join("models.registry"))
             .env("TALVIK_SOCKET", state_root.join("talvik.sock"))
             .env("TALVIK_TOKEN_FILE", state_root.join("tokens"))
-            .env("OID_STATE_DIR", &state_root);
+            .env("OID_STATE_DIR", &state_root)
+            .env("OID_RUNTIME_BACKEND", "talvik-ipc");
+        daemon.configure(&mut command);
         let mut child = command.spawn().expect("console should start");
         let stdin = child.stdin.take().expect("console stdin");
         let stdout = BufReader::new(child.stdout.take().expect("console stdout"));
@@ -53,6 +59,7 @@ impl ConsoleProcess {
             stdout,
             state_root,
             cleanup_state,
+            _daemon: daemon,
         };
         process.wait_for_text("✓ Console ready");
         process

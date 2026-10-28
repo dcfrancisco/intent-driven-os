@@ -2,11 +2,13 @@
 
 use crate::ipc;
 use oid_runtime::{
-    backends::{BackendHealth, BackendSummary, EmbeddingsRequest, EmbeddingsResult},
+    backends::{
+        BackendDescriptor, BackendHealth, BackendSummary, EmbeddingsRequest, EmbeddingsResult,
+    },
     generation::ExecutionPlacement,
     GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
-    GenerationTermination, HardwareSnapshot, ModelMetadata, ModelStatus, RuntimeError,
-    RuntimeService, RuntimeSnapshot,
+    GenerationTermination, HardwareService, HardwareSnapshot, ModelMetadata, ModelStatus,
+    ResidentModelSnapshot, RuntimeError, RuntimeService, RuntimeSnapshot,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent, RuntimeStatus};
 use std::collections::HashSet;
@@ -22,7 +24,8 @@ const GENERATION_READ_POLL: Duration = Duration::from_millis(100);
 
 /// Runtime view that reads model state and administers models through Talvik IPC.
 pub struct IpcRuntimeService {
-    local: Box<dyn RuntimeService>,
+    bus: EventBus,
+    hardware: HardwareSnapshot,
     unavailable_reported: AtomicBool,
     active_generations: Arc<Mutex<HashSet<String>>>,
 }
@@ -36,16 +39,29 @@ impl std::fmt::Debug for IpcRuntimeService {
 }
 
 impl IpcRuntimeService {
-    /// Verify that Talvik IPC is reachable.
+    /// Verify that the daemon supports this local IPC protocol version.
     pub fn probe() -> io::Result<()> {
-        Self::request("status", false, REQUEST_TIMEOUT)?;
-        Ok(())
+        let response = Self::request("hello", false, REQUEST_TIMEOUT)?;
+        let expected = format!("OK protocol\t{}", ipc::PROTOCOL_VERSION);
+        if response.first().map(String::as_str) == Some(expected.as_str()) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                response
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "empty Talvik protocol handshake".to_owned()),
+            ))
+        }
     }
 
-    /// Wrap the in-process runtime with Talvik IPC access.
-    pub fn new(local: Box<dyn RuntimeService>) -> Self {
+    /// Create an IPC-only client for the local Talvik daemon.
+    pub fn new(bus: EventBus) -> Self {
+        let hardware = HardwareService::detect(&bus).snapshot();
         Self {
-            local,
+            bus,
+            hardware,
             unavailable_reported: AtomicBool::new(false),
             active_generations: Arc::new(Mutex::new(HashSet::new())),
         }
@@ -83,6 +99,12 @@ impl IpcRuntimeService {
             .first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "empty Talvik status"))?;
         parse_status_response(line)
+    }
+
+    fn remote_snapshot() -> io::Result<RuntimeSnapshot> {
+        let fields = Self::status_fields()?;
+        let models = Self::remote_models()?;
+        parse_runtime_snapshot(&fields, &models)
     }
 
     fn report_unavailable(&self, error: &io::Error) {
@@ -167,63 +189,63 @@ impl IpcRuntimeService {
 
 impl RuntimeService for IpcRuntimeService {
     fn status(&self) -> RuntimeStatus {
-        let mut status = self.local.status();
-        status.state = if Self::status_fields().is_ok() {
-            LifecycleState::Ready
-        } else {
-            LifecycleState::Stopped
+        let state = match Self::status_fields() {
+            Ok(_) => LifecycleState::Ready,
+            Err(error) => {
+                self.report_unavailable(&error);
+                LifecycleState::Stopped
+            }
         };
-        status
+        RuntimeStatus {
+            state,
+            version: "0.1",
+        }
     }
 
     fn snapshot(&self) -> RuntimeSnapshot {
-        let mut snapshot = self.local.snapshot();
-        match Self::status_fields() {
-            Ok(fields) => {
-                snapshot.health = health_label(&fields[1]);
-                snapshot.backend = format!("talvikd ({})", fields[2]);
-                snapshot.loaded_model = nonempty(fields[3].clone());
-                snapshot.loaded_models = fields[4]
-                    .split(',')
-                    .filter(|model| !model.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                match Self::remote_models() {
-                    Ok(models) => snapshot.models = models.len(),
-                    Err(error) => {
-                        self.report_unavailable(&error);
-                        snapshot.models = 0;
-                    }
-                }
-                snapshot.backend_version = None;
-                snapshot.model_memory_bytes = None;
-                snapshot.current_tokens_per_second = None;
-                snapshot.loaded_context = None;
-                snapshot.generating = false;
-            }
+        match Self::remote_snapshot() {
+            Ok(snapshot) => snapshot,
             Err(error) => {
                 self.report_unavailable(&error);
-                snapshot.health = "Unavailable";
-                "talvikd (unavailable)".clone_into(&mut snapshot.backend);
-                snapshot.models = 0;
-                snapshot.loaded_model = None;
-                snapshot.loaded_models.clear();
-                snapshot.backend_version = None;
-                snapshot.model_memory_bytes = None;
-                snapshot.current_tokens_per_second = None;
-                snapshot.loaded_context = None;
-                snapshot.generating = false;
+                unavailable_snapshot()
             }
         }
-        snapshot
     }
 
     fn backend_list(&self) -> Vec<BackendSummary> {
-        self.local.backend_list()
+        match Self::status_fields() {
+            Ok(fields) if fields[2] != "None" => vec![BackendSummary {
+                descriptor: BackendDescriptor {
+                    id: fields[2].clone(),
+                    name: fields[2].clone(),
+                    version: format!("Talvik IPC {}", ipc::PROTOCOL_VERSION),
+                    library_version: nonempty(fields[18].clone()),
+                },
+                enabled: true,
+                active: true,
+            }],
+            Ok(_) => Vec::new(),
+            Err(error) => {
+                self.report_unavailable(&error);
+                Vec::new()
+            }
+        }
     }
 
     fn backend_health(&self, id: &str) -> Option<BackendHealth> {
-        self.local.backend_health(id)
+        let fields = match Self::status_fields() {
+            Ok(fields) if id == fields[2] || id == format!("talvikd ({})", fields[2]) => fields,
+            Ok(_) => return None,
+            Err(error) => {
+                self.report_unavailable(&error);
+                return Some(BackendHealth::Unavailable);
+            }
+        };
+        Some(match health_label(&fields[1]) {
+            "Healthy" => BackendHealth::Healthy,
+            "Unavailable" => BackendHealth::Unavailable,
+            _ => BackendHealth::Error(format!("Talvik health is {}", fields[1])),
+        })
     }
 
     fn model_list(&self) -> Vec<ModelMetadata> {
@@ -300,15 +322,37 @@ impl RuntimeService for IpcRuntimeService {
     }
 
     fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
-        self.local.tokenize(text)
+        let request = format!("tokenize\t{}", ipc::encode_field(text));
+        let lines = Self::request(&request, false, REQUEST_TIMEOUT)
+            .map_err(|error| RuntimeError::Tokenization(error.to_string()))?;
+        let response = lines.first().map(String::as_str).unwrap_or_default();
+        let fields = response.split('\t').collect::<Vec<_>>();
+        if fields.len() == 2 && fields[0] == "OK tokenize" {
+            fields[1]
+                .parse()
+                .map_err(|_| RuntimeError::Tokenization("invalid Talvik token count".to_owned()))
+        } else {
+            Err(RuntimeError::Tokenization(
+                fields
+                    .get(1)
+                    .filter(|_| fields.first() == Some(&"ERROR"))
+                    .map_or_else(
+                        || format!("unexpected Talvik tokenize response: {response}"),
+                        |value| ipc::decode_field(value),
+                    ),
+            ))
+        }
     }
 
-    fn embeddings(&self, request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError> {
-        self.local.embeddings(request)
+    fn embeddings(&self, _request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError> {
+        Err(RuntimeError::NotImplemented("Talvik IPC embeddings"))
     }
 
     fn tool_support(&self) -> oid_runtime::backends::ToolSupport {
-        self.local.tool_support()
+        oid_runtime::backends::ToolSupport {
+            supported: false,
+            reason: "tool support is not reported by the Talvik IPC protocol".to_owned(),
+        }
     }
 
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
@@ -397,32 +441,36 @@ impl RuntimeService for IpcRuntimeService {
     }
 
     fn hardware(&self) -> HardwareSnapshot {
-        self.local.hardware()
+        self.hardware.clone()
     }
 
     fn event_bus(&self) -> EventBus {
-        self.local.event_bus()
+        self.bus.clone()
     }
 
     fn execute_command(&self, command: &str) -> String {
-        self.local.execute_command(command)
+        self.bus
+            .publish(&RuntimeEvent::CommandStarted(command.to_owned()));
+        self.bus
+            .publish(&RuntimeEvent::CommandCompleted(command.to_owned()));
+        format!("Runtime command execution is unavailable over Talvik IPC: {command}")
     }
 
     fn input_started(&self) {
-        self.local.input_started();
+        self.bus.publish(&RuntimeEvent::InputStarted);
     }
 
     fn input_stopped(&self) {
-        self.local.input_stopped();
+        self.bus.publish(&RuntimeEvent::InputStopped);
     }
 
     fn stop(&self) {
         self.cancel_generation();
-        self.local.stop();
+        self.bus.publish(&RuntimeEvent::RuntimeStopped);
     }
 
     fn publish(&self, event: RuntimeEvent) {
-        self.local.publish(event);
+        self.bus.publish(&event);
     }
 }
 
@@ -658,13 +706,85 @@ fn parse_status_response(line: &str) -> io::Result<Vec<String>> {
         .split('\t')
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    if fields.first().map(String::as_str) != Some("OK status") || fields.len() < 5 {
+    if fields.first().map(String::as_str) != Some("OK status") || fields.len() < 23 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid Talvik status response",
         ));
     }
     Ok(fields)
+}
+
+fn parse_runtime_snapshot(
+    fields: &[String],
+    models: &[ModelMetadata],
+) -> io::Result<RuntimeSnapshot> {
+    let loaded_models = fields[4]
+        .split(',')
+        .filter(|model| !model.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let resident_models = models
+        .iter()
+        .filter(|model| model.status == ModelStatus::Loaded)
+        .map(|model| ResidentModelSnapshot {
+            id: model.id.clone(),
+            memory_bytes: None,
+            idle_seconds: 0,
+        })
+        .collect();
+    Ok(RuntimeSnapshot {
+        health: health_label(&fields[1]),
+        backend: format!("talvikd ({})", fields[2]),
+        models: models.len(),
+        memory: fields[11].clone(),
+        loaded_model: nonempty(fields[3].clone()),
+        loaded_models,
+        resident_models,
+        pending_requests: parse_status_value(&fields[12], "pending request count")?,
+        active_requests: parse_status_value(&fields[13], "active request count")?,
+        queue_capacity: parse_status_value(&fields[14], "queue capacity")?,
+        automatic_eviction: parse_bool(&fields[15])?,
+        idle_retention_seconds: parse_status_value(&fields[16], "idle retention")?,
+        uptime_seconds: parse_status_value(&fields[17], "uptime")?,
+        backend_version: nonempty(fields[18].clone()),
+        model_memory_bytes: parse_optional(&fields[19], "model memory")?,
+        generating: parse_bool(&fields[20])?,
+        current_tokens_per_second: parse_optional(&fields[21], "current throughput")?,
+        loaded_context: parse_optional(&fields[22], "loaded context")?,
+    })
+}
+
+fn unavailable_snapshot() -> RuntimeSnapshot {
+    RuntimeSnapshot {
+        health: "Unavailable",
+        backend: "talvikd (unavailable)".to_owned(),
+        models: 0,
+        memory: "unavailable".to_owned(),
+        loaded_model: None,
+        loaded_models: Vec::new(),
+        resident_models: Vec::new(),
+        pending_requests: 0,
+        active_requests: 0,
+        queue_capacity: 0,
+        automatic_eviction: false,
+        idle_retention_seconds: 0,
+        uptime_seconds: 0,
+        backend_version: None,
+        model_memory_bytes: None,
+        generating: false,
+        current_tokens_per_second: None,
+        loaded_context: None,
+    }
+}
+
+fn parse_status_value<T: std::str::FromStr>(value: &str, name: &str) -> io::Result<T> {
+    value.parse().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid {name} in Talvik status response"),
+        )
+    })
 }
 
 fn parse_model_status(value: &str) -> ModelStatus {
@@ -706,10 +826,50 @@ mod tests {
 
     #[test]
     fn status_parser_preserves_empty_loaded_model_fields() {
-        let fields = parse_status_response("OK status\tHealthy\tllama.cpp\t\t\r\n")
+        let fields = parse_status_response(
+            "OK status\tHealthy\tllama.cpp\t\t\t0.1\tsha\tfalse\ttarget\tdebug\tfalse\t--\t0\t0\t0\tfalse\t0\t0\t\t\tfalse\t\t\r\n",
+        )
             .expect("valid status response");
 
-        assert_eq!(fields, ["OK status", "Healthy", "llama.cpp", "", ""]);
+        assert_eq!(&fields[..5], ["OK status", "Healthy", "llama.cpp", "", ""]);
+    }
+
+    #[test]
+    fn snapshot_parser_uses_remote_runtime_metrics() {
+        let fields = parse_status_response(
+            "OK status\tHealthy\tllama.cpp\tqwen\tqwen\t0.1\tsha\tfalse\ttarget\trelease\tfalse\t512 MB\t1\t1\t8\ttrue\t300\t100\tllama.cpp 1.0\t4000000\ttrue\t12.5\t2048",
+        )
+        .expect("valid Talvik status response");
+        let snapshot = super::parse_runtime_snapshot(
+            &fields,
+            &[oid_runtime::ModelMetadata {
+                id: "qwen".to_owned(),
+                name: "Qwen".to_owned(),
+                family: "unknown".to_owned(),
+                backend: "talvikd".to_owned(),
+                quantization: "unknown".to_owned(),
+                context_window: 0,
+                memory_requirement_mb: 0,
+                capabilities: Vec::new(),
+                status: oid_runtime::ModelStatus::Loaded,
+                checksum: None,
+                location: "talvikd".to_owned(),
+            }],
+        )
+        .expect("parse remote snapshot");
+
+        assert_eq!(snapshot.backend, "talvikd (llama.cpp)");
+        assert_eq!(snapshot.loaded_model.as_deref(), Some("qwen"));
+        assert_eq!(snapshot.models, 1);
+        assert_eq!(snapshot.pending_requests, 1);
+        assert_eq!(snapshot.active_requests, 1);
+        assert_eq!(snapshot.queue_capacity, 8);
+        assert!(snapshot.automatic_eviction);
+        assert_eq!(snapshot.uptime_seconds, 100);
+        assert_eq!(snapshot.model_memory_bytes, Some(4_000_000));
+        assert!(snapshot.generating);
+        assert_eq!(snapshot.current_tokens_per_second, Some(12.5));
+        assert_eq!(snapshot.loaded_context, Some(2048));
     }
 
     #[test]
@@ -738,7 +898,7 @@ mod tests {
         assert_eq!(fields[6], "12");
         assert_eq!(fields[7], "7");
         assert_eq!(fields[8], "2048");
-        assert_eq!(crate::ipc::decode_field(&fields[9]), r#"["END"]"#);
+        assert_eq!(crate::ipc::decode_field(fields[9]), r#"["END"]"#);
         assert_eq!(
             crate::ipc::decode_field(&fields[10..].join("\t")),
             request.prompt

@@ -125,35 +125,13 @@ optional `OID_MARINA_MODEL`. Its default endpoint is
 IPC, and `http://127.0.0.1:11434` on Linux/macOS. The first client slice rejects
 remote endpoints until a trusted TLS boundary is implemented.
 
-When the Talvik local IPC daemon is available, the OID console reads its model
-inventory, health, and loaded-model state and routes model import/load/unload
-commands to it. Without a daemon, the console uses the in-process runtime.
-Generation remains in-process by default until governed-session cancellation
-and evidence integration are fully verified.
+The OID Console is a Linux-first MarinaOS component and uses Talvik's local
+IPC protocol exclusively for model operations. It requires a running,
+protocol-compatible daemon and does not fall back to an in-process runtime.
+Talvik's HTTP and OpenAI-compatible endpoints are for external clients such as
+assistants and applications; they are not an alternate OID Console backend.
 
-To route OID inference through Talvik's native HTTP API explicitly, set
-`OID_RUNTIME_BACKEND=marina-http` and configure `OID_MARINA_URL` plus any
-required `OID_MARINA_TOKEN`. Set `OID_MARINA_MODEL` to override model selection; otherwise OID follows the
-API-reported configured default and then available residency hints.
-For example, on Windows with Talvik HTTP listening on port 11435:
-
-```powershell
-$env:OID_RUNTIME_BACKEND = "marina-http"
-$env:OID_MARINA_URL = "http://127.0.0.1:11435"
-$env:OID_MARINA_MODEL = "qwen2.5-0.5b-instruct-q4_k_m"
-$env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-console).Trim()
-.\target\release\oid-console.exe
-```
-
-At the OID prompt, enter `:generate <your prompt>`. The token command creates
-a local credential with model-read, inference, and cancellation scopes. The
-HTTP model-list API reports residency and the configured default; OID uses
-those fields to display the loaded model and select the default consistently.
-
-Remote OID inference uses the existing OID file evidence store at
-`$OID_STATE_DIR/evidence.log` (or the console temporary state directory). It
-appends a non-sensitive start record and one terminal record for each request.
-Inspect a request after restarting the console with
-`:inference inspect <request-id>`. Metrics originate in Marina's native
-response `usage`/`metrics` fields; missing values are represented as
-`unknown`, not zero. Prompts, responses, and credentials are not persisted.
+External HTTP clients configure `OID_MARINA_URL`, `OID_MARINA_TOKEN`, and
+optionally `OID_MARINA_MODEL` in their own client process. Keep HTTP bound to
+loopback unless a trusted TLS, identity, authorization, and network-exposure
+policy has been configured.

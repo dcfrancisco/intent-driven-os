@@ -147,7 +147,7 @@ workload and Windows SDK available, then run:
 .\scripts\setup-llama-windows.ps1
 $env:LLAMA_CPP_LIB_DIR = "$env:USERPROFILE\.marina\lib"
 $env:LLAMA_CPP_REQUIRED = "1"
-cargo build --release -p oid-console --bin talvik --bin talvikd --bin oid-console
+cargo build --release -p oid-console --bin talvik --bin talvikd
 ```
 
 Place a GGUF model under `%USERPROFILE%\.marina\models`, then create a Talvik
@@ -161,18 +161,10 @@ $env:MARINA_HTTP_ADDR = "127.0.0.1:11435"
 $env:Path = "$env:USERPROFILE\.marina\lib;$env:Path"
 ```
 
-Start `target\release\talvikd.exe` in that environment. To prompt Talvik from
-OID, open another PowerShell window and configure the HTTP-backed client:
-
-```powershell
-$env:OID_RUNTIME_BACKEND = "marina-http"
-$env:OID_MARINA_URL = "http://127.0.0.1:11435"
-$env:OID_MARINA_MODEL = "qwen2.5-0.5b-instruct-q4_k_m"
-$env:OID_MARINA_TOKEN = (& .\target\release\talvik.exe auth token create oid-console).Trim()
-.\target\release\oid-console.exe
-```
-
-At the OID prompt, enter `:generate <your prompt>`.
+Start `target\release\talvikd.exe` in that environment. The OID Console is a
+Linux-first MarinaOS component and is not part of the Windows Talvik release.
+Use Talvik's HTTP/OpenAI-compatible API from external clients; the following
+smoke test validates that service boundary.
 
 In another PowerShell window, run the basic HTTP smoke test:
 

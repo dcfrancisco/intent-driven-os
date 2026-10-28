@@ -2,11 +2,28 @@
 
 use std::process::Command;
 
+mod support;
+
 #[test]
 fn console_binary_starts_with_runtime_prompt() {
-    let output = Command::new(env!("CARGO_BIN_EXE_oid-console"))
+    let state_root = std::env::temp_dir().join(format!(
+        "talvik-console-startup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&state_root).expect("startup test state");
+    let daemon = support::MockTalvik::start(&state_root);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oid-console"));
+    daemon.configure(&mut command);
+    let output = command
+        .env("OID_RUNTIME_BACKEND", "talvik-ipc")
         .output()
         .expect("console binary should run");
+    drop(daemon);
+    std::fs::remove_dir_all(&state_root).expect("cleanup startup test state");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("startup output is UTF-8");
     assert!(stdout.contains("AI CONSOLE"));
@@ -14,4 +31,45 @@ fn console_binary_starts_with_runtime_prompt() {
     assert!(stdout.contains("Available models:") || stdout.contains("No models found"));
     assert!(!stdout.contains("No models installed."));
     assert!(stdout.contains("$ "));
+}
+
+#[test]
+fn local_console_fails_clearly_when_talvik_ipc_is_unavailable() {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oid-console"));
+    command.env("OID_RUNTIME_BACKEND", "talvik-ipc");
+    #[cfg(unix)]
+    {
+        let unavailable_endpoint = std::env::temp_dir().join(format!(
+            "talvik-console-unavailable-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        command.env("TALVIK_SOCKET", unavailable_endpoint);
+    }
+    #[cfg(windows)]
+    command.env("TALVIK_TCP_ADDR", "127.0.0.1:0");
+
+    let output = command
+        .output()
+        .expect("console binary should report startup failure");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error is UTF-8");
+    assert!(stderr.contains("Talvik daemon is required for the MarinaOS console"));
+}
+
+#[test]
+fn local_console_rejects_http_backend_selection() {
+    let output = Command::new(env!("CARGO_BIN_EXE_oid-console"))
+        .env("OID_RUNTIME_BACKEND", "marina-http")
+        .output()
+        .expect("console binary should report unsupported remote mode");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("startup error is UTF-8");
+    assert!(stderr.contains("oid-console is a local MarinaOS client"));
+    assert!(stderr.contains("only supports Talvik IPC"));
 }

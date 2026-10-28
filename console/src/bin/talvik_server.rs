@@ -155,13 +155,16 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
     let fields: Vec<_> = request.trim_end_matches(['\r', '\n']).split('\t').collect();
     match fields.first().copied().unwrap_or_default() {
+        "hello" => {
+            writeln!(stream, "OK protocol\t{}", ipc::PROTOCOL_VERSION)?;
+        }
         "status" => {
             let snapshot = runtime.snapshot();
             let client_version = fields.get(1).copied().unwrap_or_default();
             let identity = build_info::current();
             writeln!(
                 stream,
-                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 snapshot.health,
                 snapshot.backend,
                 snapshot.loaded_model.clone().unwrap_or_default(),
@@ -171,8 +174,29 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
                 identity.dirty,
                 identity.target,
                 identity.profile,
-                client_version != identity.version
+                client_version != identity.version,
+                snapshot.memory,
+                snapshot.pending_requests,
+                snapshot.active_requests,
+                snapshot.queue_capacity,
+                snapshot.automatic_eviction,
+                snapshot.idle_retention_seconds,
+                snapshot.uptime_seconds,
+                snapshot.backend_version.as_deref().unwrap_or_default(),
+                snapshot.model_memory_bytes.map_or_else(String::new, |value| value.to_string()),
+                snapshot.generating,
+                snapshot.current_tokens_per_second.map_or_else(String::new, |value| value.to_string()),
+                snapshot.loaded_context.map_or_else(String::new, |value| value.to_string())
             )?;
+        }
+        "tokenize" if fields.len() >= 2 => {
+            let text = ipc::decode_field(&fields[1..].join("\t"));
+            match runtime.tokenize(&text) {
+                Ok(tokens) => writeln!(stream, "OK tokenize\t{tokens}")?,
+                Err(error) => {
+                    writeln!(stream, "ERROR\t{}", ipc::encode_field(&error.to_string()))?;
+                }
+            }
         }
         "model_list" => {
             for model in runtime.model_list() {

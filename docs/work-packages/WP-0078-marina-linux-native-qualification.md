@@ -64,8 +64,10 @@ replace the Phenom evidence.
   loopback HTTP, bearer authentication, scope denial, context rejection,
   cancellation, timeout, same-daemon recovery, unique generation IDs, and OID
   HTTP inference passed.
-- Interactive `oid-console` in `marina-http` mode persisted linked started and
-  completed inference evidence with metrics after the real request.
+- Historical Checkpoint 5 run: interactive `oid-console` in the then-existing
+  `marina-http` mode persisted linked started and completed inference evidence
+  with metrics. That mode has since been retired; the Linux-first console now
+  uses Talvik IPC exclusively.
 - User-scoped installer payload resolved all native libraries from its own
   `lib/` directory without `LD_LIBRARY_PATH` after the `$ORIGIN` RPATH fix.
 - Native SIGTERM shutdown completed successfully after the qualification run.

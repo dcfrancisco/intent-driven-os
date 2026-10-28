@@ -65,11 +65,11 @@ The first OID client vertical slice is now available through the
 provider-neutral `oid-model-client` crate and `oid-marina-chat` executable.
 Against a live macOS x86_64 Marina daemon it discovered models and completed
 real GGUF inference. Invalid credentials and an unavailable daemon produced
-structured client failures without exposing the bearer token. The interactive
-OID console now has an explicit `OID_RUNTIME_BACKEND=marina-http` selection
-that preserves the local compatibility backend by default. A live smoke
-client has been verified; interactive console cancellation/evidence behavior is
-verified at Checkpoint 5, while target-platform verification remains open.
+structured client failures without exposing the bearer token. A prior
+`oid-console` HTTP selection was retired; the Linux-first OID Console now uses
+Talvik IPC exclusively, while HTTP remains the external-client API surface.
+The historical smoke and console evidence below records the earlier
+integration; target-platform verification remains open.
 
 ### Qualification transfer to WP-0078
 

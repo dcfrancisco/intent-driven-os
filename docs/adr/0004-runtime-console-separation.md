@@ -10,6 +10,12 @@ The runtime must be reusable by more than one user interface and must remain ope
 
 The runtime contains no UI. The AI Console is one client of the runtime API. Future clients may include a desktop, REST API, background services, local applications, and enterprise integrations.
 
+The OID Console is a local component of MarinaOS and is Linux-first. Its
+same-machine runtime connection uses Talvik IPC exclusively; it does not
+select a remote HTTP backend or fall back to an in-process model runtime. The
+standalone Talvik HTTP/OpenAI-compatible API is for external clients such as
+assistants and applications.
+
 ## Consequences
 
 Runtime APIs, streaming semantics, authentication, and audit events must be designed for non-interactive clients. The console is simpler to reason about, but it must translate user intent into API requests and present runtime state without duplicating it.
@@ -23,4 +29,3 @@ Runtime APIs, streaming semantics, authentication, and audit events must be desi
 ## Future Considerations
 
 Transport may begin with a Unix socket and later include an authenticated, TLS-protected TCP or REST surface. Client capability discovery and API versioning are required.
-

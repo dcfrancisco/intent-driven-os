@@ -1,7 +1,6 @@
 //! Text user interface lifecycle.
 
-use oid_model_client::MarinaHttpClient;
-use oid_runtime::{config, logging, Runtime, RuntimeService};
+use oid_runtime::{logging, RuntimeService};
 use oid_shared::{EventBus, RuntimeEvent};
 use std::io;
 
@@ -32,37 +31,29 @@ pub struct Application {
 }
 
 impl Application {
-    /// Create the console and its in-process Marina runtime client.
-    #[must_use]
-    pub fn start() -> Self {
-        let configuration = config::load().expect("default runtime configuration is valid");
+    /// Create the `MarinaOS` console backed by the local `Talvik` daemon.
+    pub fn start() -> Result<Self, Box<dyn std::error::Error>> {
         let bus = EventBus::new();
         let presence = PresenceIndicator::new(&bus);
-        bus.publish(&RuntimeEvent::ConfigurationLoaded);
         let _logger = logging::initialize();
         bus.publish(&RuntimeEvent::LoggingInitialized);
-        let local_runtime = Runtime::start_with_bus(configuration, bus.clone())
-            .expect("Marina production runtime configuration is valid");
-        let runtime: Box<dyn RuntimeService> = if std::env::var("OID_RUNTIME_BACKEND")
-            .is_ok_and(|backend| backend == "marina-http")
-        {
-            let client = MarinaHttpClient::from_environment()
-                .expect("OID Marina HTTP configuration is valid");
-            Box::new(crate::remote_runtime::RemoteRuntimeService::new(
-                local_runtime,
-                client,
-            ))
-        } else {
-            let local: Box<dyn RuntimeService> = Box::new(local_runtime);
-            match crate::ipc_runtime::IpcRuntimeService::probe() {
-                Ok(()) => Box::new(crate::ipc_runtime::IpcRuntimeService::new(local)),
-                Err(error) => {
-                    eprintln!("Talvik daemon not detected; using the in-process runtime: {error}");
-                    local
-                }
+        if let Ok(backend) = std::env::var("OID_RUNTIME_BACKEND") {
+            if backend != "talvik-ipc" {
+                return Err(std::io::Error::other(
+                    "oid-console is a local MarinaOS client and only supports Talvik IPC; use Talvik's HTTP API from external clients",
+                )
+                .into());
             }
-        };
-        Self {
+        }
+        crate::ipc_runtime::IpcRuntimeService::probe().map_err(|error| {
+            std::io::Error::other(format!(
+                "Talvik daemon is required for the MarinaOS console: {error}"
+            ))
+        })?;
+        let service = crate::ipc_runtime::IpcRuntimeService::new(bus.clone());
+        bus.publish(&RuntimeEvent::RuntimeStarted);
+        let runtime: Box<dyn RuntimeService> = Box::new(service);
+        Ok(Self {
             runtime,
             bus,
             status_bar: StatusBar {
@@ -84,7 +75,7 @@ impl Application {
                 ),
                 signals: crate::signals::SignalController::test(),
             }),
-        }
+        })
     }
 
     /// Run the interactive console until exit, cancellation, or end-of-file.

@@ -80,11 +80,12 @@ oid-marina-chat --timing "<prompt>"
 oid-marina-chat --benchmark [--runs N] "<prompt>"
 ```
 
-The standalone chat client uses Talvik IPC by default and fails explicitly
-when the local daemon is unavailable; inference is not silently run in the
-client process. IPC generation preserves sampling/context options, streams
-tokens, supports cancellation, and carries terminal generation statistics.
-HTTP remains the separate OpenAI/model-client compatibility qualification path.
+The standalone chat client and local console use Talvik IPC and fail clearly
+when the compatible local daemon is unavailable; inference is not silently
+run in the client process. IPC generation preserves sampling/context options,
+streams tokens, supports cancellation, and carries terminal generation
+statistics. The Linux-first OID Console is IPC-only; HTTP remains the separate
+external-client/OpenAI compatibility path.
 
 The HTTP response includes optional TTFT, prompt-evaluation duration,
 aggregate inference duration, decode-only generation duration, model-load

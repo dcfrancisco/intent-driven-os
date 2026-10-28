@@ -55,6 +55,11 @@ model inventory, loaded-model state, health, and request metrics through the
 local service boundary. They do not maintain parallel registries or copy
 models into OID-owned directories.
 
+Talvik is the cross-platform release; the OID Console is a Linux-first
+MarinaOS component. The OID Console uses local Talvik IPC exclusively and
+requires the daemon. HTTP/OpenAI-compatible routes are service edges for
+external clients, not an alternate backend mode for the local OID Console.
+
 ## Boundaries
 
 - Marina owns model discovery, acquisition, manifests, loading, inference,

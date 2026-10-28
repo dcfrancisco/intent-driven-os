@@ -74,10 +74,7 @@ impl StatusBar {
 
 fn loaded_model_label<'a>(snapshot: &'a RuntimeSnapshot, empty_label: &'static str) -> &'a str {
     snapshot.loaded_model.as_deref().unwrap_or_else(|| {
-        if snapshot.health == "Unavailable"
-            || snapshot.backend == "marina-http"
-            || snapshot.backend.ends_with("(unavailable)")
-        {
+        if snapshot.health == "Unavailable" || snapshot.backend.ends_with("(unavailable)") {
             "unknown"
         } else {
             empty_label

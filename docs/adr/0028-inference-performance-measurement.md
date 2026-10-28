@@ -62,14 +62,14 @@ server-reported throughput is never overwritten by wall-clock arithmetic.
 ### CLI experience
 
 Same-machine Talvik chat clients, including `oid-console` and
-`oid-marina-chat`, use Talvik's local IPC transport for generation when the
-daemon is available. The console retains its explicit warned in-process
-fallback when the daemon probe fails; the standalone `oid-marina-chat` client
-requires IPC. Its HTTP model-client qualification remains a separate
-compatibility test path, not the default local inference route. IPC streams
-carry backend-reported generation statistics and cancellation semantics
-rather than generating inside the OID client process when the daemon is
-available.
+`oid-marina-chat`, use Talvik's local IPC transport for generation. Local
+console mode requires a daemon with the supported IPC protocol version and
+fails clearly when it is unavailable; it never falls back to in-process
+inference. The standalone `oid-marina-chat` client also requires IPC. HTTP is
+reserved for external clients and compatibility qualification; it is not an
+alternate backend mode for the OID Console. IPC streams carry
+backend-reported generation statistics and cancellation semantics rather than
+generating inside the OID client process.
 
 Extend `oid-marina-chat` with:
 

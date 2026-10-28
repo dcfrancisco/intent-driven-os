@@ -14,7 +14,6 @@ mod ipc_runtime;
 mod operations;
 mod presence;
 mod prompt;
-mod remote_runtime;
 mod renderer;
 mod shell;
 mod signals;
@@ -22,7 +21,14 @@ mod status_bar;
 mod tui;
 
 fn main() {
-    if let Err(error) = tui::Application::start().run() {
+    let application = match tui::Application::start() {
+        Ok(application) => application,
+        Err(error) => {
+            eprintln!("AI Console failed to start: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = application.run() {
         eprintln!("AI Console failed to start: {error}");
         std::process::exit(1);
     }

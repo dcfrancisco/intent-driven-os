@@ -10,9 +10,7 @@ mod ipc_runtime;
 
 use oid_model_client::ExecutionPlacement;
 use oid_model_client::{ChatResponse, ModelClientError, ModelDescriptor, RemoteGenerationMetrics};
-use oid_runtime::{
-    GenerationMessage, GenerationOptions, GenerationRequest, Runtime, RuntimeService,
-};
+use oid_runtime::{GenerationMessage, GenerationOptions, GenerationRequest, RuntimeService};
 use oid_shared::EventBus;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -76,9 +74,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
     let arguments = parse_arguments(&raw_arguments)?;
     let total_started = Instant::now();
-    let configuration = oid_runtime::config::load().map_err(std::io::Error::other)?;
-    let local = Runtime::start_with_bus(configuration, EventBus::new())?;
-    let client = ipc_runtime::IpcRuntimeService::new(Box::new(local));
+    let client = ipc_runtime::IpcRuntimeService::new(EventBus::new());
     ipc_runtime::IpcRuntimeService::probe()?;
     let models = client
         .model_list()

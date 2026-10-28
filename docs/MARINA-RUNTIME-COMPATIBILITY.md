@@ -14,9 +14,11 @@ evidence of support.
 
 - The macOS x86_64 row has passed native GGUF loading and real HTTP
   completion through the Rust server.
-- The same row has now passed a PTY-backed OID console session in explicit
-  `marina-http` mode, including cancellation followed by a successful second
-  request and separate authentication/unavailability recovery sessions.
+- A historical PTY-backed OID Console run passed in `marina-http` mode,
+  including cancellation and authentication/unavailability recovery. That
+  integration has since been retired: the Linux-first MarinaOS console now
+  uses Talvik IPC exclusively; the HTTP result remains evidence for external
+  clients only.
 - Checkpoint 5 also verified durable inference start/terminal records, evidence
   retrieval after an OID process restart, and native metrics propagation: 4
   prompt tokens, 128 generated tokens, 132 context tokens, 3.22 tokens/sec,
