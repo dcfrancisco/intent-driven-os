@@ -11,7 +11,7 @@ mod http;
 pub(crate) mod ipc;
 
 use oid_runtime::{config, logging, Runtime, RuntimeService};
-use oid_runtime::{GenerationMessage, GenerationRequest};
+use oid_runtime::{GenerationMessage, GenerationRequest, GenerationResult};
 use oid_shared::RuntimeEvent;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -153,7 +153,7 @@ fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, re
 fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::io::Result<()> {
     let mut request = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
-    let fields: Vec<_> = request.trim_end().split('\t').collect();
+    let fields: Vec<_> = request.trim_end_matches(['\r', '\n']).split('\t').collect();
     match fields.first().copied().unwrap_or_default() {
         "status" => {
             let snapshot = runtime.snapshot();
@@ -227,8 +227,22 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
             runtime.cancel_generation_for(&ipc::decode_field(fields[1]));
             writeln!(stream, "OK cancelled")?;
         }
+        "generate" | "generate_v2" => match parse_generation_request(&fields) {
+            Ok(request) => run_generation(&mut stream, runtime, request)?,
+            Err(error) => writeln!(stream, "ERROR\t{}", ipc::encode_field(&error))?,
+        },
+        _ => writeln!(stream, "ERROR\tunknown request")?,
+    }
+    Ok(())
+}
+
+fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String> {
+    match fields.first().copied().unwrap_or_default() {
         "generate" if fields.len() >= 3 => {
-            let request = GenerationRequest {
+            let max_tokens = fields[2]
+                .parse()
+                .map_err(|_| "invalid max_tokens in generation request".to_owned())?;
+            Ok(GenerationRequest {
                 request_id: fields.get(3).filter(|value| !value.is_empty()).map_or_else(
                     || {
                         format!(
@@ -239,49 +253,147 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
                     },
                     |value| ipc::decode_field(value),
                 ),
-                model_id: fields[1].to_owned(),
-                prompt: ipc::decode_field(&fields[4..].join("\t")),
+                model_id: ipc::decode_field(fields[1]),
+                prompt: ipc::decode_field(&fields.get(4..).unwrap_or_default().join("\t")),
                 options: oid_runtime::GenerationOptions {
-                    max_tokens: fields[2].parse().unwrap_or(128),
+                    max_tokens,
                     ..Default::default()
                 },
-            };
-            match runtime.generate(request) {
-                Ok(stream_result) => loop {
-                    match stream_result.recv() {
-                        Ok(GenerationMessage::Token(token)) => {
-                            writeln!(stream, "TOKEN\t{}", ipc::encode_field(&token))?;
-                        }
-                        Ok(GenerationMessage::Completed(result)) => {
-                            writeln!(
-                                stream,
-                                "DONE\tcompleted\t{}",
-                                result.statistics.generated_tokens
-                            )?;
-                            break;
-                        }
-                        Ok(GenerationMessage::Cancelled(result)) => {
-                            writeln!(
-                                stream,
-                                "DONE\tcancelled\t{}",
-                                result.statistics.generated_tokens
-                            )?;
-                            break;
-                        }
-                        Ok(GenerationMessage::Failed(error)) => {
-                            writeln!(stream, "ERROR\t{}", ipc::encode_field(&error.to_string()))?;
-                            break;
-                        }
-                        Err(_) => break,
-                    }
-                    stream.flush()?;
-                },
-                Err(error) => respond_result(&mut stream, Err(error))?,
-            }
+            })
         }
-        _ => writeln!(stream, "ERROR\tunknown request")?,
+        "generate_v2" if fields.len() >= 11 => {
+            let max_tokens = parse_generation_value(fields[3], "max_tokens")?;
+            let temperature = parse_generation_value(fields[4], "temperature")?;
+            let top_p = parse_generation_value(fields[5], "top_p")?;
+            let top_k = parse_generation_value(fields[6], "top_k")?;
+            let seed = parse_generation_value(fields[7], "seed")?;
+            let context_size = parse_generation_value(fields[8], "context_size")?;
+            let stop_sequences =
+                serde_json::from_str(&ipc::decode_field(fields[9])).map_err(|error| {
+                    format!("invalid stop_sequences in generation request: {error}")
+                })?;
+            let request_id = ipc::decode_field(fields[2]);
+            if request_id.is_empty() {
+                return Err("generation request_id must not be empty".to_owned());
+            }
+            Ok(GenerationRequest {
+                request_id,
+                model_id: ipc::decode_field(fields[1]),
+                prompt: ipc::decode_field(&fields[10..].join("\t")),
+                options: oid_runtime::GenerationOptions {
+                    max_tokens,
+                    temperature,
+                    top_p,
+                    top_k,
+                    seed,
+                    context_size,
+                    stop_sequences,
+                },
+            })
+        }
+        _ => Err("invalid generation request".to_owned()),
+    }
+}
+
+fn parse_generation_value<T: std::str::FromStr>(value: &str, name: &str) -> Result<T, String> {
+    value
+        .parse()
+        .map_err(|_| format!("invalid {name} in generation request"))
+}
+
+fn run_generation(
+    stream: &mut ipc::TalvikStream,
+    runtime: &dyn RuntimeService,
+    request: GenerationRequest,
+) -> std::io::Result<()> {
+    match runtime.generate(request) {
+        Ok(stream_result) => loop {
+            match stream_result.recv() {
+                Ok(GenerationMessage::Token(token)) => {
+                    writeln!(stream, "TOKEN\t{}", ipc::encode_field(&token))?;
+                    stream.flush()?;
+                }
+                Ok(GenerationMessage::Completed(result)) => {
+                    write_generation_terminal(stream, "completed", &result)?;
+                    break;
+                }
+                Ok(GenerationMessage::Cancelled(result)) => {
+                    write_generation_terminal(stream, "cancelled", &result)?;
+                    break;
+                }
+                Ok(GenerationMessage::Failed(error)) => {
+                    writeln!(stream, "ERROR\t{}", ipc::encode_field(&error.to_string()))?;
+                    break;
+                }
+                Err(_) => {
+                    writeln!(
+                        stream,
+                        "ERROR\t{}",
+                        ipc::encode_field("generation stream closed before completion")
+                    )?;
+                    break;
+                }
+            }
+            stream.flush()?;
+        },
+        Err(error) => respond_result(stream, Err(error))?,
     }
     Ok(())
+}
+
+fn write_generation_terminal(
+    stream: &mut ipc::TalvikStream,
+    state: &str,
+    result: &GenerationResult,
+) -> std::io::Result<()> {
+    let statistics = &result.statistics;
+    let execution = statistics.execution.as_ref();
+    let fields = vec![
+        "DONE".to_owned(),
+        state.to_owned(),
+        ipc::encode_field(&result.generation_id),
+        statistics.generated_tokens.to_string(),
+        statistics.prompt_tokens.to_string(),
+        statistics.context_tokens.to_string(),
+        statistics.latency_ms.to_string(),
+        statistics.inference_time_ms.to_string(),
+        optional_ipc_field(statistics.backend_inference_time_ms),
+        optional_ipc_field(statistics.time_to_first_token_ms),
+        optional_ipc_field(statistics.prompt_evaluation_time_ms),
+        optional_ipc_field(statistics.generation_time_ms),
+        statistics.tokens_per_second.to_string(),
+        statistics.metrics_known.to_string(),
+        match statistics.termination {
+            oid_runtime::GenerationTermination::Stop => "stop",
+            oid_runtime::GenerationTermination::Length => "length",
+            oid_runtime::GenerationTermination::ContextLength => "context_length",
+        }
+        .to_owned(),
+        statistics.cache_hit.to_string(),
+        statistics.reused_prompt_tokens.to_string(),
+        execution.map_or_else(String::new, |value| {
+            ipc::encode_field(value.backend.as_deref().unwrap_or_default())
+        }),
+        execution.map_or_else(String::new, |value| {
+            ipc::encode_field(value.device.as_deref().unwrap_or_default())
+        }),
+        execution.map_or_else(String::new, |value| {
+            optional_ipc_field(value.requested_offloaded_layers)
+        }),
+        execution.map_or_else(String::new, |value| {
+            optional_ipc_field(value.offloaded_layers)
+        }),
+        execution.map_or_else(String::new, |value| {
+            ipc::encode_field(value.fallback_reason.as_deref().unwrap_or_default())
+        }),
+    ];
+    let line = fields.join("\t");
+    writeln!(stream, "{line}")?;
+    stream.flush()
+}
+
+fn optional_ipc_field<T: ToString>(value: Option<T>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
 }
 
 fn respond_result(
@@ -291,5 +403,72 @@ fn respond_result(
     match result {
         Ok(()) => writeln!(stream, "OK"),
         Err(error) => writeln!(stream, "ERROR\t{}", ipc::encode_field(&error.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_generation_request;
+
+    #[test]
+    fn parses_ipc_v2_generation_options_and_escaped_prompt() {
+        let fields = [
+            "generate_v2",
+            "qwen",
+            "request-1",
+            "32",
+            "0.4",
+            "0.8",
+            "12",
+            "7",
+            "2048",
+            r#"["END"]"#,
+            "first line\\nsecond",
+            " line",
+        ];
+        let request = parse_generation_request(&fields).expect("valid v2 generation request");
+
+        assert_eq!(request.request_id, "request-1");
+        assert_eq!(request.model_id, "qwen");
+        assert_eq!(request.prompt, "first line\nsecond\t line");
+        assert_eq!(request.options.max_tokens, 32);
+        assert_eq!(request.options.temperature, 0.4);
+        assert_eq!(request.options.top_p, 0.8);
+        assert_eq!(request.options.top_k, 12);
+        assert_eq!(request.options.seed, 7);
+        assert_eq!(request.options.context_size, 2048);
+        assert_eq!(request.options.stop_sequences, ["END"]);
+    }
+
+    #[test]
+    fn rejects_invalid_generation_option_values() {
+        let fields = [
+            "generate_v2",
+            "qwen",
+            "request-1",
+            "not-a-number",
+            "0.4",
+            "0.8",
+            "12",
+            "7",
+            "2048",
+            "[]",
+            "hello",
+        ];
+
+        assert_eq!(
+            parse_generation_request(&fields),
+            Err("invalid max_tokens in generation request".to_owned())
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_generation_requests_with_empty_prompts() {
+        let request = parse_generation_request(&["generate", "qwen", "16"])
+            .expect("legacy generation request");
+
+        assert_eq!(request.model_id, "qwen");
+        assert!(request.prompt.is_empty());
+        assert_eq!(request.options.max_tokens, 16);
     }
 }

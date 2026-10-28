@@ -15,11 +15,11 @@ tokens/second. It does not consistently expose time to first token, prompt
 evaluation time, generation duration, or model-load duration.
 
 The standalone `oid-marina-chat` binary is the smallest OID-to-Talvik client
-for validating this boundary. It currently prints only response text. A
-process-level stopwatch is useful for user-observed elapsed time, but it
-includes process startup, model discovery, HTTP transport, server work, and
-output; it must not be presented as backend inference time or used to
-misrepresent backend token throughput.
+for validating this boundary. Its initial implementation used HTTP and
+printed response text. A process-level stopwatch is useful for user-observed
+elapsed time, but it includes process startup, model discovery, transport,
+server work, and output; it must not be presented as backend inference time or
+used to misrepresent backend token throughput.
 
 Performance evidence is also needed to distinguish a first request from warm
 requests. “Cold” must be defined and reported carefully: a new client process
@@ -60,6 +60,16 @@ If throughput is not supplied by Talvik, OID must report it as unavailable;
 server-reported throughput is never overwritten by wall-clock arithmetic.
 
 ### CLI experience
+
+Same-machine Talvik chat clients, including `oid-console` and
+`oid-marina-chat`, use Talvik's local IPC transport for generation when the
+daemon is available. The console retains its explicit warned in-process
+fallback when the daemon probe fails; the standalone `oid-marina-chat` client
+requires IPC. Its HTTP model-client qualification remains a separate
+compatibility test path, not the default local inference route. IPC streams
+carry backend-reported generation statistics and cancellation semantics
+rather than generating inside the OID client process when the daemon is
+available.
 
 Extend `oid-marina-chat` with:
 
@@ -118,12 +128,14 @@ not be presented as directly comparable.
 
 ## WP-0105 implementation notes
 
-`oid-marina-chat --timing` includes OID client configuration, one model
-discovery call, and the chat request. `--benchmark` reports only chat-request
-latency and classifies a sample as first-after-load only when Talvik reports
-that a load occurred during that request. The current native backend does not
-report prompt-evaluation or decode-only duration, and those values remain
-unavailable rather than being inferred from aggregate inference time.
+`oid-marina-chat --timing` includes OID client setup, one model discovery call,
+and the IPC chat request. `--benchmark` reports only chat-request latency and
+classifies a sample as first-after-load only when Talvik reports that a load
+occurred during that request. The IPC stream carries Talvik's available
+generation metrics; model-load duration remains unavailable unless Talvik
+reports a load boundary. The current native backend does not report
+prompt-evaluation or decode-only duration, and those values remain unavailable
+rather than being inferred from aggregate inference time.
 
 ## Implementation work package
 

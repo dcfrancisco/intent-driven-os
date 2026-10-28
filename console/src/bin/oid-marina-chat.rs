@@ -1,12 +1,20 @@
-//! Small OID-side smoke client for the provider-neutral Marina adapter.
+//! One-shot OID chat client using Talvik's local IPC transport.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[path = "../ipc.rs"]
+mod ipc;
+#[path = "../ipc_runtime.rs"]
+mod ipc_runtime;
+
 use oid_model_client::ExecutionPlacement;
-use oid_model_client::{ChatRequest, ChatResponse, MarinaHttpClient, ModelClient, ModelDescriptor};
+use oid_model_client::{ChatResponse, ModelClientError, ModelDescriptor, RemoteGenerationMetrics};
+use oid_runtime::{
+    GenerationMessage, GenerationOptions, GenerationRequest, Runtime, RuntimeService,
+};
+use oid_shared::EventBus;
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 const DEFAULT_BENCHMARK_RUNS: usize = 5;
@@ -59,7 +67,7 @@ impl std::fmt::Display for SampleState {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("OID Marina client failed: {error}");
+        eprintln!("OID Talvik IPC client failed: {error}");
         std::process::exit(1);
     }
 }
@@ -68,20 +76,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
     let arguments = parse_arguments(&raw_arguments)?;
     let total_started = Instant::now();
-    let client = MarinaHttpClient::from_environment()?;
-    let models = client.list_models()?;
+    let configuration = oid_runtime::config::load().map_err(std::io::Error::other)?;
+    let local = Runtime::start_with_bus(configuration, EventBus::new())?;
+    let client = ipc_runtime::IpcRuntimeService::new(Box::new(local));
+    ipc_runtime::IpcRuntimeService::probe()?;
+    let models = client
+        .model_list()
+        .into_iter()
+        .map(|model| ModelDescriptor {
+            id: model.id,
+            is_default: None,
+            resident: Some(model.status == oid_runtime::ModelStatus::Loaded),
+            estimated_memory_mib: None,
+        })
+        .collect::<Vec<_>>();
     let model = selected_model(&models)?;
+    let backend = client.snapshot().backend;
 
     match arguments.mode {
         Mode::Plain | Mode::Timing => {
-            let response = chat(&client, &model, &arguments.prompt, 0)?;
+            let response = chat(&client, &model, &arguments.prompt, 0, &backend)?;
             println!("{}", response.text);
             if arguments.mode == Mode::Timing {
                 print_timing(&response, total_started.elapsed());
             }
         }
         Mode::Benchmark { runs } => {
-            run_benchmark(&client, &model, &arguments.prompt, runs)?;
+            run_benchmark(&client, &model, &arguments.prompt, runs, &backend)?;
         }
     }
     Ok(())
@@ -172,22 +193,80 @@ fn select_model(
 }
 
 fn chat(
-    client: &MarinaHttpClient,
+    client: &dyn RuntimeService,
     model: &str,
     prompt: &str,
     run: usize,
-) -> Result<ChatResponse, oid_model_client::ModelClientError> {
-    client.chat(
-        &ChatRequest {
-            model: model.to_owned(),
-            prompt: prompt.to_owned(),
-            request_id: format!("oid-{}-{run}", std::process::id()),
-            max_tokens: 128,
-            context_size: 4096,
-        },
-        Duration::from_secs(120),
-        &AtomicBool::new(false),
-    )
+    backend: &str,
+) -> Result<ChatResponse, ModelClientError> {
+    let request_id = format!("oid-{}-{run}", std::process::id());
+    let stream = client
+        .generate(GenerationRequest {
+            request_id: request_id.clone(),
+            model_id: model.to_owned(),
+            prompt: format!("\u{001e}user\n{prompt}"),
+            options: GenerationOptions {
+                max_tokens: 128,
+                context_size: 4096,
+                ..GenerationOptions::default()
+            },
+        })
+        .map_err(|error| ModelClientError::Unavailable(error.to_string()))?;
+    loop {
+        match stream.recv() {
+            Ok(GenerationMessage::Token(_)) => {}
+            Ok(GenerationMessage::Completed(result)) => {
+                let metrics = &result.statistics;
+                let metrics_known = metrics.metrics_known;
+                return Ok(ChatResponse {
+                    text: result.text,
+                    model: model.to_owned(),
+                    request_id: result.request_id,
+                    generation_id: result.generation_id,
+                    backend: Some(backend.to_owned()),
+                    execution: metrics
+                        .execution
+                        .as_ref()
+                        .map(|execution| ExecutionPlacement {
+                            backend: execution.backend.clone(),
+                            device: execution.device.clone(),
+                            requested_offloaded_layers: execution.requested_offloaded_layers,
+                            offloaded_layers: execution.offloaded_layers,
+                            fallback_reason: execution.fallback_reason.clone(),
+                        }),
+                    metrics: RemoteGenerationMetrics {
+                        prompt_tokens: metrics_known.then_some(metrics.prompt_tokens),
+                        generated_tokens: Some(metrics.generated_tokens),
+                        context_tokens: metrics_known.then_some(metrics.context_tokens),
+                        tokens_per_second: metrics_known.then_some(metrics.tokens_per_second),
+                        latency_ms: metrics_known.then_some(metrics.latency_ms),
+                        inference_time_ms: metrics_known.then_some(metrics.inference_time_ms),
+                        time_to_first_token_ms: metrics_known
+                            .then_some(metrics.time_to_first_token_ms)
+                            .flatten(),
+                        prompt_evaluation_time_ms: metrics_known
+                            .then_some(metrics.prompt_evaluation_time_ms)
+                            .flatten(),
+                        generation_time_ms: metrics_known
+                            .then_some(metrics.generation_time_ms)
+                            .flatten(),
+                        model_load_time_ms: None,
+                    },
+                });
+            }
+            Ok(GenerationMessage::Cancelled(_)) => {
+                return Err(ModelClientError::Cancelled);
+            }
+            Ok(GenerationMessage::Failed(error)) => {
+                return Err(ModelClientError::Unavailable(error.to_string()));
+            }
+            Err(error) => {
+                return Err(ModelClientError::MalformedResponse(format!(
+                    "Talvik IPC generation stream ended unexpectedly: {error}"
+                )));
+            }
+        }
+    }
 }
 
 fn print_timing(response: &ChatResponse, total_elapsed: Duration) {
@@ -268,27 +347,28 @@ fn print_rate(label: &str, value: Option<f64>) {
 }
 
 fn run_benchmark(
-    client: &MarinaHttpClient,
+    client: &dyn RuntimeService,
     model: &str,
     prompt: &str,
     runs: usize,
+    backend_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut latencies = Vec::with_capacity(runs);
     let mut throughputs = Vec::with_capacity(runs);
     let mut states = Vec::with_capacity(runs);
     let mut execution_placements = BTreeMap::new();
-    let mut backend = None;
+    let mut reported_backend = None;
     for run in 0..runs {
         let resident_before = client
-            .list_models()?
+            .model_list()
             .into_iter()
             .find(|candidate| candidate.id == model)
-            .and_then(|candidate| candidate.resident);
+            .map(|candidate| candidate.status == oid_runtime::ModelStatus::Loaded);
         let started = Instant::now();
-        let response = chat(client, model, prompt, run + 1)?;
+        let response = chat(client, model, prompt, run + 1, backend_name)?;
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         let state = classify_state(resident_before, response.metrics.model_load_time_ms);
-        backend = backend.or(response.backend);
+        reported_backend = reported_backend.or(response.backend);
         let execution = format_execution(response.execution.as_ref());
         *execution_placements
             .entry(execution.clone())
@@ -335,7 +415,10 @@ fn run_benchmark(
     println!();
     println!("MarinaOS Inference Benchmark");
     println!("Model: {model}");
-    println!("Backend: {}", backend.as_deref().unwrap_or("unavailable"));
+    println!(
+        "Backend: {}",
+        reported_backend.as_deref().unwrap_or("unavailable")
+    );
     println!("Runs: {runs}");
     println!("Median latency: {median:.3} ms (OID client-measured)");
     println!("P95 latency: {p95:.3} ms (OID client-measured)");

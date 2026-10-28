@@ -80,9 +80,17 @@ oid-marina-chat --timing "<prompt>"
 oid-marina-chat --benchmark [--runs N] "<prompt>"
 ```
 
+The standalone chat client uses Talvik IPC by default and fails explicitly
+when the local daemon is unavailable; inference is not silently run in the
+client process. IPC generation preserves sampling/context options, streams
+tokens, supports cancellation, and carries terminal generation statistics.
+HTTP remains the separate OpenAI/model-client compatibility qualification path.
+
 The HTTP response includes optional TTFT, prompt-evaluation duration,
 aggregate inference duration, decode-only generation duration, model-load
-duration, and backend identity.
+duration, and backend identity. IPC carries the generation statistics available
+from the runtime; model-load timing is unavailable unless Talvik reports an
+observed load boundary.
 The native adapter currently provides TTFT, aggregate inference duration, and
 backend throughput; prompt evaluation and decode-only duration remain
 unavailable. Talvik measures model-load duration around its load operation and
