@@ -118,9 +118,23 @@ jobs:
       - name: Package Windows
         if: runner.os == 'Windows'
         run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe was not found: $vswhere" }
+          $vsPath = & $vswhere -latest -products "*" -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vsPath) { throw "Visual Studio installation was not found" }
+          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
+          $crtPath = Get-ChildItem -LiteralPath $redistRoot -Directory |
+            Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Join-Path $_.FullName "x64\Microsoft.VC143.CRT" } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $crtPath) { throw "The x64 Microsoft Visual C++ runtime redistributable was not found under $redistRoot" }
+          Get-ChildItem -LiteralPath $crtPath -Filter "*.dll" -File | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/lib" -Force
           Get-ChildItem -Path "$env:RUNNER_TEMP/talvik/lib" -Filter "*.dll" -File | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/bin" -Force
           if (Test-Path LICENSE) { Copy-Item LICENSE "$env:RUNNER_TEMP/talvik/" }
           Copy-Item scripts/install-model-runner.ps1 "$env:RUNNER_TEMP/talvik/"
+          Copy-Item packaging/talvik/README-WINDOWS.txt "$env:RUNNER_TEMP/talvik/"
+          Copy-Item packaging/talvik/SETUP-WINDOWS.cmd "$env:RUNNER_TEMP/talvik/"
           Compress-Archive -Path "$env:RUNNER_TEMP/talvik/*" -DestinationPath "$env:RUNNER_TEMP/${{ matrix.archive }}"
           (Get-FileHash "$env:RUNNER_TEMP/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.archive }}" | Out-File "$env:RUNNER_TEMP/${{ matrix.archive }}.sha256"
       - name: Smoke install Unix payload
