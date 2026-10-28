@@ -21,6 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.82.0
+          components: rustfmt, clippy
       - name: Check
         run: cargo fmt --all -- --check
       - name: Test
@@ -64,6 +65,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.82.0
+          components: rustfmt, clippy
           targets: ${{ matrix.target }}
       - uses: lukka/get-cmake@v3.31.6
       - name: Checkout llama.cpp
