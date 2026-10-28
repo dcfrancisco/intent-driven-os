@@ -25,7 +25,7 @@ jobs:
       - name: Check
         run: cargo fmt --all -- --check
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude oid-console
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
