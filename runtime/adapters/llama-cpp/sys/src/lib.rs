@@ -230,6 +230,7 @@ mod ffi {
         pub fn llama_get_memory(ctx: *mut c_void) -> *mut c_void;
         pub fn llama_memory_clear(memory: *mut c_void, data: bool);
         pub fn llama_memory_seq_rm(memory: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
+        pub fn llama_memory_seq_pos_max(memory: *mut c_void, seq_id: i32) -> i32;
         pub fn llama_batch_get_one(tokens: *mut i32, n_tokens: i32) -> Batch;
         pub fn llama_decode(ctx: *mut c_void, batch: Batch) -> i32;
         pub fn llama_sampler_chain_default_params() -> SamplerChainParams;
@@ -383,6 +384,14 @@ fn compatible_prompt_reuse_len(
         && cached.prompt_tokens.len() <= prompt_tokens.len()
         && cached.prompt_tokens == prompt_tokens[..cached.prompt_tokens.len()])
         .then(|| cached.prompt_tokens.len().saturating_sub(1))
+}
+
+fn cached_prefix_matches(reuse_len: usize, actual_max_position: i32) -> bool {
+    reuse_len > 0
+        && i32::try_from(reuse_len)
+            .ok()
+            .and_then(|position| position.checked_sub(1))
+            == Some(actual_max_position)
 }
 
 /// Return official llama.cpp system/build information.
@@ -834,11 +843,24 @@ impl NativeModel {
                             -1,
                         )
                     };
-                if removed {
+                let actual_max_position = if memory.is_null() {
+                    -1
+                } else {
+                    unsafe { ffi::llama_memory_seq_pos_max(memory, 0) }
+                };
+                if removed && cached_prefix_matches(reuse_len, actual_max_position) {
                     cache_hit = true;
                     reused_prompt_tokens = reuse_len as u64;
                     (cached.pointer, reuse_len)
                 } else {
+                    eprintln!(
+                        "llama.cpp prompt cache trim was incomplete; expected max position {}, observed {}; clearing KV cache before decoding",
+                        i32::try_from(reuse_len)
+                            .ok()
+                            .and_then(|position| position.checked_sub(1))
+                            .map_or_else(|| "none".to_owned(), |position| position.to_string()),
+                        actual_max_position
+                    );
                     if !memory.is_null() {
                         unsafe { ffi::llama_memory_clear(memory, true) };
                     }
@@ -918,7 +940,10 @@ impl NativeModel {
                     ffi::llama_sampler_chain_add(sampler, sampler_part);
                 }
             }
-            for prompt_batch in prompt_tokens.chunks_mut(
+            let remaining_prompt = prompt_tokens
+                .get_mut(prompt_position..)
+                .ok_or_else(|| "cached prompt position exceeds request prompt".to_owned())?;
+            for prompt_batch in remaining_prompt.chunks_mut(
                 usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
             ) {
                 let decode_result = unsafe {
@@ -1080,7 +1105,15 @@ impl NativeModel {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{classify_decode_result, decode_error, DecodeOutcome};
+    use super::{cached_prefix_matches, classify_decode_result, decode_error, DecodeOutcome};
+
+    #[test]
+    fn prompt_cache_reuse_requires_the_native_sequence_to_match_the_prefix() {
+        assert!(cached_prefix_matches(36, 35));
+        assert!(!cached_prefix_matches(36, 70));
+        assert!(!cached_prefix_matches(0, -1));
+        assert!(!cached_prefix_matches(usize::MAX, 35));
+    }
 
     #[cfg(native_llama_cpp)]
     #[test]
@@ -1174,7 +1207,7 @@ mod tests {
             .generate_stream(
                 "Reply briefly to the user.",
                 512,
-                1,
+                8,
                 0.0,
                 0.95,
                 40,
@@ -1189,7 +1222,7 @@ mod tests {
             .generate_stream(
                 "Reply briefly to the user.",
                 512,
-                1,
+                8,
                 0.0,
                 0.95,
                 40,

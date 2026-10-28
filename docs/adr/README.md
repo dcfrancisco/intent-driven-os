@@ -31,3 +31,5 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0028 — Inference Performance Measurement](0028-inference-performance-measurement.md)
 - [ADR-0029 — Talvik Optional Vulkan Acceleration](0029-talvik-optional-vulkan-acceleration.md)
 - [ADR-0030 — Per-User MSI Packaging for Talvik on Windows](0030-talvik-per-user-windows-msi.md)
+- [ADR-0031 — OpenAI Inference API Compatibility](0031-openai-inference-api-compatibility.md)
+- [ADR-0032 — Talvik Ollama-Compatible Model Runner API](0032-talvik-ollama-model-runner-api.md)

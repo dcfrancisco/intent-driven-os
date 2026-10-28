@@ -39,6 +39,10 @@ normalized OpenAI `tool_calls`. The repeatable standard-client procedure is
 SSE streaming, tool invocation, and a tool-result round trip. It requires the
 optional `openai` Python package and a real GGUF daemon.
 
+The implemented edge is a limited text Chat Completions subset, not full
+OpenAI API conformance. Its current request/response behavior and known gaps
+are documented in `docs/TALVIK-OPENAI-COMPATIBILITY.md`.
+
 Final macOS x86_64 verification on 2026-10-23 used an isolated Python 3.11
 environment and a fresh release daemon. The procedure returned
 `OPENAI_CLIENT_ACCEPTED`; no IDE-specific client session was available. The

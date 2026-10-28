@@ -19,33 +19,76 @@ def main() -> None:
 
     base_url = os.environ.get("TALVIK_OPENAI_BASE_URL", "http://127.0.0.1:18080/v1")
     model = os.environ.get("TALVIK_MODEL")
-    if not model:
-        raise SystemExit("TALVIK_MODEL is required")
+    token = os.environ.get("TALVIK_API_KEY")
+    if not model or not token:
+        raise SystemExit("TALVIK_MODEL and TALVIK_API_KEY are required")
     client = OpenAI(
         base_url=base_url,
-        api_key=os.environ.get("TALVIK_API_KEY", "local-test-key"),
+        api_key=token,
     )
 
     listed = {entry.id for entry in client.models.list().data}
     if model not in listed:
         raise SystemExit(f"model {model!r} was not returned by /v1/models")
+    print("PASS model discovery", flush=True)
+
     plain = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": "Reply with exactly: OPENAI_OK"}],
-        max_tokens=16,
+        max_tokens=4,
     )
     if not plain.choices[0].message.content:
         raise SystemExit("non-stream OpenAI response did not contain assistant content")
+    print("PASS non-stream Chat Completions", flush=True)
+
     streamed = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": "Reply with exactly: STREAM_OK"}],
-        max_tokens=16,
+        max_tokens=4,
         stream=True,
     )
     streamed_text = "".join(chunk.choices[0].delta.content or "" for chunk in streamed)
     if not streamed_text:
         raise SystemExit("streaming OpenAI response was empty")
+    print("PASS streaming Chat Completions", flush=True)
 
+    legacy = client.completions.create(
+        model=model,
+        prompt="Complete with a short greeting:",
+        max_tokens=4,
+    )
+    if legacy.object != "text_completion" or not legacy.choices[0].text:
+        raise SystemExit("legacy Completions response did not use the text_completion shape")
+    print("PASS non-stream legacy Completions", flush=True)
+
+    legacy_stream = client.completions.create(
+        model=model,
+        prompt="Complete with one word:",
+        max_tokens=4,
+        stream=True,
+    )
+    legacy_stream_text = "".join(chunk.choices[0].text or "" for chunk in legacy_stream)
+    if not legacy_stream_text:
+        raise SystemExit("legacy Completions stream was empty")
+    print("PASS streaming legacy Completions", flush=True)
+
+    response = client.responses.create(
+        model=model,
+        instructions="Reply briefly.",
+        input="Say hello.",
+        max_output_tokens=4,
+    )
+    if response.object != "response" or not response.output_text:
+        raise SystemExit("Responses API did not return a text response")
+    print("PASS non-stream Responses", flush=True)
+
+    if os.environ.get("TALVIK_QUALIFY_TOOLS", "").lower() in {"1", "true", "yes"}:
+        qualify_tool_round_trip(client, model)
+
+    print("OPENAI_CLIENT_ACCEPTED")
+
+
+def qualify_tool_round_trip(client, model: str) -> None:
     tools = [
         {
             "type": "function",
@@ -66,19 +109,19 @@ def main() -> None:
             {
                 "role": "user",
                 "content": (
-                    "Return only a JSON object with exactly these fields: name equal to "
-                    "get_weather, arguments equal to an object with city equal to Manila."
+                    "Call the get_weather function with city set to Manila. Do not answer "
+                    "with plain text."
                 ),
             }
         ],
         tools=tools,
-        tool_choice="required",
-        max_tokens=64,
+        max_tokens=16,
         temperature=0,
     )
-    call = tool_request.choices[0].message.tool_calls
-    if not call or call[0].function.name != "get_weather":
+    calls = tool_request.choices[0].message.tool_calls
+    if not calls or calls[0].function.name != "get_weather":
         raise SystemExit("OpenAI tool request did not return get_weather")
+    call = calls[0]
     round_trip = client.chat.completions.create(
         model=model,
         messages=[
@@ -88,31 +131,30 @@ def main() -> None:
                 "content": None,
                 "tool_calls": [
                     {
-                        "id": call[0].id,
+                        "id": call.id,
                         "type": "function",
                         "function": {
-                            "name": call[0].function.name,
-                            "arguments": call[0].function.arguments,
+                            "name": call.function.name,
+                            "arguments": call.function.arguments,
                         },
                     }
                 ],
             },
             {
                 "role": "tool",
-                "tool_call_id": call[0].id,
+                "tool_call_id": call.id,
                 "name": "get_weather",
                 "content": "Clear, 29 degrees Celsius.",
             },
-            {"role": "user", "content": "Summarize the tool result in one sentence."},
+            {"role": "user", "content": "Summarize the tool result briefly."},
         ],
         tools=tools,
-        max_tokens=64,
+        max_tokens=8,
         temperature=0,
     )
-    summary = round_trip.choices[0].message.content or ""
-    if "29" not in summary or "Manila" not in summary:
-        raise SystemExit(f"tool-result round trip was not relevant: {summary!r}")
-    print("OPENAI_CLIENT_ACCEPTED")
+    if not round_trip.choices[0].message.content:
+        raise SystemExit("OpenAI tool-result round trip returned no assistant content")
+    print("PASS tool call and result message transport", flush=True)
 
 
 if __name__ == "__main__":

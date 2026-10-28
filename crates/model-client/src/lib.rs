@@ -52,8 +52,25 @@ pub struct ChatResponse {
     pub generation_id: String,
     /// Backend identifier reported by Marina, when available.
     pub backend: Option<String>,
+    /// Runtime-reported execution backend and placement, when available.
+    pub execution: Option<ExecutionPlacement>,
     /// Measurements returned by Marina. Missing fields remain unknown.
     pub metrics: RemoteGenerationMetrics,
+}
+
+/// Backend-neutral execution placement reported for a generation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionPlacement {
+    /// Selected execution backend, such as `cpu` or `vulkan`.
+    pub backend: Option<String>,
+    /// Selected device name, when known.
+    pub device: Option<String>,
+    /// Requested number of model layers to offload, when known.
+    pub requested_offloaded_layers: Option<u32>,
+    /// Actual model layers offloaded, only when verified.
+    pub offloaded_layers: Option<u32>,
+    /// Reason CPU fallback occurred, when applicable.
+    pub fallback_reason: Option<String>,
 }
 
 /// Generation measurements returned by Marina's native API.
@@ -322,9 +339,36 @@ impl ModelClient for MarinaHttpClient {
                 .get("backend")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            execution: parse_execution(response.get("execution")),
             metrics: parse_metrics(&response),
         })
     }
+}
+
+fn parse_execution(value: Option<&Value>) -> Option<ExecutionPlacement> {
+    let value = value?;
+    Some(ExecutionPlacement {
+        backend: value
+            .get("backend")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        device: value
+            .get("device")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        requested_offloaded_layers: value
+            .get("requested_offloaded_layers")
+            .and_then(Value::as_u64)
+            .and_then(|layers| u32::try_from(layers).ok()),
+        offloaded_layers: value
+            .get("offloaded_layers")
+            .and_then(Value::as_u64)
+            .and_then(|layers| u32::try_from(layers).ok()),
+        fallback_reason: value
+            .get("fallback_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
 }
 
 fn parse_metrics(response: &Value) -> RemoteGenerationMetrics {
@@ -495,8 +539,8 @@ fn io_error(error: &io::Error) -> ModelClientError {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_metrics, parse_model_descriptor, parse_response, MarinaHttpClient, MarinaHttpConfig,
-        ModelClientError,
+        parse_execution, parse_metrics, parse_model_descriptor, parse_response, MarinaHttpClient,
+        MarinaHttpConfig, ModelClientError,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -550,6 +594,27 @@ mod tests {
         assert_eq!(metrics.prompt_evaluation_time_ms, None);
         assert_eq!(metrics.generation_time_ms, None);
         assert_eq!(metrics.model_load_time_ms, None);
+    }
+
+    #[test]
+    fn parses_verified_execution_placement_and_keeps_unknown_fields_unknown() {
+        let execution = parse_execution(Some(&json!({
+            "backend": "vulkan",
+            "device": "Intel GPU",
+            "requested_offloaded_layers": 24,
+            "offloaded_layers": 20,
+            "fallback_reason": null
+        })))
+        .expect("execution object");
+        assert_eq!(execution.backend.as_deref(), Some("vulkan"));
+        assert_eq!(execution.device.as_deref(), Some("Intel GPU"));
+        assert_eq!(execution.requested_offloaded_layers, Some(24));
+        assert_eq!(execution.offloaded_layers, Some(20));
+        assert_eq!(execution.fallback_reason, None);
+
+        let unknown =
+            parse_execution(Some(&json!({"backend": "vulkan"}))).expect("execution object");
+        assert_eq!(unknown.offloaded_layers, None);
     }
 
     #[test]

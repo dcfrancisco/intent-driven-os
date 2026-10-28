@@ -1,0 +1,211 @@
+name: Talvik API client qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
+  MODEL_ID: qwen2.5-0.5b-instruct-q4_k_m
+  MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf
+  MODEL_SHA256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+
+jobs:
+  qualify:
+    name: ${{ matrix.os }} native API clients
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+          - windows-2022
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install Linux native build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y cmake build-essential curl
+      - name: Build native backend on Linux
+        if: runner.os == 'Linux'
+        env:
+          LLAMA_CPP_ROOT: ${{ runner.temp }}/llama.cpp
+          LLAMA_CPP_BUILD: ${{ runner.temp }}/llama-linux-build
+          LLAMA_CPP_INSTALL_DIR: ${{ runner.temp }}/talvik-native
+        run: ./scripts/setup-llama-linux.sh
+      - name: Build native backend on macOS
+        if: runner.os == 'macOS'
+        env:
+          LLAMA_CPP_ROOT: ${{ runner.temp }}/llama.cpp
+          LLAMA_CPP_BUILD: ${{ runner.temp }}/llama-macos-build
+          LLAMA_CPP_INSTALL_DIR: ${{ runner.temp }}/talvik-native
+          OID_LLAMA_ACCELERATOR: cpu
+        run: ./scripts/setup-llama-macos.sh
+      - name: Build native backend on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/setup-llama-windows.ps1 `
+            -LlamaRoot "$env:RUNNER_TEMP\llama.cpp" `
+            -LlamaBuild "$env:RUNNER_TEMP\llama-windows-build" `
+            -NativeLibDir "$env:RUNNER_TEMP\talvik-native" `
+            -Commit "$env:LLAMA_CPP_COMMIT"
+      - name: Build Talvik on Linux and macOS
+        if: runner.os != 'Windows'
+        env:
+          LLAMA_CPP_LIB_DIR: ${{ runner.temp }}/talvik-native
+          LLAMA_CPP_REQUIRED: "1"
+        run: cargo build --release -p oid-console --bin talvikd --bin talvik
+      - name: Build Talvik on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:LLAMA_CPP_LIB_DIR = Join-Path $env:RUNNER_TEMP "talvik-native"
+          $env:LLAMA_CPP_REQUIRED = "1"
+          cargo build --release -p oid-console --bin talvikd --bin talvik
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Download and verify pinned GGUF on Linux and macOS
+        if: runner.os != 'Windows'
+        run: |
+          model_dir="$RUNNER_TEMP/talvik-home/models"
+          mkdir -p "$model_dir"
+          model_path="$model_dir/$MODEL_ID.gguf"
+          curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' "$MODEL_URL" -o "$model_path"
+          actual="$(shasum -a 256 "$model_path" | cut -d ' ' -f 1)"
+          test "$actual" = "$MODEL_SHA256"
+      - name: Download and verify pinned GGUF on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $modelDirectory = Join-Path $env:RUNNER_TEMP "talvik-home\models"
+          New-Item -ItemType Directory -Force -Path $modelDirectory | Out-Null
+          $modelPath = Join-Path $modelDirectory "$env:MODEL_ID.gguf"
+          curl.exe --fail --location --silent --show-error --proto '=https' --proto-redir '=https' $env:MODEL_URL --output $modelPath
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $modelPath).Hash.ToLowerInvariant()
+          if ($actual -ne $env:MODEL_SHA256) { throw "Model SHA-256 mismatch: $actual" }
+      - name: Install official client SDKs on Linux and macOS
+        if: runner.os != 'Windows'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/client-python"
+          "$RUNNER_TEMP/client-python/bin/python" -m pip install \
+            ollama==0.6.3 openai==3.40.0
+          npm install --prefix "$RUNNER_TEMP/client-node" \
+            ollama@0.6.4 openai@7.45.1
+      - name: Install official client SDKs on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\client-python" | Out-Null
+          python -m pip install --disable-pip-version-check --target "$env:RUNNER_TEMP\client-python" ollama==0.6.3 openai==3.40.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd install --prefix "$env:RUNNER_TEMP\client-node" ollama@0.6.4 openai@7.45.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run native API clients on Linux and macOS
+        if: runner.os != 'Windows'
+        env:
+          LLAMA_CPP_LIB_DIR: ${{ runner.temp }}/talvik-native
+          TALVIK_HOME: ${{ runner.temp }}/talvik-home
+          TALVIK_MODEL_DIR: ${{ runner.temp }}/talvik-home/models
+          TALVIK_DEFAULT_MODEL: none
+          TALVIK_HTTP_ADDR: 127.0.0.1:18080
+          TALVIK_HTTP_AUTH: "true"
+          TALVIK_MODEL: ${{ env.MODEL_ID }}
+          TALVIK_EMBED_MODEL: ${{ env.MODEL_ID }}
+          TALVIK_NODE_PREFIX: ${{ runner.temp }}/client-node
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$LLAMA_CPP_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          if [[ "$(uname -s)" == "Darwin" ]]; then
+            export DYLD_LIBRARY_PATH="$LLAMA_CPP_LIB_DIR${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          fi
+          mkdir -p "$TALVIK_HOME"
+          export TALVIK_API_KEY="$(cargo run --release -p oid-console --bin talvik -- auth token create ci --scopes=models:read,inference,inference:cancel:self)"
+          target/release/talvikd >"$RUNNER_TEMP/talvikd.log" 2>&1 &
+          daemon_pid=$!
+          trap 'kill "$daemon_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            curl --fail --silent http://127.0.0.1:18080/healthz >/dev/null && break
+            sleep 1
+          done
+          cargo run --release -p oid-console --bin talvik -- load "$TALVIK_MODEL"
+          "$RUNNER_TEMP/client-python/bin/python" scripts/qualify-ollama-client.py
+          "$RUNNER_TEMP/client-python/bin/python" scripts/qualify-openai-client.py
+          node scripts/qualify-ollama-client.mjs
+          node scripts/qualify-openai-client.mjs
+          "$RUNNER_TEMP/client-python/bin/python" scripts/qualify-embedding-clients.py
+          node scripts/qualify-embedding-clients.mjs
+      - name: Run native API clients on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          LLAMA_CPP_LIB_DIR: ${{ runner.temp }}\talvik-native
+          TALVIK_HOME: ${{ runner.temp }}\talvik-home
+          TALVIK_MODEL_DIR: ${{ runner.temp }}\talvik-home\models
+          TALVIK_DEFAULT_MODEL: none
+          TALVIK_HTTP_ADDR: 127.0.0.1:18080
+          TALVIK_HTTP_AUTH: "true"
+          TALVIK_MODEL: ${{ env.MODEL_ID }}
+          TALVIK_EMBED_MODEL: ${{ env.MODEL_ID }}
+          TALVIK_NODE_PREFIX: ${{ runner.temp }}\client-node
+        run: |
+          $env:PATH = "$env:LLAMA_CPP_LIB_DIR;$env:PATH"
+          New-Item -ItemType Directory -Force -Path $env:TALVIK_HOME | Out-Null
+          $env:TALVIK_API_KEY = & cargo run --release -p oid-console --bin talvik -- auth token create ci --scopes=models:read,inference,inference:cancel:self
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $daemon = Start-Process -FilePath "$PWD\target\release\talvikd.exe" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\talvikd.stdout.log" -RedirectStandardError "$env:RUNNER_TEMP\talvikd.stderr.log"
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              try {
+                Invoke-RestMethod -Uri "http://127.0.0.1:18080/healthz" -TimeoutSec 2 | Out-Null
+                $healthy = $true
+                break
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+            if (-not $healthy) { throw "Talvik did not become healthy" }
+            & cargo run --release -p oid-console --bin talvik -- load $env:TALVIK_MODEL
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $env:PYTHONPATH = Join-Path $env:RUNNER_TEMP "client-python"
+            python scripts\qualify-ollama-client.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python scripts\qualify-openai-client.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node scripts\qualify-ollama-client.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node scripts\qualify-openai-client.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python scripts\qualify-embedding-clients.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node scripts\qualify-embedding-clients.mjs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            if (-not $daemon.HasExited) { Stop-Process -Id $daemon.Id }
+          }
+      - name: Upload qualification logs
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: talvik-api-clients-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/talvikd.log
+            ${{ runner.temp }}/talvikd.stdout.log
+            ${{ runner.temp }}/talvikd.stderr.log

@@ -1,7 +1,7 @@
 //! Compatibility bridge from the legacy runtime backend API to `ModelRunner`.
 
 use crate::backends::{Backend, BackendDescriptor, BackendHealth, GenerationRequest, LoadedModel};
-use crate::generation::{GenerationStatistics, GenerationTermination};
+use crate::generation::{ExecutionPlacement, GenerationStatistics, GenerationTermination};
 use crate::models::ModelMetadata;
 use oid_llama_cpp_adapter::LlamaCppModelRunner;
 use oid_model_runner::{
@@ -228,6 +228,13 @@ impl Backend for LlamaCppAdapter {
                         },
                         cache_hit: stats.cache_hit,
                         reused_prompt_tokens: stats.reused_prompt_tokens,
+                        execution: Some(ExecutionPlacement {
+                            backend: Some("cpu".to_owned()),
+                            device: Some("CPU".to_owned()),
+                            requested_offloaded_layers: Some(0),
+                            offloaded_layers: Some(0),
+                            fallback_reason: None,
+                        }),
                     });
                 }
                 Ok(GenerationEvent::Cancelled(_)) => {

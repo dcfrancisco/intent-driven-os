@@ -3,7 +3,9 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use oid_model_client::ExecutionPlacement;
 use oid_model_client::{ChatRequest, ChatResponse, MarinaHttpClient, ModelClient, ModelDescriptor};
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -197,6 +199,10 @@ fn print_timing(response: &ChatResponse, total_elapsed: Duration) {
         response.backend.as_deref().unwrap_or("unavailable")
     );
     println!(
+        "Execution: {}",
+        format_execution(response.execution.as_ref())
+    );
+    println!(
         "OID client total (client config, discovery, request): {:.3} s (OID client-measured)",
         total_elapsed.as_secs_f64()
     );
@@ -270,6 +276,7 @@ fn run_benchmark(
     let mut latencies = Vec::with_capacity(runs);
     let mut throughputs = Vec::with_capacity(runs);
     let mut states = Vec::with_capacity(runs);
+    let mut execution_placements = BTreeMap::new();
     let mut backend = None;
     for run in 0..runs {
         let resident_before = client
@@ -282,6 +289,10 @@ fn run_benchmark(
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         let state = classify_state(resident_before, response.metrics.model_load_time_ms);
         backend = backend.or(response.backend);
+        let execution = format_execution(response.execution.as_ref());
+        *execution_placements
+            .entry(execution.clone())
+            .or_insert(0_usize) += 1;
         latencies.push(elapsed);
         if let Some(rate) = response
             .metrics
@@ -292,10 +303,11 @@ fn run_benchmark(
         }
         states.push(state);
         println!(
-            "Run {}: {:.3} ms (OID client-measured), state: {}, prompt tokens: {}, output tokens: {}, TTFT: {} (backend-reported), inference: {} (backend-reported), load: {} (Talvik load-boundary), throughput: {} (backend-reported)",
+            "Run {}: {:.3} ms (OID client-measured), state: {}, execution: {}, prompt tokens: {}, output tokens: {}, TTFT: {} (backend-reported), inference: {} (backend-reported), load: {} (Talvik load-boundary), throughput: {} (backend-reported)",
             run + 1,
             elapsed,
             state,
+            execution,
             optional_count(response.metrics.prompt_tokens),
             optional_count(response.metrics.generated_tokens),
             optional_seconds(response.metrics.time_to_first_token_ms),
@@ -327,6 +339,14 @@ fn run_benchmark(
     println!("Runs: {runs}");
     println!("Median latency: {median:.3} ms (OID client-measured)");
     println!("P95 latency: {p95:.3} ms (OID client-measured)");
+    println!(
+        "Execution placement summary: {}",
+        execution_placements
+            .into_iter()
+            .map(|(placement, count)| format!("{placement} ({count}/{runs} runs)"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
     println!(
         "Backend throughput median ({}/{} reported): {}",
         throughputs.len(),
@@ -378,12 +398,40 @@ fn optional_seconds(value: Option<u128>) -> String {
     value.map_or_else(|| "unavailable".to_owned(), format_milliseconds)
 }
 
+fn format_execution(execution: Option<&ExecutionPlacement>) -> String {
+    let Some(execution) = execution else {
+        return "unknown (Talvik did not report placement)".to_owned();
+    };
+    let backend = execution.backend.as_deref().unwrap_or("unknown");
+    let device = execution.device.as_deref().unwrap_or("unknown");
+    let offloaded_layers = execution
+        .offloaded_layers
+        .map_or_else(|| "unknown".to_owned(), |layers| layers.to_string());
+    let requested_layers = execution
+        .requested_offloaded_layers
+        .map_or_else(|| "unknown".to_owned(), |layers| layers.to_string());
+    let vulkan = match (backend, execution.offloaded_layers) {
+        ("vulkan", Some(layers)) if layers > 0 => format!("yes ({layers} layers)"),
+        ("cpu", Some(0)) => "no (CPU selected; 0 layers offloaded)".to_owned(),
+        (_, Some(0)) => "no (0 layers offloaded)".to_owned(),
+        _ => "unknown (actual placement unverified)".to_owned(),
+    };
+    let fallback = execution
+        .fallback_reason
+        .as_deref()
+        .map_or_else(|| "none".to_owned(), |reason| reason.to_owned());
+    format!(
+        "backend {backend}; device {device}; requested GPU layers {requested_layers}; GPU layers offloaded {offloaded_layers}; Vulkan {vulkan}; fallback {fallback}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_state, parse_arguments, percentile, select_model, Mode, Percentile, SampleState,
+        classify_state, format_execution, parse_arguments, percentile, select_model, Mode,
+        Percentile, SampleState,
     };
-    use oid_model_client::ModelDescriptor;
+    use oid_model_client::{ExecutionPlacement, ModelDescriptor};
 
     #[test]
     fn preserves_plain_invocation_and_parses_timing_mode() {
@@ -463,6 +511,42 @@ mod tests {
         );
         assert_eq!(classify_state(Some(false), None), SampleState::Unknown);
         assert_eq!(classify_state(None, None), SampleState::Unknown);
+    }
+
+    #[test]
+    fn execution_display_does_not_infer_vulkan_from_unknown_placement() {
+        assert_eq!(
+            format_execution(None),
+            "unknown (Talvik did not report placement)"
+        );
+        assert!(format_execution(Some(&ExecutionPlacement {
+            backend: Some("vulkan".to_owned()),
+            ..ExecutionPlacement::default()
+        }))
+        .contains("Vulkan unknown (actual placement unverified)"));
+    }
+
+    #[test]
+    fn execution_display_reports_cpu_and_verified_vulkan_offload() {
+        let cpu = ExecutionPlacement {
+            backend: Some("cpu".to_owned()),
+            device: Some("CPU".to_owned()),
+            requested_offloaded_layers: Some(0),
+            offloaded_layers: Some(0),
+            fallback_reason: None,
+        };
+        assert!(
+            format_execution(Some(&cpu)).contains("Vulkan no (CPU selected; 0 layers offloaded)")
+        );
+
+        let vulkan = ExecutionPlacement {
+            backend: Some("vulkan".to_owned()),
+            device: Some("Intel GPU".to_owned()),
+            requested_offloaded_layers: Some(20),
+            offloaded_layers: Some(18),
+            fallback_reason: None,
+        };
+        assert!(format_execution(Some(&vulkan)).contains("Vulkan yes (18 layers)"));
     }
 
     #[test]

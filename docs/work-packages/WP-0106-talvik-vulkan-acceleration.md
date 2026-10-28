@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed. The current Windows host exposes an Intel Iris Xe Vulkan device, but
-Talvik Vulkan compilation, model offloading, inference, and performance have
-not been qualified.
+In progress. Runtime/HTTP placement reporting and `oid-marina-chat` timing and
+benchmark display are implemented for the current CPU path. The current
+Windows host exposes an Intel Iris Xe Vulkan device, but Talvik Vulkan
+compilation, model offloading, inference, and performance have not been
+qualified.
 
 ## Purpose
 
@@ -43,6 +45,10 @@ Linux, and macOS.
   driver, Vulkan availability, compiled/selected Talvik backend, GPU
   offloading state, actual layer placement, memory observations, and fallback
   reason. Do not add a separate diagnostics service.
+- Report selected execution backend/device and verified actual layer placement
+  in `oid-marina-chat --timing` and on each `oid-marina-chat --benchmark`
+  sample. The benchmark summary must make mixed CPU/Vulkan runs visible, and
+  unverified placement must remain explicitly unknown.
 
 ## Non-goals
 
@@ -72,6 +78,9 @@ Linux, and macOS.
   rationale; an unqualified GPU falls back to CPU.
 - Requested and actual offloaded layer counts are distinct. If the pinned
   native API cannot verify actual placement, diagnostics say unknown.
+- `oid-marina-chat --timing` displays selected execution backend/device and
+  actual placement; `--benchmark` displays them per run and identifies mixed
+  CPU/Vulkan results in its summary.
 - Resource admission includes available device memory and memory-pool
   semantics, including shared-memory devices, without double-counting.
 - Repeated generation, GPU allocation failure, cancellation, timeout, model

@@ -203,7 +203,7 @@ pub trait Backend: Send + Sync {
 
 #[derive(Default)]
 struct BackendManagerState {
-    backends: HashMap<String, Box<dyn Backend>>,
+    backends: HashMap<String, Arc<dyn Backend>>,
     enabled: HashSet<String>,
     active: Option<String>,
 }
@@ -247,7 +247,7 @@ impl BackendManager {
         if state.backends.contains_key(&id) {
             return Err(RuntimeError::BackendAlreadyRegistered(id));
         }
-        state.backends.insert(id.clone(), backend);
+        state.backends.insert(id.clone(), Arc::from(backend));
         drop(state);
         self.bus.publish(&RuntimeEvent::BackendRegistered(id));
         Ok(())
@@ -435,16 +435,20 @@ impl BackendManager {
         callback: &mut dyn FnMut(&str) -> bool,
         cancellation: &AtomicBool,
     ) -> Result<GenerationStatistics, RuntimeError> {
-        let state = self.lock_state()?;
-        let id = state
-            .active
-            .as_deref()
-            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
-        state
-            .backends
-            .get(id)
-            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
-            .generate_streaming(request, callback, cancellation)
+        let backend = {
+            let state = self.lock_state()?;
+            let id = state
+                .active
+                .as_deref()
+                .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+            Arc::clone(
+                state
+                    .backends
+                    .get(id)
+                    .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?,
+            )
+        };
+        backend.generate_streaming(request, callback, cancellation)
     }
 
     /// Compute embeddings through the active backend.
@@ -750,6 +754,60 @@ mod tests {
             .expect("stream");
         assert_eq!(statistics.generated_tokens, 1);
         assert!(output.contains("Mock generation"));
+    }
+
+    #[test]
+    fn backend_discovery_does_not_wait_for_streaming_generation() {
+        let manager = BackendManager::new(EventBus::new());
+        manager.register(Box::new(MockBackend)).expect("register");
+        manager.enable("mock").expect("enable");
+        let request = GenerationRequest {
+            request_id: "request".to_owned(),
+            model_id: "demo".to_owned(),
+            input: "hello".to_owned(),
+            options: GenerationOptions::default(),
+        };
+        let started = Arc::new(std::sync::Barrier::new(2));
+        let resume = Arc::new(std::sync::Barrier::new(2));
+        let generation_manager = manager.clone();
+        let generation_started = Arc::clone(&started);
+        let generation_resume = Arc::clone(&resume);
+        let generation = thread::spawn(move || {
+            generation_manager.generate_streaming(
+                &request,
+                &mut |_| {
+                    generation_started.wait();
+                    generation_resume.wait();
+                    true
+                },
+                &AtomicBool::new(false),
+            )
+        });
+        started.wait();
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let discovery_manager = manager.clone();
+        let discovery = thread::spawn(move || {
+            sender
+                .send(discovery_manager.discover())
+                .expect("send discovery result");
+        });
+        let discovered_during_generation = receiver.recv_timeout(Duration::from_secs(1)).ok();
+        let discovery_completed_without_release = discovered_during_generation.is_some();
+        resume.wait();
+        let summaries = discovered_during_generation.unwrap_or_else(|| {
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("discovery completes after generation")
+        });
+        generation
+            .join()
+            .expect("generation thread")
+            .expect("generation");
+        discovery.join().expect("discovery thread");
+
+        assert!(discovery_completed_without_release);
+        assert_eq!(summaries.len(), 1);
     }
 
     #[test]

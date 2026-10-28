@@ -905,6 +905,7 @@ impl RuntimeService for MarinaRuntime {
                 termination: statistics.termination,
                 cache_hit: statistics.cache_hit,
                 reused_prompt_tokens: statistics.reused_prompt_tokens,
+                execution: statistics.execution,
             };
             let result = GenerationResult {
                 request_id: request.request_id.clone(),

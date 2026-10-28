@@ -84,6 +84,23 @@ pub struct GenerationStatistics {
     pub cache_hit: bool,
     /// Number of prompt tokens reused from the persistent native context.
     pub reused_prompt_tokens: u64,
+    /// Backend-neutral execution placement, when reported by the backend.
+    pub execution: Option<ExecutionPlacement>,
+}
+
+/// Backend-neutral execution placement for a generation.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionPlacement {
+    /// Selected execution backend, such as `cpu` or `vulkan`.
+    pub backend: Option<String>,
+    /// Selected device name, when known.
+    pub device: Option<String>,
+    /// Requested number of model layers to offload, when known.
+    pub requested_offloaded_layers: Option<u32>,
+    /// Actual model layers offloaded, only when verified.
+    pub offloaded_layers: Option<u32>,
+    /// Reason CPU fallback occurred, when applicable.
+    pub fallback_reason: Option<String>,
 }
 
 /// Reason a generation reached its successful terminal boundary.

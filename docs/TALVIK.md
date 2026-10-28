@@ -13,12 +13,20 @@ WP-0075 and `runtime/BACKLOG.md`.
 ## Current product boundary
 
 The qualified CPU-first slice supports multiple resident GGUF models, one
-active generation, streaming, cancellation, embeddings, and OpenAI-compatible
-chat/completions translation through the llama.cpp adapter, including tool
-calls for GGUF templates that advertise tool support. It is not a model
-scheduler with concurrent generations, an agent loop, a training system, or an
-unrestricted network gateway. Tool calls remain capability-gated and are
-rejected explicitly for unsupported templates.
+active generation, streaming, cancellation, conditional embeddings, and
+OpenAI-compatible chat/completions translation through the llama.cpp adapter,
+including tool calls for GGUF templates that advertise tool support. It is not
+a model scheduler with concurrent generations, an agent loop, a training
+system, or an unrestricted network gateway. Tool calls remain
+capability-gated and are rejected explicitly for unsupported templates.
+
+The OpenAI edge is a limited text inference subset (Chat Completions, partial
+legacy Completions, text-only Responses), not full OpenAI API compatibility.
+See [Talvik OpenAI API Compatibility](./TALVIK-OPENAI-COMPATIBILITY.md) for
+supported request fields, response behavior, unsupported features, and
+qualification evidence. Broader inference-surface compatibility is tracked by
+[ADR-0031](./adr/0031-openai-inference-api-compatibility.md) and
+[WP-0108](./work-packages/WP-0108-openai-inference-api-compatibility.md).
 
 `talvikd` is the daemon and `talvik` is its client. The former `marina` and
 `marinactl` binaries are no longer built or packaged. Existing `$HOME/.marina`
@@ -103,10 +111,17 @@ For a container deployment, use `docker/talvik/compose.yaml`. It keeps the
 host port on loopback by default, requires bearer authentication for HTTP API
 requests, and separates model and state volumes.
 
-The authenticated HTTP compatibility subset also exposes `GET /api/tags` for
-registered-model discovery and `GET /api/ps` for actual resident-model and
-scheduler inspection. These endpoints are diagnostic/discovery edges; `/v1/*`
-remains the primary OpenAI-compatible inference API.
+The authenticated HTTP surface also provides a partial Ollama-compatible
+local model-runner API: `/api/chat`, `/api/generate`, `/api/embed`,
+`/api/embeddings`, `/api/show`, `/api/tags`, `/api/ps`, and `/api/version`.
+Text inference uses NDJSON streaming by default. Registry distribution,
+Modelfile creation, model copy/delete, per-request keep-alive, and multimodal
+support remain incomplete. See
+[Talvik Ollama API Compatibility](./TALVIK-OLLAMA-COMPATIBILITY.md),
+[ADR-0032](./adr/0032-talvik-ollama-model-runner-api.md), and
+[WP-0109](./work-packages/WP-0109-talvik-ollama-model-runner-api.md).
+The `/v1/*` OpenAI-compatible edge is separate; its current status is documented
+in [Talvik OpenAI API Compatibility](./TALVIK-OPENAI-COMPATIBILITY.md).
 
 Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.

@@ -102,6 +102,12 @@ a selected client need. GPU scheduling, multimodal support, MarinaOS service
 integration, and alternate inference engines are later-milestone work owned by
 WP-0100 through WP-0103. This preserves the llama.cpp-only, CPU-first boundary.
 
+**Supersession note (2026-10-28):** ADR-0032 accepts Ollama's local
+model-runner API as a product interoperability profile and supersedes the
+client-demand deferral above for `/api/show`, `/api/chat`, `/api/generate`, and
+`/api/embed`. The scheduling, backend-neutrality, security, and resource
+invariants in this ADR remain in force.
+
 Native execution performance, persistent context reuse, stop/repetition
 safety, and native crash isolation are governed separately by ADR-0026 and
 WP-0098. That decision preserves this ADR's scheduler and residency model.
