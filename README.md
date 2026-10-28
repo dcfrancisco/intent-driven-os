@@ -117,6 +117,38 @@ friend's Apple Silicon Mac can also build and smoke-test the
 `aarch64-apple-darwin` archive locally when we need hardware-specific
 verification or a fallback upload path.
 
+#### Manually uploading a Windows preview
+
+GitHub CLI authentication is interactive and does not require putting a token
+in this repository or in the release command. Sign in through the browser and
+confirm the active account:
+
+```powershell
+gh auth login --hostname github.com --git-protocol https --web
+gh auth status
+```
+
+From the repository root, set a new preview tag and the commit that produced
+the ZIP, then upload the archive and checksum as a public prerelease. Replace
+the example tag and commit before running; the tag must not already exist.
+
+```powershell
+$tag = "windows-preview-<short-commit>"
+$sourceCommit = "<full-commit-sha-that-built-the-zip>"
+gh release create $tag `
+  "target\release\talvik-windows-x86_64-preview.zip" `
+  "target\release\talvik-windows-x86_64-preview.zip.sha256" `
+  --repo "dcfrancisco/intent-driven-os" `
+  --target $sourceCommit `
+  --title "Talvik Windows x64 preview" `
+  --notes "Unsigned Windows x64 preview. Windows runtime qualification is incomplete; see README-WINDOWS.txt in the ZIP." `
+  --prerelease
+```
+
+`--prerelease` publishes the release so testers can download it. Do not put
+personal access tokens or `gh` credential data in source files or command
+arguments; see the [GitHub CLI authentication guide](https://cli.github.com/manual/gh_auth_login).
+
 ### Windows user installation
 
 On Windows, extract the release ZIP and run PowerShell as the normal user:
