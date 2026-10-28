@@ -134,6 +134,7 @@ impl ActionType {
 }
 
 /// One ordered action in an operation plan.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationStep {
     /// Zero-based or one-based caller-defined order, stable within a plan.
@@ -185,6 +186,7 @@ pub struct RollbackPlan {
 }
 
 /// Canonical, inspectable operation plan.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationPlan {
     /// Stable operation identity.
