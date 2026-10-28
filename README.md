@@ -61,6 +61,9 @@ Set `default_model: none` to disable automatic loading. The equivalent
 `MARINA_*` variables remain compatibility aliases. See
 [Talvik Model Runtime](docs/TALVIK.md)
 for commands, routing configuration, security defaults, and migration rules.
+See the [Talvik compatibility roadmap](docs/TALVIK-COMPATIBILITY-ROADMAP.md)
+for the declared OpenAI/Ollama targets, remaining build gates, and
+differentiating runtime work.
 
 The directory must contain the native `libllama` library. If it is not set or
 does not contain a usable library, the backend reports unavailable.

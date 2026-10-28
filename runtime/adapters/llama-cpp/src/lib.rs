@@ -308,11 +308,14 @@ impl ModelRunner for LlamaCppModelRunner {
             .map_err(ModelRunnerError::BackendFailure)
     }
 
-    fn tool_support(&self) -> bool {
-        self.models
+    fn tool_support(&self, model_id: &ModelId) -> Result<bool, ModelRunnerError> {
+        let models = self
+            .models
             .lock()
-            .ok()
-            .is_some_and(|models| models.values().any(|loaded| loaded.model.supports_tools()))
+            .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?;
+        Ok(models
+            .get(model_id)
+            .is_some_and(|loaded| loaded.model.supports_tools()))
     }
 
     fn unload(&self) -> Result<(), ModelRunnerError> {

@@ -348,7 +348,7 @@ impl RuntimeService for IpcRuntimeService {
         Err(RuntimeError::NotImplemented("Talvik IPC embeddings"))
     }
 
-    fn tool_support(&self) -> oid_runtime::backends::ToolSupport {
+    fn tool_support(&self, _model_id: &str) -> oid_runtime::backends::ToolSupport {
         oid_runtime::backends::ToolSupport {
             supported: false,
             reason: "tool support is not reported by the Talvik IPC protocol".to_owned(),

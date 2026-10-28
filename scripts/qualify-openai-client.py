@@ -115,12 +115,55 @@ def qualify_tool_round_trip(client, model: str) -> None:
             }
         ],
         tools=tools,
+        tool_choice="auto",
+        parallel_tool_calls=False,
         max_tokens=16,
+        context_size=512,
         temperature=0,
     )
     calls = tool_request.choices[0].message.tool_calls
-    if not calls or calls[0].function.name != "get_weather":
+    if not calls or len(calls) != 1 or calls[0].function.name != "get_weather":
         raise SystemExit("OpenAI tool request did not return get_weather")
+    required = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": "Call get_weather with city set to Manila. Do not answer in prose.",
+            }
+        ],
+        tools=tools,
+        tool_choice="required",
+        max_tokens=16,
+        context_size=512,
+        temperature=0,
+    )
+    required_calls = required.choices[0].message.tool_calls
+    if not required_calls:
+        raise SystemExit("OpenAI required tool choice returned no tool call")
+    print("PASS required tool choice", flush=True)
+
+    selected = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": "Call get_weather with city set to Manila. Do not answer in prose.",
+            }
+        ],
+        tools=tools,
+        tool_choice={"type": "function", "function": {"name": "get_weather"}},
+        max_tokens=16,
+        context_size=512,
+        temperature=0,
+    )
+    selected_calls = selected.choices[0].message.tool_calls
+    if not selected_calls or any(
+        tool_call.function.name != "get_weather" for tool_call in selected_calls
+    ):
+        raise SystemExit("OpenAI function-specific tool choice returned the wrong tool")
+    print("PASS function-specific tool choice", flush=True)
+
     call = calls[0]
     round_trip = client.chat.completions.create(
         model=model,
@@ -150,6 +193,7 @@ def qualify_tool_round_trip(client, model: str) -> None:
         ],
         tools=tools,
         max_tokens=8,
+        context_size=512,
         temperature=0,
     )
     if not round_trip.choices[0].message.content:

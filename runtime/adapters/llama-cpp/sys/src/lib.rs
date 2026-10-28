@@ -637,18 +637,36 @@ impl NativeModel {
             let entries = entries
                 .into_iter()
                 .map(|(role, content)| {
-                    if role == "__talvik_tools" {
+                    let entry = if role == "__talvik_tools" {
                         (
                             "system".to_owned(),
                             format!(
-                                "You may call one of these tools. When the user asks for a tool, do not answer in prose and do not invent the result. Emit exactly one call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{}}}}</tool_call>. The arguments must be valid JSON. Tools: {content}"
+                                "You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. Emit each call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{}}}}</tool_call>. The arguments must be valid JSON. Tools: {content}"
                             ),
                         )
+                    } else if role == "__talvik_tool_choice" {
+                        let instruction = match content {
+                            "single" => {
+                                "Do not make more than one tool call in this response."
+                                    .to_owned()
+                            }
+                            "required" => {
+                                "A tool call is required for this response. You must call one of the listed tools and must not answer in prose."
+                                    .to_owned()
+                            }
+                            name if name.starts_with("function:") => format!(
+                                "You must call the listed function {:?} exactly once and must not call another function or answer in prose.",
+                                &name["function:".len()..]
+                            ),
+                            _ => return Err("invalid tool-choice prompt directive".to_owned()),
+                        };
+                        ("system".to_owned(), instruction)
                     } else {
                         (role.to_owned(), content.to_owned())
-                    }
+                    };
+                    Ok(entry)
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, String>>()?;
             let roles = entries
                 .iter()
                 .map(|(role, _)| {

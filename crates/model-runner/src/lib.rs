@@ -404,8 +404,8 @@ pub trait ModelRunner: Send + Sync {
     }
     /// Report whether the selected resident model exposes tool-capable chat.
     #[must_use]
-    fn tool_support(&self) -> bool {
-        false
+    fn tool_support(&self, _model_id: &ModelId) -> Result<bool, ModelRunnerError> {
+        Ok(false)
     }
     /// Tokenize text with the currently loaded model.
     ///

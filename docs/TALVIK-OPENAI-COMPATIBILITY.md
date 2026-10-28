@@ -63,13 +63,25 @@ not OpenAI API endpoints.
 
 ### Unsupported or not faithfully implemented
 
-The API currently does not implement `tool_choice`, `response_format`,
+Chat Completions accepts `tool_choice: "auto"`, `"none"`, `"required"`, and
+function-specific selection. Forced choices are included in the model prompt
+and validated against the generated calls; a model that fails to honor the
+choice returns a structured 502 error instead of a successful text fallback.
+`parallel_tool_calls: false` is prompted and enforced as a single-call limit.
+Tool definitions require function-type entries, unique valid names, and
+object-valued `parameters`; nested JSON Schema constraints are not validated
+by Talvik.
+Tool output is model/template dependent and these behaviors still need live
+Windows and cross-platform qualification.
+The API currently does not implement `response_format`,
 `stream_options` (including `include_usage`), `logprobs`, `top_logprobs`,
 `presence_penalty`, `frequency_penalty`, or `logit_bias`; requests using these
 recognized options are rejected with a structured unsupported-feature error.
 Only `n: 1` is supported. Unknown fields can still be silently ignored.
-Tool-result messages are translated as text; `tool_call_id` is not used to
-validate or correlate the result with a previous call.
+Assistant tool-call IDs are checked against tool-result messages, and the IDs
+are preserved in the translated prompt. Tool calls are still parsed from
+template-formatted model output rather than emitted by a backend-neutral
+structured tool interface.
 
 Message content is limited to strings; array-valued content parts such as
 images and audio are not supported. The API does not provide multimodal
@@ -133,9 +145,9 @@ feature.
 checks model discovery, non-streaming and SSE chat, non-streaming and SSE
 legacy Completions, and text Responses with the OpenAI Python client. It is a
 useful smoke test for that subset, not a full conformance suite. Set
-`TALVIK_QUALIFY_TOOLS=true` to exercise a model-generated tool call and
-tool-result message transport; generated answer quality is not asserted, and
-that test does not qualify `tool_choice`, which remains unsupported.
+`TALVIK_QUALIFY_TOOLS=true` to exercise automatic, required, and
+function-specific tool choices, the single-call constraint, and a correlated
+tool-result message round trip. Generated answer quality is not asserted.
 
 [`scripts/qualify-openai-client.mjs`](../scripts/qualify-openai-client.mjs)
 uses the official OpenAI JavaScript SDK for model discovery, Chat Completions
@@ -156,18 +168,29 @@ $env:TALVIK_NODE_PREFIX = "$env:TEMP\talvik-clients"
 node scripts\qualify-openai-client.mjs
 ```
 
-`.github/workflows/talvik-api-client-qualification.yml` builds and exercises
-the native service with authenticated Python/JavaScript inference and
-embedding clients on Linux, macOS, and Windows.
-The workflow is manual; a configured matrix is not evidence that a job passed.
-The repository previously recorded an `OPENAI_CLIENT_ACCEPTED` result on
-macOS x86_64. The Python 3.40.0 and JavaScript 7.45.1 text-profile smoke
-qualifiers and embedding SDK checks also passed against the authenticated
-Windows daemon using the local Qwen GGUF. Linux and macOS arm64 results remain
-unverified until their native jobs pass. The OpenAI tool-call probe produced a
-tool call and accepted a tool-result message, but its short generated summary
-was truncated; this does not qualify tool semantics. No full OpenAI API
+The manual
+`.github/workflows/talvik-api-client-qualification.yml` workflow builds and
+exercises the native service with authenticated Python/JavaScript inference
+and embedding clients. Run
+[40777131756](https://github.com/dcfrancisco/intent-driven-os/actions/runs/40777131756)
+passed on Linux x86_64, macOS arm64, and Windows x86_64 at commit
+`072b06477529bfcb2ca47a6b80ca0ff1c03a7150`. That run predates the current
+tool-call and Windows-path changes; its workflow did not enable the new
+tool-call probe or the macOS Intel job. The updated workflow includes both;
+re-run it before claiming those changes or that target are qualified.
+
+The tool probe is model-dependent; passing it qualifies only the pinned model
+and tested tool round trip, not every model or tool schema. No full OpenAI API
 conformance claim is made.
+
+On Windows x86_64, raw HTTP requests against a local Qwen 2.5 0.5B model
+returned one `get_weather` call for non-streaming `required` and
+function-specific choices with `parallel_tool_calls: false`. One streaming
+`auto` request returned a tool-call chunk followed by `[DONE]`. Two streaming
+`required` attempts returned a structured 502 because that model did not emit
+a tool call. Tool calls are buffered rather than emitted incrementally; forced
+streaming remains model-dependent, and the official SDK probes still require
+qualification.
 
 ## Compatibility claim
 

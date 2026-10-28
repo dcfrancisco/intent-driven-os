@@ -119,7 +119,7 @@ pub trait RuntimeService: Send + Sync {
         Err(oid_shared::RuntimeError::NotImplemented("embeddings"))
     }
     /// Report whether the active backend can execute structured tool calls.
-    fn tool_support(&self) -> ToolSupport {
+    fn tool_support(&self, _model_id: &str) -> ToolSupport {
         ToolSupport {
             supported: false,
             reason: "tool calls are not supported by the active backend".to_owned(),

@@ -23,6 +23,14 @@ enum OpenAiGenerationEndpoint {
     Responses,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum OpenAiToolChoice {
+    Auto,
+    None,
+    Required,
+    Function(String),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OllamaGenerationEndpoint {
     Chat,
@@ -651,13 +659,6 @@ fn generate_ollama(
         .get("tools")
         .and_then(Value::as_array)
         .filter(|tools| !tools.is_empty());
-    if tool_definitions.is_some() && !runtime.tool_support().supported {
-        return respond_ollama_error(
-            stream,
-            501,
-            "tool calls are unavailable for the selected runtime",
-        );
-    }
     let (prompt, tools) = if let Some(tools) = tool_definitions {
         (
             format!(
@@ -688,6 +689,13 @@ fn generate_ollama(
     } else {
         duration_nanos(load_started.elapsed())
     };
+    if tool_definitions.is_some() && !runtime.tool_support(model).supported {
+        return respond_ollama_error(
+            stream,
+            501,
+            "tool calls are unavailable for the selected model",
+        );
+    }
     let created_at = match iso8601_now() {
         Ok(created_at) => created_at,
         Err(error) => return respond_ollama_error(stream, 500, error.to_string()),
@@ -742,7 +750,7 @@ fn generate_ollama(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
-                let tool_calls = parse_tool_calls(&output)
+                let tool_calls = parse_tool_calls(&output, &unique_request_id())
                     .map(|calls| calls.iter().map(ollama_tool_call).collect::<Vec<_>>());
                 let mut terminal = match endpoint {
                     OllamaGenerationEndpoint::Chat => json!({
@@ -1129,14 +1137,14 @@ fn respond_ollama_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::R
     respond_ollama_error(stream, 403, format!("required scope: {scope}"))
 }
 
-fn parse_tool_calls(output: &str) -> Option<Vec<Value>> {
+fn parse_tool_calls(output: &str, id_prefix: &str) -> Option<Vec<Value>> {
     let mut calls = Vec::new();
     let mut remainder = output;
     while let Some(start) = remainder.find("<tool_call>") {
         let after_start = &remainder[start + "<tool_call>".len()..];
         let end = after_start.find("</tool_call>")?;
         let value: Value = serde_json::from_str(after_start[..end].trim()).ok()?;
-        calls.push(normalize_tool_call(&value, calls.len()));
+        calls.push(normalize_tool_call(&value, id_prefix, calls.len()));
         remainder = &after_start[end + "</tool_call>".len()..];
     }
     if !calls.is_empty() {
@@ -1144,12 +1152,12 @@ fn parse_tool_calls(output: &str) -> Option<Vec<Value>> {
     }
     let value: Value = serde_json::from_str(output.trim()).ok()?;
     if value.get("name").is_some() && value.get("arguments").is_some() {
-        return Some(vec![normalize_tool_call(&value, 0)]);
+        return Some(vec![normalize_tool_call(&value, id_prefix, 0)]);
     }
     None
 }
 
-fn normalize_tool_call(value: &Value, index: usize) -> Value {
+fn normalize_tool_call(value: &Value, id_prefix: &str, index: usize) -> Value {
     let name = value
         .get("name")
         .and_then(Value::as_str)
@@ -1162,10 +1170,79 @@ fn normalize_tool_call(value: &Value, index: usize) -> Value {
         },
     );
     json!({
-        "id": format!("call_{index}"),
+        "id": format!("call_{id_prefix}_{index}"),
         "type": "function",
         "function": {"name": name, "arguments": arguments}
     })
+}
+
+fn validate_openai_tool_history(body: &Value) -> Result<(), String> {
+    let Some(messages) = body.get("messages").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let mut pending = std::collections::HashMap::new();
+    for message in messages {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "each message requires a string role".to_owned())?;
+        if role == "tool" {
+            let id = message
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "tool messages require a non-empty tool_call_id".to_owned())?;
+            let expected_name = pending.remove(id).ok_or_else(|| {
+                format!("tool_call_id {id:?} has no preceding assistant tool call")
+            })?;
+            if let Some(name) = message.get("name").and_then(Value::as_str) {
+                if name != expected_name {
+                    return Err(format!(
+                        "tool result name {name:?} does not match tool call {expected_name:?}"
+                    ));
+                }
+            }
+            continue;
+        }
+        if !pending.is_empty() {
+            return Err(
+                "each assistant tool call must have a matching tool result before the next message"
+                    .to_owned(),
+            );
+        }
+        if role != "assistant" {
+            continue;
+        }
+        let Some(calls) = message.get("tool_calls").filter(|calls| !calls.is_null()) else {
+            continue;
+        };
+        let calls = calls
+            .as_array()
+            .ok_or_else(|| "assistant tool_calls must be an array".to_owned())?;
+        for call in calls {
+            let id = call
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "each assistant tool call requires a non-empty id".to_owned())?;
+            let name = call
+                .get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| "each assistant tool call requires a function name".to_owned())?;
+            if call.get("type").and_then(Value::as_str) != Some("function") {
+                return Err("assistant tool calls must have type `function`".to_owned());
+            }
+            if pending.insert(id, name).is_some() {
+                return Err(format!("duplicate tool_call_id {id:?}"));
+            }
+        }
+    }
+    if !pending.is_empty() {
+        return Err("assistant tool calls are missing their tool results".to_owned());
+    }
+    Ok(())
 }
 
 fn build_chat_prompt(body: &Value) -> Result<String, String> {
@@ -1214,7 +1291,11 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
                     .get("name")
                     .and_then(Value::as_str)
                     .unwrap_or("tool");
-                format!("Tool result for {name}: {content}")
+                let call_id = message
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .map_or_else(String::new, |id| format!(" (tool_call_id: {id})"));
+                format!("Tool result for {name}{call_id}: {content}")
             } else {
                 content.to_owned()
             }
@@ -1258,6 +1339,131 @@ fn build_response_prompt(body: &Value) -> Result<String, String> {
     Ok(prompt)
 }
 
+fn parse_tool_choice(body: &Value) -> Result<OpenAiToolChoice, (u16, String)> {
+    let Some(choice) = body.get("tool_choice") else {
+        return Ok(OpenAiToolChoice::Auto);
+    };
+    match choice.as_str() {
+        Some("auto") => Ok(OpenAiToolChoice::Auto),
+        Some("none") => Ok(OpenAiToolChoice::None),
+        Some("required") => Ok(OpenAiToolChoice::Required),
+        Some(_) => Err((
+            400,
+            "`tool_choice` must be `auto`, `none`, `required`, or a function choice object"
+                .to_owned(),
+        )),
+        None if choice.is_object() => {
+            if choice.get("type").and_then(Value::as_str) != Some("function") {
+                return Err((
+                    400,
+                    "function tool_choice must have type `function`".to_owned(),
+                ));
+            }
+            let name = choice
+                .get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    (
+                        400,
+                        "function tool_choice requires a non-empty function name".to_owned(),
+                    )
+                })?;
+            Ok(OpenAiToolChoice::Function(name.to_owned()))
+        }
+        None => Err((
+            400,
+            "`tool_choice` must be a string or function choice object".to_owned(),
+        )),
+    }
+}
+
+fn validate_tool_definitions(body: &Value) -> Result<Vec<String>, (u16, String)> {
+    let Some(tools) = body.get("tools") else {
+        return Ok(Vec::new());
+    };
+    let Some(tools) = tools.as_array() else {
+        return Err((400, "tools must be an array".to_owned()));
+    };
+    let mut names = Vec::with_capacity(tools.len());
+    for (index, tool) in tools.iter().enumerate() {
+        if tool.get("type").and_then(Value::as_str) != Some("function") {
+            return Err((400, format!("tools[{index}].type must be `function`")));
+        }
+        let Some(function) = tool.get("function").and_then(Value::as_object) else {
+            return Err((400, format!("tools[{index}].function must be an object")));
+        };
+        let Some(name) = function.get("name").and_then(Value::as_str) else {
+            return Err((
+                400,
+                format!("tools[{index}].function.name must be a string"),
+            ));
+        };
+        if name.is_empty()
+            || name.len() > 64
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err((
+                400,
+                format!("tools[{index}].function.name has an invalid format"),
+            ));
+        }
+        if names.iter().any(|existing| existing == name) {
+            return Err((400, format!("function tool name {name:?} is duplicated")));
+        }
+        if function
+            .get("parameters")
+            .is_some_and(|parameters| !parameters.is_object())
+        {
+            return Err((
+                400,
+                format!("tools[{index}].function.parameters must be an object"),
+            ));
+        }
+        names.push(name.to_owned());
+    }
+    Ok(names)
+}
+
+fn validate_generated_tool_calls(
+    choice: &OpenAiToolChoice,
+    calls: Option<&[Value]>,
+    parallel_tool_calls: bool,
+) -> Result<(), String> {
+    if !parallel_tool_calls && calls.is_some_and(|calls| calls.len() > 1) {
+        return Err(
+            "model returned multiple tool calls while parallel calls were disabled".to_owned(),
+        );
+    }
+    match choice {
+        OpenAiToolChoice::Auto | OpenAiToolChoice::None => Ok(()),
+        OpenAiToolChoice::Required if calls.is_some_and(|calls| !calls.is_empty()) => Ok(()),
+        OpenAiToolChoice::Required => {
+            Err("model did not produce the required tool call".to_owned())
+        }
+        OpenAiToolChoice::Function(name) => {
+            let Some(calls) = calls.filter(|calls| !calls.is_empty()) else {
+                return Err(format!("model did not call the required function {name:?}"));
+            };
+            if calls.len() != 1 {
+                return Err(format!(
+                    "model returned multiple calls for the required function {name:?}"
+                ));
+            }
+            if calls[0].pointer("/function/name").and_then(Value::as_str) == Some(name) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "model returned a tool call other than the required function {name:?}"
+                ))
+            }
+        }
+    }
+}
+
 fn validate_generation_request(
     body: &Value,
     endpoint: OpenAiGenerationEndpoint,
@@ -1270,7 +1476,6 @@ fn validate_generation_request(
         "presence_penalty",
         "frequency_penalty",
         "logit_bias",
-        "tool_choice",
     ] {
         if body.get(field).is_some() {
             return Err((
@@ -1291,9 +1496,52 @@ fn validate_generation_request(
             None => return Err((400, "n must be a positive integer".to_owned())),
         }
     }
-    if let Some(tools) = body.get("tools") {
-        if !tools.is_array() {
-            return Err((400, "tools must be an array".to_owned()));
+    if body.get("tools").is_some() && !body.get("tools").is_some_and(Value::is_array) {
+        return Err((400, "tools must be an array".to_owned()));
+    }
+    if body.get("tool_choice").is_some() {
+        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+            return Err((
+                501,
+                "`tool_choice` is only supported for Chat Completions".to_owned(),
+            ));
+        }
+    }
+    if let Some(value) = body.get("parallel_tool_calls") {
+        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+            return Err((
+                501,
+                "`parallel_tool_calls` is only supported for Chat Completions".to_owned(),
+            ));
+        }
+        if !value.is_boolean() {
+            return Err((400, "`parallel_tool_calls` must be a boolean".to_owned()));
+        }
+    }
+    if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
+        let names = validate_tool_definitions(body)?;
+        match parse_tool_choice(body)? {
+            OpenAiToolChoice::Auto if body.get("tool_choice").is_some() && names.is_empty() => {
+                return Err((
+                    400,
+                    "`tool_choice: auto` requires a non-empty tools array".to_owned(),
+                ));
+            }
+            OpenAiToolChoice::Required | OpenAiToolChoice::Function(_) if names.is_empty() => {
+                return Err((
+                    400,
+                    "`tool_choice: required` requires a non-empty tools array".to_owned(),
+                ));
+            }
+            OpenAiToolChoice::Function(name)
+                if !names.iter().any(|candidate| candidate == &name) =>
+            {
+                return Err((
+                    400,
+                    format!("function tool_choice names unknown tool {name:?}"),
+                ));
+            }
+            _ => {}
         }
     }
     if endpoint == OpenAiGenerationEndpoint::Completions {
@@ -1438,10 +1686,28 @@ fn generate(
     if let Err((status, message)) = validate_generation_request(body, endpoint) {
         return respond_error(stream, status, message);
     }
+    if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
+        if let Err(message) = validate_openai_tool_history(body) {
+            return respond_error(stream, 400, message);
+        }
+    }
+    let tool_choice = if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
+        match parse_tool_choice(body) {
+            Ok(choice) => choice,
+            Err((status, message)) => return respond_error(stream, status, message),
+        }
+    } else {
+        OpenAiToolChoice::Auto
+    };
     let tool_definitions = body
         .get("tools")
         .and_then(Value::as_array)
-        .filter(|tools| !tools.is_empty());
+        .filter(|tools| !tools.is_empty())
+        .filter(|_| tool_choice != OpenAiToolChoice::None);
+    let parallel_tool_calls = body
+        .get("parallel_tool_calls")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
     let prompt_result = match endpoint {
         OpenAiGenerationEndpoint::ChatCompletions => build_chat_prompt(body),
         OpenAiGenerationEndpoint::Completions => build_completion_prompt(body),
@@ -1457,6 +1723,17 @@ fn generate(
                 0,
                 &format!("\u{001e}__talvik_tools\n{}", Value::Array(tools.clone())),
             );
+            let choice_instruction = match &tool_choice {
+                OpenAiToolChoice::Auto | OpenAiToolChoice::None => None,
+                OpenAiToolChoice::Required => Some("required".to_owned()),
+                OpenAiToolChoice::Function(name) => Some(format!("function:{name}")),
+            };
+            if let Some(instruction) = choice_instruction {
+                prompt.insert_str(0, &format!("\u{001e}__talvik_tool_choice\n{instruction}"));
+            }
+            if !parallel_tool_calls {
+                prompt.insert_str(0, "\u{001e}__talvik_tool_choice\nsingle");
+            }
         }
     } else if tool_definitions.is_some() {
         return respond_error(
@@ -1515,7 +1792,7 @@ fn generate(
         options.seed
     );
     if tool_definitions.is_some() {
-        let support = runtime.tool_support();
+        let support = runtime.tool_support(model);
         if !support.supported {
             return respond_error(
                 stream,
@@ -1537,12 +1814,15 @@ fn generate(
         owners.insert(request_id.clone(), identity.principal.clone());
     }
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    if streaming {
+    let defer_stream_headers = streaming && tool_definitions.is_some();
+    let mut stream_headers_sent = false;
+    if streaming && !defer_stream_headers {
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
         )?;
         stream.flush()?;
+        stream_headers_sent = true;
     }
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
@@ -1601,6 +1881,20 @@ fn generate(
                 let finish_reason = completion_finish_reason(result.statistics.termination);
                 let termination_reason =
                     completion_termination_reason(result.statistics.termination);
+                let tool_calls = if endpoint == OpenAiGenerationEndpoint::ChatCompletions
+                    && tool_definitions.is_some()
+                {
+                    parse_tool_calls(&output, &unique_request_id())
+                } else {
+                    None
+                };
+                if let Err(message) = validate_generated_tool_calls(
+                    &tool_choice,
+                    tool_calls.as_deref(),
+                    parallel_tool_calls,
+                ) {
+                    return respond_error(stream, 502, message);
+                }
                 if endpoint == OpenAiGenerationEndpoint::Responses {
                     let usage = result.statistics.metrics_known.then(|| {
                         json!({
@@ -1651,12 +1945,14 @@ fn generate(
                     );
                 }
                 if streaming {
-                    let tool_calls = if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
-                        parse_tool_calls(&output)
-                    } else {
-                        None
-                    };
-                    if let Some(tool_calls) = tool_calls {
+                    if defer_stream_headers && !stream_headers_sent {
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+                        )?;
+                        stream.flush()?;
+                    }
+                    if let Some(tool_calls) = tool_calls.as_ref() {
                         let event = json!({
                             "id": result.request_id,
                             "object": "chat.completion.chunk",
@@ -1683,6 +1979,18 @@ fn generate(
                             "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
                             "termination_reason": termination_reason
                         });
+                        let event = if tool_definitions.is_some() && !output.is_empty() {
+                            json!({
+                                "id": result.request_id,
+                                "object": "chat.completion.chunk",
+                                "created": created,
+                                "model": model,
+                                "choices": [{"index": 0, "delta": {"content": output}, "finish_reason": finish_reason}],
+                                "termination_reason": termination_reason
+                            })
+                        } else {
+                            event
+                        };
                         write!(stream, "data: {event}\n\n")?;
                     }
                     write!(stream, "data: [DONE]\n\n")?;
@@ -1690,7 +1998,6 @@ fn generate(
                 }
                 let (choice, response_object) = match endpoint {
                     OpenAiGenerationEndpoint::ChatCompletions => {
-                        let tool_calls = parse_tool_calls(&output);
                         let message = tool_calls.as_ref().map_or_else(
                             || json!({"role":"assistant","content":output}),
                             |calls| json!({"role":"assistant","content":Value::Null,"tool_calls":calls}),
@@ -1771,6 +2078,13 @@ fn generate(
                     );
                 }
                 if streaming {
+                    if !stream_headers_sent {
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+                        )?;
+                        stream.flush()?;
+                    }
                     write!(stream, "data: [DONE]\n\n")?;
                     return stream.flush();
                 }
@@ -2062,9 +2376,10 @@ mod tests {
         add_ollama_statistics, build_chat_prompt, build_completion_prompt, build_response_prompt,
         completion_finish_reason, completion_termination_reason, generation_options, iso8601_now,
         ollama_generation_options, ollama_prompt, ollama_tool_call, parse_tool_calls,
-        request_body_size_is_allowed, validate_generation_request,
-        validate_ollama_generation_request, GenerationTermination, OllamaGenerationEndpoint,
-        OpenAiGenerationEndpoint, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES,
+        request_body_size_is_allowed, validate_generated_tool_calls, validate_generation_request,
+        validate_ollama_generation_request, validate_openai_tool_history, GenerationTermination,
+        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, MAX_CONTEXT_TOKENS,
+        MAX_REQUEST_BODY_BYTES,
     };
     use serde_json::json;
 
@@ -2083,11 +2398,168 @@ mod tests {
     fn normalizes_template_tool_calls_to_openai_shape() {
         let calls = parse_tool_calls(
             r#"<tool_call>{"name":"get_weather","arguments":{"city":"Manila"}}</tool_call>"#,
+            "request-1",
         )
         .expect("tool call");
+        assert_eq!(calls[0]["id"], "call_request-1_0");
         assert_eq!(calls[0]["type"], "function");
         assert_eq!(calls[0]["function"]["name"], "get_weather");
         assert_eq!(calls[0]["function"]["arguments"], r#"{"city":"Manila"}"#);
+    }
+
+    #[test]
+    fn assigns_distinct_ids_to_multiple_tool_calls() {
+        let calls = parse_tool_calls(
+            concat!(
+                "<tool_call>{\"name\":\"one\",\"arguments\":{}}</tool_call>",
+                "<tool_call>{\"name\":\"two\",\"arguments\":{}}</tool_call>"
+            ),
+            "request-2",
+        )
+        .expect("tool calls");
+        assert_eq!(calls[0]["id"], "call_request-2_0");
+        assert_eq!(calls[1]["id"], "call_request-2_1");
+    }
+
+    #[test]
+    fn validates_openai_tool_result_correlation() {
+        let valid = json!({"messages":[
+            {"role":"assistant","tool_calls":[
+                {"id":"call_a","type":"function","function":{"name":"first","arguments":"{}"}},
+                {"id":"call_b","type":"function","function":{"name":"second","arguments":"{}"}}
+            ]},
+            {"role":"tool","tool_call_id":"call_b","name":"second","content":"two"},
+            {"role":"tool","tool_call_id":"call_a","name":"first","content":"one"},
+            {"role":"user","content":"Summarize"}
+        ]});
+        assert_eq!(validate_openai_tool_history(&valid), Ok(()));
+
+        let unknown_id = json!({"messages":[
+            {"role":"tool","tool_call_id":"missing","content":"result"}
+        ]});
+        assert!(validate_openai_tool_history(&unknown_id).is_err());
+
+        let mismatched_name = json!({"messages":[
+            {"role":"assistant","tool_calls":[
+                {"id":"call_a","type":"function","function":{"name":"first","arguments":"{}"}}
+            ]},
+            {"role":"tool","tool_call_id":"call_a","name":"other","content":"result"}
+        ]});
+        assert!(validate_openai_tool_history(&mismatched_name).is_err());
+    }
+
+    #[test]
+    fn validates_auto_none_required_and_function_tool_choices() {
+        let tools = json!({"type":"function","function":{"name":"get_weather"}});
+        assert!(validate_generation_request(
+            &json!({"tools":[tools.clone()],"tool_choice":"auto"}),
+            OpenAiGenerationEndpoint::ChatCompletions
+        )
+        .is_ok());
+        assert!(validate_generation_request(
+            &json!({"tools":[tools.clone()],"tool_choice":"none"}),
+            OpenAiGenerationEndpoint::ChatCompletions
+        )
+        .is_ok());
+        assert!(validate_generation_request(
+            &json!({"tools":[tools.clone()],"parallel_tool_calls":false}),
+            OpenAiGenerationEndpoint::ChatCompletions
+        )
+        .is_ok());
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tools":[tools.clone()],"parallel_tool_calls":"false"}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Err(400)
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tools":[tools.clone()],"tool_choice":"required"}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Ok(())
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tools":[tools.clone()],"tool_choice":{
+                    "type":"function","function":{"name":"get_weather"}
+                }}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Ok(())
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tools":[tools.clone()],"tool_choice":{
+                    "type":"function","function":{"name":"missing"}
+                }}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Err(400)
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tools":[tools.clone()],"tool_choice":"required"}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Ok(())
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tool_choice":"required"}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Err(400)
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"tool_choice":"auto"}),
+                OpenAiGenerationEndpoint::ChatCompletions
+            )
+            .map_err(|(status, _)| status),
+            Err(400)
+        );
+    }
+
+    #[test]
+    fn enforces_generated_required_and_function_tool_calls() {
+        let calls = vec![
+            json!({"function":{"name":"get_weather","arguments":"{}"}}),
+            json!({"function":{"name":"get_weather","arguments":"{}"}}),
+        ];
+        assert!(
+            validate_generated_tool_calls(&OpenAiToolChoice::Required, Some(&calls), true).is_ok()
+        );
+        let selected_call = vec![calls[0].clone()];
+        assert!(validate_generated_tool_calls(
+            &OpenAiToolChoice::Function("get_weather".to_owned()),
+            Some(&selected_call),
+            true
+        )
+        .is_ok());
+        assert!(validate_generated_tool_calls(&OpenAiToolChoice::Required, None, true).is_err());
+        assert!(validate_generated_tool_calls(
+            &OpenAiToolChoice::Function("get_weather".to_owned()),
+            Some(&calls),
+            true
+        )
+        .is_err());
+        assert!(validate_generated_tool_calls(
+            &OpenAiToolChoice::Function("get_weather".to_owned()),
+            Some(&[json!({"function":{"name":"other"}})]),
+            true
+        )
+        .is_err());
+        assert!(
+            validate_generated_tool_calls(&OpenAiToolChoice::Auto, Some(&calls), false).is_err()
+        );
     }
 
     #[test]
@@ -2147,6 +2619,19 @@ mod tests {
             build_completion_prompt(&completion).expect("completion prompt"),
             "hello"
         );
+    }
+
+    #[test]
+    fn preserves_tool_call_id_in_tool_result_prompt() {
+        let body = json!({"messages":[
+            {"role":"assistant","tool_calls":[
+                {"id":"call_123","type":"function","function":{"name":"get_weather","arguments":"{}"}}
+            ]},
+            {"role":"tool","tool_call_id":"call_123","name":"get_weather","content":"sunny"}
+        ]});
+        let prompt = build_chat_prompt(&body).expect("chat prompt");
+        assert!(prompt.contains("tool_call_id: call_123"));
+        assert!(prompt.contains("Tool result for get_weather"));
     }
 
     #[test]

@@ -7,26 +7,44 @@ text profile covering Chat Completions, legacy Completions, non-streaming
 Responses, and conditional embeddings; the endpoint inventory, protocol
 implementation, backend capabilities, and qualification remain incomplete.
 
-The first implementation slice now distinguishes Chat Completions from legacy
-Completions, emits legacy `text_completion` response/chunk shapes for string
-prompts, includes `created`, returns structured errors for malformed JSON and
-missing required models, rejects several recognized unsupported options, and
-supports a non-streaming text-only `/v1/responses` path. The Python 3.40.0 and
-JavaScript 7.45.1 OpenAI text-profile smoke qualifiers and embedding SDK checks
-passed on Windows. A native cross-platform workflow is available; Linux and
-macOS evidence remains pending and is tracked in the compatibility guide.
-Responses streaming, continuation, `tool_choice`, and multimodal inputs remain
-unimplemented.
+The implementation distinguishes Chat Completions from legacy Completions,
+emits legacy `text_completion` response/chunk shapes for string prompts,
+includes `created`, returns structured errors for malformed JSON and missing
+required models, rejects several recognized unsupported options, and supports
+a non-streaming text-only `/v1/responses` path. Chat Completions now accepts
+`tool_choice: "auto"` and `"none"`, preserves tool-call IDs across the
+assistant/tool-result prompt translation, and rejects unmatched or
+name-mismatched tool results. Required and function-specific choices are
+prompted and validated against model output; `parallel_tool_calls: false`
+enforces a single-call limit. Incremental tool-call streaming, Responses
+streaming/continuation, and multimodal inputs remain unimplemented. Forced
+tool behavior is model dependent and awaits live qualification.
 
-### Handoff state (2026-10-28)
+The Python and JavaScript qualifiers exercise automatic, required, and
+function-specific tool choices, single-call behavior, and the tool-call/result
+round trip. The updated code and workflow still require a successful run
+before this behavior is considered qualified.
 
-Windows smoke evidence is recorded; Linux and macOS native runs remain
-pending. On the next machine, run the manual
-`.github/workflows/talvik-api-client-qualification.yml` workflow after this
-branch and its workflow file are available to GitHub Actions. Retain the
-per-platform artifacts and update this WP and the compatibility guide from
-actual results. Do not mark the OpenAI profile complete based on Windows-only
-client smoke tests.
+### Qualification update (2026-10-29)
+
+The native matrix passed Linux x86_64, macOS arm64, and Windows x86_64 at
+baseline commit `072b06477529bfcb2ca47a6b80ca0ff1c03a7150`
+([run 40777131756](https://github.com/dcfrancisco/intent-driven-os/actions/runs/40777131756)).
+That run predates the current tool-call changes and did not enable the tool
+probe. Re-run the updated workflow after these changes are committed. The
+updated workflow also adds the macOS Intel release target, which remains
+unqualified until that job passes.
+
+### Windows live probe (2026-10-29)
+
+A native Windows release build succeeded with the installed llama.cpp DLLs.
+Raw HTTP requests to local Qwen 2.5 0.5B passed non-streaming required and
+function-specific choice with `parallel_tool_calls: false`, each returning
+one `get_weather` call. One streaming `auto` request returned a tool-call
+chunk and `[DONE]`; calls are still buffered, not incremental. Two streaming
+required-choice attempts returned a structured 502 because the model emitted
+no tool call. The API correctly avoided a success-shaped text fallback;
+forced-stream reliability and official SDK qualification remain open.
 
 ## Purpose
 
@@ -52,9 +70,10 @@ capabilities explicit.
   usage, finish reasons, and SSE.
 - Implement `/v1/completions` with its own correct request, response, and SSE
   schemas, or explicitly return an unsupported-endpoint error until complete.
-- Implement standard `tool_choice`, `n`, structured-output/response-format, and
-  streaming usage semantics where supported; return structured errors where
-  the model/backend cannot honor them.
+- Implement required and function-specific `tool_choice`, `n`,
+  structured-output/response-format, and streaming usage semantics where
+  supported; return structured errors where the model/backend cannot honor
+  them.
 - Support all profile-approved text message forms and preserve tool-call IDs
   and tool-result correlation.
 
@@ -109,7 +128,7 @@ capabilities explicit.
 - Standard parameters are honored or rejected explicitly; invalid recognized
   values never silently become defaults.
 - Required response metadata, usage fields, finish reasons, tool IDs, SSE
-  events, and `[DONE]` behavior match the profile.
+  events, `[DONE]` behavior, and tool-result correlation match the profile.
 - `/v1/responses` and supported embeddings/media endpoints have contract tests
   for non-streaming, streaming, errors, and cancellation.
 - Unsupported model/backend capabilities return structured errors and never

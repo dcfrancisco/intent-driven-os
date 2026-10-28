@@ -6,28 +6,27 @@ In progress. Phase 1 route semantics are implemented. The official Ollama
 Python 0.6.3 and JavaScript 0.6.4 clients, and the OpenAI Python 3.40.0 and
 JavaScript 7.45.1 text-profile clients, passed their Windows smoke runs against
 a local Qwen GGUF. Ollama and OpenAI batch embedding plus legacy Ollama
-embedding checks also passed on Windows through both SDK languages. Linux and
-macOS native results remain pending. Phase 2 stays gated on the native
-Linux/macOS/Windows workflow; adding a workflow is not qualification evidence.
-Talvik is not yet a complete Ollama-compatible runner.
+embedding checks also passed on Windows through both SDK languages. The native
+matrix passed Linux x86_64, macOS arm64, and Windows x86_64 at baseline commit
+`072b06477529bfcb2ca47a6b80ca0ff1c03a7150`
+([run 40777131756](https://github.com/dcfrancisco/intent-driven-os/actions/runs/40777131756)).
+The current local changes and tool-call probe have not been requalified.
+Phase 2 remains gated on a passing run for those changes and the newly added
+macOS Intel matrix job. Talvik is not yet a complete Ollama-compatible runner.
 
-### Handoff state (2026-10-28)
+### Qualification update (2026-10-29)
 
-Windows Python/JavaScript inference clients and both-language embedding
-checks are complete. Native Linux and macOS qualification is pending. On the
-next machine:
+The baseline matrix run completed successfully, but it does not qualify the
+current local changes:
 
-1. Carry this branch's scripts, workflow, and documentation changes with the
-   source tree. The manual workflow must be present on the branch available to
-   GitHub Actions before it can be dispatched.
-2. Run `.github/workflows/talvik-api-client-qualification.yml` and retain the
-   Linux, macOS, and Windows artifacts. A configured matrix is not evidence;
-   use the job results and uploaded logs.
-3. Fix any platform-specific failures and update this WP, WP-0108, the ADR
-   handoff notes, and the compatibility matrix from executed results.
-4. Only after all supported-platform gates pass, start Phase 2: verified pull,
-   then safe copy/delete with integrity, ownership, active-use, pinning, and
-   recovery tests.
+1. Commit and push the current tool-call, per-model capability, and Windows
+   path fixes with the updated workflow.
+2. Re-run `.github/workflows/talvik-api-client-qualification.yml`; inspect the
+   job results and uploaded logs, including the tool probes.
+3. Qualify the newly added macOS Intel job in addition to the existing
+   Linux/macOS arm64/Windows matrix.
+4. Only after those gates pass, proceed to verified pull, then safe copy/delete
+   with integrity, ownership, active-use, pinning, and recovery tests.
 
 The workflow installs client SDKs, creates an ephemeral test token, and
 downloads/verifies its pinned Qwen GGUF. The Windows SDK installation and
@@ -46,7 +45,7 @@ for the handoff.
 | Model definition/replication | No Modelfile, copy, push, or blob API | Create/copy/push/delete/blob flows, persistent manifest and artifact integrity | P1 |
 | Model capability | CPU-first GGUF text generation; conditional embeddings/tools | Capability-aware options and modality-specific endpoints; no false capability claims | P1 |
 | Transport/errors | Native HTTP; request-per-connection; partial error mapping | NDJSON framing, Ollama error body, streaming failures, request limits and cancellation behavior | P0 |
-| Qualification | Ollama Python/JavaScript inference clients and Python/JavaScript embedding SDK checks passed on Windows | Native Linux/macOS matrix execution, platform-specific evidence, and raw endpoint/stream fixtures | P0 |
+| Qualification | Baseline native run passed Ollama Python/JavaScript inference and OpenAI/Ollama embedding checks on Linux x86_64, macOS arm64, and Windows x86_64 | Current-change and macOS Intel evidence, plus raw endpoint/stream fixtures | P0 |
 
 ## Scope and phases
 
@@ -164,9 +163,11 @@ as an empty object when raw GGUF metadata is unavailable. Focused HTTP tests
 pass. The Ollama Python and JavaScript text clients and Ollama/OpenAI Python
 and JavaScript embedding checks passed on Windows; OpenAI Python and JavaScript
 text smoke runs also passed. The native Linux/macOS/Windows workflow is
-available, but Linux and macOS results remain pending. The current agreed
-order is to finish cross-platform qualification before beginning verified
-pull and safe delete/copy.
+available and its baseline run passed on Linux x86_64, macOS arm64, and Windows
+x86_64. The current local changes still need qualification, and the matrix
+now includes macOS Intel, which also needs a passing run. The current agreed
+order is to finish those qualification gates before beginning verified pull
+and safe delete/copy.
 
 Create/Modelfile, push, blobs, full verbose model metadata, per-call keep-alive,
 and multimodal features remain separate gaps until their runtime contracts

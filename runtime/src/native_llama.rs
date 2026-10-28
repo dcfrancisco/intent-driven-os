@@ -281,10 +281,29 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
         Ok(crate::backends::EmbeddingsResult { values })
     }
-    fn tool_support(&self) -> crate::backends::ToolSupport {
-        crate::backends::ToolSupport {
-            supported: self.runner.tool_support(),
-            reason: "the loaded GGUF chat template does not advertise tool calls".to_owned(),
+    fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
+        let model_id = match oid_model_runner::ModelId::new(model_id.to_owned()) {
+            Ok(model_id) => model_id,
+            Err(error) => {
+                return crate::backends::ToolSupport {
+                    supported: false,
+                    reason: format!("invalid model ID for tool capability query: {error}"),
+                };
+            }
+        };
+        match self.runner.tool_support(&model_id) {
+            Ok(supported) => crate::backends::ToolSupport {
+                supported,
+                reason: if supported {
+                    "the selected GGUF chat template advertises tool calls".to_owned()
+                } else {
+                    "the selected GGUF chat template does not advertise tool calls".to_owned()
+                },
+            },
+            Err(error) => crate::backends::ToolSupport {
+                supported: false,
+                reason: format!("tool capability query failed: {error}"),
+            },
         }
     }
     fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {

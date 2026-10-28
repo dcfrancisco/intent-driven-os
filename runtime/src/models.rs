@@ -384,11 +384,16 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
         return Ok(());
     }
     let path = if let Some(path) = source.strip_prefix("file://") {
-        if let Some(path) = path.strip_prefix("localhost") {
-            PathBuf::from(path)
-        } else {
-            PathBuf::from(path)
-        }
+        let path = path
+            .strip_prefix("localhost")
+            .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+            .unwrap_or(path);
+        #[cfg(windows)]
+        let path = path
+            .strip_prefix('/')
+            .filter(|path| path.as_bytes().get(1) == Some(&b':'))
+            .unwrap_or(path);
+        PathBuf::from(path)
     } else if source.contains("://") {
         return Err(RuntimeError::InvalidModel(format!(
             "unsupported model source: {source}"
@@ -461,8 +466,8 @@ fn source_file_name(source: &str) -> Result<String, RuntimeError> {
         .or_else(|| source.strip_prefix("https://"))
         .unwrap_or(source);
     let name = path
-        .trim_end_matches('/')
-        .rsplit('/')
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
         .next()
         .filter(|name| !name.is_empty())
         .ok_or_else(|| RuntimeError::InvalidModel(format!("source has no filename: {source}")))?;
@@ -864,8 +869,8 @@ fn decode_registry(contents: &str) -> Result<BTreeMap<String, ModelMetadata>, Ru
 #[cfg(test)]
 mod tests {
     use super::{
-        sha256_file, ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry, ModelStatus,
-        Sha256,
+        sha256_file, source_file_name, ModelAcquirer, ModelDiscovery, ModelMetadata, ModelRegistry,
+        ModelStatus, Sha256,
     };
     use oid_shared::{EventBus, RuntimeEvent};
     use std::path::PathBuf;
@@ -991,7 +996,12 @@ mod tests {
         std::fs::create_dir_all(&source_directory).expect("create source directory");
         let source = source_directory.join("model.GGUF");
         std::fs::write(&source, b"model bytes").expect("write source");
-        let source_url = format!("file://{}", source.display());
+        let source_path = source.display().to_string().replace('\\', "/");
+        let source_url = if cfg!(windows) {
+            format!("file:///{source_path}")
+        } else {
+            format!("file://{source_path}")
+        };
 
         let metadata = ModelAcquirer::acquire(&source_url, &destination, Some("custom-id"), None)
             .expect("acquire file URL");
@@ -1006,6 +1016,19 @@ mod tests {
 
         std::fs::remove_dir_all(source_directory).expect("remove source directory");
         std::fs::remove_dir_all(destination).expect("remove destination directory");
+    }
+
+    #[test]
+    fn derives_filename_from_windows_paths_and_file_urls() {
+        assert_eq!(
+            source_file_name(r"C:\models\tiny-model.gguf").expect("Windows path filename"),
+            "tiny-model.gguf"
+        );
+        assert_eq!(
+            source_file_name(r"file://C:\models\tiny-model.gguf")
+                .expect("Windows file URL filename"),
+            "tiny-model.gguf"
+        );
     }
 
     #[test]

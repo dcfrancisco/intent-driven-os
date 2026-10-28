@@ -744,8 +744,8 @@ impl RuntimeService for MarinaRuntime {
         self.backends.embeddings(request)
     }
 
-    fn tool_support(&self) -> crate::backends::ToolSupport {
-        self.backends.tool_support()
+    fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
+        self.backends.tool_support(model_id)
     }
 
     #[allow(clippy::cast_precision_loss)]

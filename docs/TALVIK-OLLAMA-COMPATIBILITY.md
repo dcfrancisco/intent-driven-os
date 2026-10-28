@@ -108,9 +108,14 @@ cost are model-dependent.
 Linux/macOS/Windows qualification workflow. It builds Talvik and llama.cpp,
 downloads and SHA-256 verifies the pinned Qwen GGUF, enables bearer
 authentication, and runs Python and JavaScript inference and embedding client
-qualifiers. Linux and macOS jobs must pass before those platforms are
-described as qualified. Windows evidence does not establish full native API
-compatibility.
+qualifiers. Run
+[40777131756](https://github.com/dcfrancisco/intent-driven-os/actions/runs/40777131756)
+passed on Linux x86_64, macOS arm64, and Windows x86_64 at commit
+`072b06477529bfcb2ca47a6b80ca0ff1c03a7150`. The current local changes have not
+been rerun on that matrix, and the run did not include the new tool-call probe
+or macOS Intel job. The updated workflow includes both. Do not treat the
+baseline run as qualification evidence for the current uncommitted changes or
+as complete Ollama API compatibility.
 
 The accurate current claim is:
 

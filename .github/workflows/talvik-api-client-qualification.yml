@@ -23,6 +23,7 @@ jobs:
         os:
           - ubuntu-24.04
           - macos-14
+          - macos-15-intel
           - windows-2022
     steps:
       - uses: actions/checkout@v4.2.2
@@ -129,6 +130,7 @@ jobs:
           TALVIK_MODEL: ${{ env.MODEL_ID }}
           TALVIK_EMBED_MODEL: ${{ env.MODEL_ID }}
           TALVIK_NODE_PREFIX: ${{ runner.temp }}/client-node
+          TALVIK_QUALIFY_TOOLS: "true"
         run: |
           set -euo pipefail
           export LD_LIBRARY_PATH="$LLAMA_CPP_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -164,6 +166,7 @@ jobs:
           TALVIK_MODEL: ${{ env.MODEL_ID }}
           TALVIK_EMBED_MODEL: ${{ env.MODEL_ID }}
           TALVIK_NODE_PREFIX: ${{ runner.temp }}\client-node
+          TALVIK_QUALIFY_TOOLS: "true"
         run: |
           $env:PATH = "$env:LLAMA_CPP_LIB_DIR;$env:PATH"
           New-Item -ItemType Directory -Force -Path $env:TALVIK_HOME | Out-Null

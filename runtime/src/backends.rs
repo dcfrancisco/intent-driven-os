@@ -190,7 +190,7 @@ pub trait Backend: Send + Sync {
     /// Returns an error when the backend cannot service embeddings.
     fn embeddings(&self, request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError>;
     /// Report tool support without exposing backend-native types.
-    fn tool_support(&self) -> ToolSupport;
+    fn tool_support(&self, model_id: &str) -> ToolSupport;
     /// Count tokens using the backend's tokenizer when available.
     ///
     /// # Errors
@@ -474,7 +474,7 @@ impl BackendManager {
 
     /// Return the active backend's tool-call capability.
     #[must_use]
-    pub fn tool_support(&self) -> ToolSupport {
+    pub fn tool_support(&self, model_id: &str) -> ToolSupport {
         let Ok(state) = self.state.lock() else {
             return ToolSupport {
                 supported: false,
@@ -492,7 +492,7 @@ impl BackendManager {
                 supported: false,
                 reason: format!("backend {id} is unavailable"),
             },
-            |backend| backend.tool_support(),
+            |backend| backend.tool_support(model_id),
         )
     }
 
@@ -570,7 +570,7 @@ impl Backend for MockBackend {
         Err(RuntimeError::NotImplemented("mock embeddings"))
     }
 
-    fn tool_support(&self) -> ToolSupport {
+    fn tool_support(&self, _model_id: &str) -> ToolSupport {
         ToolSupport {
             supported: false,
             reason: "mock backend has no tool implementation".to_owned(),
@@ -682,10 +682,10 @@ mod tests {
             Ok(EmbeddingsResult { values: Vec::new() })
         }
 
-        fn tool_support(&self) -> ToolSupport {
+        fn tool_support(&self, model_id: &str) -> ToolSupport {
             ToolSupport {
-                supported: false,
-                reason: "test".to_owned(),
+                supported: model_id == "tool-capable",
+                reason: format!("capability queried for {model_id}"),
             }
         }
     }
@@ -702,6 +702,18 @@ mod tests {
         assert!(summary[0].enabled);
         assert!(summary[0].active);
         assert_eq!(manager.active_backend().as_deref(), Some("mock"));
+    }
+
+    #[test]
+    fn manager_queries_tool_support_for_the_selected_model() {
+        let manager = BackendManager::new(EventBus::new());
+        manager
+            .register(Box::new(ControllableBackend))
+            .expect("register backend");
+        manager.enable("controllable").expect("enable backend");
+
+        assert!(manager.tool_support("tool-capable").supported);
+        assert!(!manager.tool_support("text-only").supported);
     }
 
     #[test]
