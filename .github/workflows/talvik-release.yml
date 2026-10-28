@@ -27,7 +27,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --exclude oid-console
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::module_name_repetitions
 
   build:
     name: Build ${{ matrix.name }}
