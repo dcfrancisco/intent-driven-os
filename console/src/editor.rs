@@ -74,7 +74,7 @@ impl LineBuffer {
     }
 
     /// Move one character left.
-    pub const fn left(&mut self) {
+    pub fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
@@ -84,7 +84,7 @@ impl LineBuffer {
     }
 
     /// Move to the beginning.
-    pub const fn home(&mut self) {
+    pub fn home(&mut self) {
         self.cursor = 0;
     }
 
