@@ -24,6 +24,30 @@ state. The user systemd unit stores models and registry data under the
 invoking user's `$HOME/.marina`; enabling it remains an explicit operator
 action with `systemctl --user enable --now talvikd.service`.
 
+The tagged Talvik release workflow publishes both the Debian package and the
+RPM package alongside the Linux, macOS Intel, macOS Apple Silicon, and Windows
+archives. The Linux packages install the binaries, native libraries, default
+model metadata, and the per-user systemd unit; they do not enable or start the
+daemon as root. Enable the service for the logged-in user with:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now talvikd.service
+```
+
+The macOS archives contain `install-talvik-macos.sh`. Run it from the
+extracted archive with `--service` to install a per-user launchd definition:
+
+```sh
+./install-talvik-macos.sh --service
+launchctl kickstart -k "gui/$(id -u)/com.talvik.talvikd"
+```
+
+The macOS helper does not require a privileged `.pkg`, does not modify global
+paths, and preserves models and state during uninstall. The daemon is not
+started unless `--service` is requested and the explicit `launchctl` command
+is run.
+
 These files implement the first system-profile image composition described by
 ADR-0023. Marina packaging remains governed by ADR-0014 and WP-0069.
 

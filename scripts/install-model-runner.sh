@@ -35,7 +35,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [[ -x "$SCRIPT_DIR/bin/talvik" && -x "$SCRIPT_DIR/bin/talvikd" ]]; then
+  ROOT="$SCRIPT_DIR"
+fi
 if [[ "$UNINSTALL" == 1 ]]; then
   rm -f "$PREFIX/bin/talvik" "$PREFIX/bin/talvikd"
   find "$PREFIX/lib" -maxdepth 1 -type f \( -name 'libllama.*' -o -name 'libggml*.*' \) -delete 2>/dev/null || true

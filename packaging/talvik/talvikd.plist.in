@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.talvik.talvikd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__TALVIK_HOME__/bin/talvikd</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TALVIK_HOME</key>
+    <string>__TALVIK_HOME__</string>
+    <key>TALVIK_STATE_DIR</key>
+    <string>__TALVIK_HOME__</string>
+    <key>TALVIK_MODEL_DIR</key>
+    <string>__TALVIK_HOME__/models</string>
+    <key>TALVIK_REGISTRY</key>
+    <string>__TALVIK_HOME__/models.registry</string>
+    <key>TALVIK_TOKEN_FILE</key>
+    <string>__TALVIK_HOME__/tokens</string>
+  </dict>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>__TALVIK_HOME__/logs/talvikd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__TALVIK_HOME__/logs/talvikd.error.log</string>
+</dict>
+</plist>

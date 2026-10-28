@@ -112,6 +112,8 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cp scripts/install-model-runner.sh "$RUNNER_TEMP/talvik/"
+          cp scripts/install-talvik-macos.sh "$RUNNER_TEMP/talvik/" 2>/dev/null || true
+          cp packaging/talvik/talvikd.plist.in "$RUNNER_TEMP/talvik/" 2>/dev/null || true
           cp LICENSE "$RUNNER_TEMP/talvik/" 2>/dev/null || true
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/${{ matrix.archive }}" talvik
           shasum -a 256 "$RUNNER_TEMP/${{ matrix.archive }}" > "$RUNNER_TEMP/${{ matrix.archive }}.sha256"
@@ -151,10 +153,55 @@ jobs:
             ${{ runner.temp }}/${{ matrix.archive }}
             ${{ runner.temp }}/${{ matrix.archive }}.sha256
 
+  packages:
+    name: Linux DEB and RPM packages
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: linux-x86_64
+          path: release
+      - name: Install RPM tooling
+        run: sudo apt-get update && sudo apt-get install --yes rpm
+      - name: Build packages
+        run: |
+          set -euo pipefail
+          archive="$(find release -maxdepth 1 -name 'talvik-linux-x86_64.tar.gz' -print -quit)"
+          test -n "$archive"
+          work="$RUNNER_TEMP/talvik-package"
+          mkdir -p "$work"
+          tar -xzf "$archive" -C "$work"
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "$version" == "$GITHUB_REF_NAME" || ! "$version" =~ ^[0-9]+(\.[0-9]+){2}([.-][0-9A-Za-z.-]+)?$ ]]; then
+            version="0.1.0"
+          fi
+          bash scripts/package-talvik-deb.sh \
+            --version "$version" \
+            --talvikd "$work/talvik/bin/talvikd" \
+            --talvik "$work/talvik/bin/talvik" \
+            --native-lib-dir "$work/talvik/lib" \
+            --output "$RUNNER_TEMP/talvik_${version}_amd64.deb"
+          bash scripts/package-talvik-rpm.sh \
+            --version "$version" \
+            --talvikd "$work/talvik/bin/talvikd" \
+            --talvik "$work/talvik/bin/talvik" \
+            --native-lib-dir "$work/talvik/lib" \
+            --output-dir "$RUNNER_TEMP/packages"
+          mkdir -p release
+          cp "$RUNNER_TEMP/talvik_${version}_amd64.deb" release/
+          cp "$RUNNER_TEMP/packages"/talvik-*.rpm release/
+          (cd release && sha256sum talvik-*.deb talvik-*.rpm > checksums.sha256)
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: linux-packages
+          path: release/*
+
   release:
     name: Draft GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, packages]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4.3.0
