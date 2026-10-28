@@ -13,8 +13,10 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_void, CStr, CString};
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
+#[cfg(any(native_llama_cpp, test))]
+use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
-use std::sync::atomic::{AtomicBool, AtomicPtr};
+use std::sync::atomic::AtomicPtr;
 #[cfg(native_llama_cpp)]
 use std::sync::Mutex;
 use std::time::Duration;
