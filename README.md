@@ -138,6 +138,29 @@ The installer uses `%USERPROFILE%\.marina` by default:
 It does not require administrator privileges or install system-wide files.
 Set `TALVIK_HOME` to override this complete Talvik directory.
 
+The ZIP installer does not register or start `talvikd` as a Windows service.
+Start it in a normal PowerShell window:
+
+```powershell
+$talvik = Join-Path $env:USERPROFILE ".marina\bin"
+& (Join-Path $talvik "talvikd.exe")
+```
+
+In another window, check the daemon:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.marina\bin;$env:Path"
+talvik status
+talvik models
+```
+
+Stop the foreground daemon with Ctrl+C. A conventional Windows service
+requires an elevated installation; for non-admin use, a per-user logon task
+could be considered later, but it is not currently installed or supported.
+A per-user MSI is also only proposed and is explicitly not a service installer;
+see [ADR-0030](docs/adr/0030-talvik-per-user-windows-msi.md) and
+[WP-0107](docs/work-packages/WP-0107-talvik-per-user-msi-installer.md).
+
 ### Windows source build
 
 For a source build, open a Visual Studio Developer PowerShell with the C++
@@ -178,32 +201,75 @@ The setup script builds the pinned llama.cpp revision and produces the native
 replace the full native qualification in WP-0079. The API key is sent as a
 Bearer credential to Marina's local HTTP API.
 
-## Local model bring-up on macOS Intel or Apple Silicon
+## Talvik smoke test on Apple Silicon (M4)
 
-Build and install the pinned native dependency into `$HOME/.marina/lib` with:
+This is a native macOS smoke test for Talvik, not a claim that the M4 release
+gate is already qualified. Use a native arm64 terminal (not Rosetta), Rust,
+Xcode Command Line Tools, and CMake (install it with `brew install cmake` if
+needed). Confirm the machine and OS first:
+
+```bash
+uname -m
+sw_vers
+```
+
+`uname -m` should report `arm64`. Build the pinned llama.cpp dependency and
+install Talvik under the standard per-user prefix. On Apple Silicon the setup
+script enables the Metal build option by default:
 
 ```bash
 ./scripts/setup-llama-macos.sh
-```
-
-The separate model-runner installer creates the canonical model store at
-`$HOME/.marina/models`. Import a model into that store with the runner client:
-
-```bash
-./scripts/install-model-runner.sh
+export LLAMA_CPP_LIB_DIR="$HOME/.marina/lib"
+export LLAMA_CPP_REQUIRED=1
+export DYLD_LIBRARY_PATH="$LLAMA_CPP_LIB_DIR${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+./scripts/install-model-runner.sh --native-lib-dir "$LLAMA_CPP_LIB_DIR"
 export PATH="$HOME/.marina/bin:$PATH"
-talvik import \
-  https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf \
-  qwen2.5-0.5b-instruct-q4_k_m
+talvik version
 ```
 
-Then run OID from the repository root with:
+Start Talvik in Terminal 1 with HTTP bound to loopback:
 
 ```bash
-LLAMA_CPP_LIB_DIR="$HOME/.marina/lib" \
-DYLD_LIBRARY_PATH="$HOME/.marina/lib" \
-cargo run -p oid-console --bin oid-console
+TALVIK_DEFAULT_MODEL=qwen2.5-0.5b-instruct-q4_k_m \
+TALVIK_HTTP_ADDR=127.0.0.1:11434 \
+talvikd
 ```
+
+The configured default is this pinned small Qwen GGUF; Talvik downloads it if
+it is missing and loads it during startup. Wait for the daemon to report that
+the model loaded.
+In Terminal 2, check the daemon and run a local generation through Talvik's
+IPC client:
+
+```bash
+talvik status
+talvik models
+talvik run qwen2.5-0.5b-instruct-q4_k_m "What is 36 x 36? Answer with one number."
+talvik --json status
+```
+
+Optional: exercise the external-client HTTP boundary on the same loopback-only
+daemon:
+
+```bash
+TOKEN="$(talvik auth token create m4-smoke 2>/dev/null)"
+curl --fail-with-body --silent --show-error \
+  http://127.0.0.1:11434/v1/chat/completions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen2.5-0.5b-instruct-q4_k_m","messages":[{"role":"user","content":"Reply exactly: Talvik on M4 works"}],"max_tokens":24}'
+unset TOKEN
+```
+
+Stop the daemon with Ctrl+C in Terminal 1. Send back `uname -a`, `talvik
+version`, the JSON status, the CLI/API results, and any daemon errors; do not
+send the bearer token. Record the reported execution placement rather than
+assuming Metal was used: a successful smoke test does not by itself qualify
+Metal acceleration or replace the full native lifecycle gate in
+[WP-0080](docs/work-packages/WP-0080-marina-macos-arm64-qualification.md).
+
+The OID Console is a Linux-first MarinaOS component. This macOS procedure
+tests Talvik directly and does not require or launch `oid-console`.
 
 ## Talvik service and client
 

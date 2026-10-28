@@ -51,6 +51,20 @@ Any optional user-`PATH` integration must be limited to the current user,
 reversible on uninstall, and must not alter machine `PATH`. Its default
 behavior is left for WP-0107 to resolve before implementation.
 
+### Daemon startup and Windows service boundary
+
+The ZIP and proposed per-user MSI install the daemon binary but do not register
+or start it as a Windows service. A conventional Service Control Manager
+service installation requires an elevated service-registration step and is
+not compatible with the non-admin per-user installer boundary. The supported
+initial workflow is to run `talvikd.exe` as the logged-in user.
+
+A current-user Scheduled Task at logon may be evaluated separately if
+automatic startup is needed without elevation. Such a task is not a Windows
+service, is not part of this MSI proposal, and must not be presented as one.
+A true service requires a separate elevated installation and service-identity
+design.
+
 The installer authoring tool, exact Microsoft C/C++ runtime distribution
 strategy, and upgrade behavior when Talvik binaries are in use must be
 selected and pinned in WP-0107. Custom actions that require elevation or
@@ -67,6 +81,9 @@ perform unrelated system changes are not permitted.
 - **Per-machine MSI:** could install shared binaries and services, but would
   require administrator privileges and a different ownership/security model.
   It conflicts with Talvik's current per-user installation boundary.
+- **Per-user startup task:** may start Talvik at the current user's logon
+  without installing a service. It is a possible future opt-in, not part of
+  the initial ZIP/MSI behavior.
 
 ## Consequences
 

@@ -13,6 +13,23 @@ Add a conventional Windows installer artifact for the Talvik model runner
 without changing Talvik's per-user installation boundary or requiring OID,
 MarinaOS, administrator privileges, or a Windows service.
 
+## Recommended rollout
+
+1. Keep the existing per-user ZIP plus PowerShell installer as the immediate
+   Windows distribution path. The user starts `talvikd.exe` manually; install
+   and uninstall must not require elevation or modify machine-wide state.
+2. Add a per-user MSI alongside the ZIP after this package's lifecycle and
+   standard-user acceptance criteria pass. The MSI installs binaries and
+   libraries only; it does not register a service or auto-start the daemon.
+3. Treat automatic startup as a separate optional design. A current-user
+   Scheduled Task may be considered later, but it is not a Windows service and
+   is not included in this MSI work package.
+
+Installing a conventional Windows Service Control Manager service is a
+separate elevated installation mode. It is incompatible with the non-admin
+per-user installer goal and requires its own service identity, data ownership,
+permissions, and upgrade/recovery design.
+
 ## Scope
 
 - Select and pin a maintained MSI authoring toolchain and the supported
@@ -45,6 +62,8 @@ MarinaOS, administrator privileges, or a Windows service.
 - MSIX or per-machine installation.
 - Installing or enabling a Windows service, auto-starting `talvikd`, or
   modifying machine-wide environment variables.
+- Installing a current-user Scheduled Task; that is a possible separate
+  follow-up, not part of this MSI.
 - Installing OID, MarinaOS, an operating-system image, or model artifacts.
 - Downloading models or adding provider/network credentials.
 - Claiming Windows runtime qualification from packaging tests alone.
@@ -70,6 +89,8 @@ MarinaOS, administrator privileges, or a Windows service.
   and uninstall using a temporary user prefix or isolated Windows runner.
 - The installer does not bundle models, start a service, or trigger model
   downloads.
+- A standard-user install does not require UAC elevation. Daemon startup is
+  manual; no service or Scheduled Task is created.
 - Stable public MSI releases have verifiable Authenticode signatures. Any
   unsigned development artifact is clearly marked and is not presented as a
   stable signed release.

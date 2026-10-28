@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the native llama.cpp library used by OID's existing adapter.
+# Build the native llama.cpp library used by Talvik's llama.cpp adapter.
 # The checkout and build stay outside the repository; only the resulting
 # library directory needs to be supplied to Cargo.
 LLAMA_CPP_ROOT="${LLAMA_CPP_ROOT:-${TMPDIR:-/tmp}/oid-llama.cpp}"
@@ -77,7 +77,7 @@ find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
   -exec cp -a {} "$LLAMA_CPP_INSTALL_DIR" \;
 
 echo
-echo "OID native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"
+echo "Talvik native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
-echo "Build/run OID with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo run --release"
+echo "Build Talvik with:"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo build --release -p oid-console --bin talvik --bin talvikd"
