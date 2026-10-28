@@ -13,7 +13,9 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_void, CStr, CString};
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
+#[cfg(native_llama_cpp)]
 use std::sync::atomic::{AtomicBool, AtomicPtr};
+#[cfg(native_llama_cpp)]
 use std::sync::Mutex;
 use std::time::Duration;
 #[cfg(native_llama_cpp)]
@@ -386,6 +388,7 @@ fn compatible_prompt_reuse_len(
         .then(|| cached.prompt_tokens.len().saturating_sub(1))
 }
 
+#[cfg(any(native_llama_cpp, test))]
 fn cached_prefix_matches(reuse_len: usize, actual_max_position: i32) -> bool {
     reuse_len > 0
         && i32::try_from(reuse_len)
