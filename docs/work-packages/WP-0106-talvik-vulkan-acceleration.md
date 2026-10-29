@@ -79,6 +79,10 @@ Linux, and macOS.
   rationale; an unqualified GPU falls back to CPU.
 - Requested and actual offloaded layer counts are distinct. If the pinned
   native API cannot verify actual placement, diagnostics say unknown.
+- Unload resolves the requested model against the authoritative resident map,
+  rejects pinned or actively generating models with explicit errors, repairs
+  stale persisted `Loaded` status, and only reports success after the native
+  handle and resident entry have been removed.
 - `oid-marina-chat --timing` displays selected execution backend/device and
   actual placement; `--benchmark` displays them per run and identifies mixed
   CPU/Vulkan results in its summary.
@@ -153,6 +157,11 @@ inference correctness, memory admission, fallback, or performance.
    conditions.
 8. Run Linux Vulkan regression where supported and macOS CPU-only regression.
    Keep each platform's evidence distinct.
+9. Run the model-unload lifecycle sequence in
+   `docs/qualification/talvik-gpu-qualification.md` for every registered model,
+   including post-generation, cancellation, failed-load, and daemon-restart
+   cases. Capture resident snapshots, daemon logs, process RSS, and device
+   memory before and after each successful unload.
 
 ## Dependencies
 
