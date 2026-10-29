@@ -591,7 +591,23 @@ fn compatibility_ps(runtime: &dyn RuntimeService) -> Value {
                 "name": resident.id,
                 "model": resident.id,
                 "size": resident.memory_bytes,
-                "size_vram": null,
+                "size_vram": resident.gpu_memory_bytes,
+                "host_memory_bytes": resident.host_memory_bytes,
+                "residency": "loaded",
+                "execution_device": resident.execution_device,
+                "selected_backend": resident.selected_backend,
+                "requested_placement": resident.requested_placement,
+                "gpu_layers_requested": resident.gpu_layers_requested,
+                "gpu_layers_offloaded": resident.gpu_layers_offloaded,
+                "fallback_applied": resident.fallback_applied,
+                "fallback_reason": resident.fallback_reason,
+                "load_duration_ms": resident.load_duration_ms,
+                "qualification": {
+                    "cpu": "not_run",
+                    "cuda": "not_run",
+                    "vulkan": "not_run",
+                    "metal": "not_run"
+                },
                 "expires_at": null,
                 "digest": model.and_then(|model| model.checksum.as_deref()),
                 "idle_seconds": resident.idle_seconds,
@@ -753,6 +769,12 @@ fn ollama_embeddings(
 
 fn duration_nanos(duration: Duration) -> u128 {
     duration.as_nanos()
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn prompt_tokens_per_second(tokens: u64, duration_ms: Option<u128>) -> Option<f64> {
+    duration_ms
+        .and_then(|duration| (duration > 0).then_some(tokens as f64 * 1000.0 / duration as f64))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -3398,6 +3420,7 @@ fn generate(
                             "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
                             "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
                             "prompt_eval_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "prompt_tokens_per_second": prompt_tokens_per_second(result.statistics.prompt_tokens, result.statistics.prompt_evaluation_time_ms),
                             "generation_time_ms": result.statistics.generation_time_ms,
                             "model_load_time_ms": model_load_time_ms,
                             "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens),
@@ -3494,6 +3517,7 @@ fn generate(
                             "time_to_first_token_ms": result.statistics.time_to_first_token_ms,
                             "prompt_evaluation_time_ms": result.statistics.prompt_evaluation_time_ms,
                             "prompt_eval_time_ms": result.statistics.prompt_evaluation_time_ms,
+                            "prompt_tokens_per_second": prompt_tokens_per_second(result.statistics.prompt_tokens, result.statistics.prompt_evaluation_time_ms),
                             "generation_time_ms": result.statistics.generation_time_ms,
                             "model_load_time_ms": model_load_time_ms,
                             "context_tokens": result.statistics.metrics_known.then_some(result.statistics.context_tokens),

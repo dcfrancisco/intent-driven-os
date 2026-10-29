@@ -262,11 +262,42 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
         }
         "status" => {
             let snapshot = runtime.snapshot();
+            let hardware = runtime.hardware();
+            let diagnostics = serde_json::json!({
+                "host": {
+                    "installed_ram_bytes": hardware.installed_ram_bytes,
+                    "available_ram_bytes": hardware.available_ram_bytes,
+                    "process_memory_bytes": hardware.process_memory_bytes,
+                },
+                "devices": hardware.accelerator_devices.iter().map(|device| serde_json::json!({
+                    "backend": device.backend.as_str(),
+                    "name": device.name.as_str(),
+                    "compiled": device.compiled,
+                    "available": device.available,
+                    "free_memory_bytes": device.free_memory_bytes,
+                    "total_memory_bytes": device.total_memory_bytes,
+                    "shared_memory": device.shared_memory,
+                })).collect::<Vec<_>>(),
+                "resident_models": snapshot.resident_models.iter().map(|model| serde_json::json!({
+                    "model": model.id.as_str(),
+                    "residency": "loaded",
+                    "selected_backend": model.selected_backend.as_deref(),
+                    "execution_device": model.execution_device.as_deref(),
+                    "gpu_layers_requested": model.gpu_layers_requested,
+                    "gpu_layers_offloaded": model.gpu_layers_offloaded,
+                    "host_memory_bytes": model.host_memory_bytes,
+                    "gpu_memory_bytes": model.gpu_memory_bytes,
+                    "fallback_applied": model.fallback_applied,
+                    "fallback_reason": model.fallback_reason.as_deref(),
+                    "load_duration_ms": model.load_duration_ms,
+                })).collect::<Vec<_>>(),
+                "qualification": {"cpu":"not_run","cuda":"not_run","vulkan":"not_run","metal":"not_run"}
+            });
             let client_version = fields.get(1).copied().unwrap_or_default();
             let identity = build_info::current();
             writeln!(
                 stream,
-                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 snapshot.health,
                 snapshot.backend,
                 snapshot.loaded_model.clone().unwrap_or_default(),
@@ -289,7 +320,8 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
                 snapshot.generating,
                 snapshot.current_tokens_per_second.map_or_else(String::new, |value| value.to_string()),
                 snapshot.loaded_context.map_or_else(String::new, |value| value.to_string()),
-                snapshot.inference_threads.map_or_else(String::new, |value| value.to_string())
+                snapshot.inference_threads.map_or_else(String::new, |value| value.to_string()),
+                ipc::encode_field(&diagnostics.to_string())
             )?;
         }
         "tokenize" if fields.len() >= 2 => {

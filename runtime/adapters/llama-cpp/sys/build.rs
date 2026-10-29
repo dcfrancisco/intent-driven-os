@@ -46,6 +46,8 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib={library_name}");
+    println!("cargo:rustc-link-lib=dylib=ggml");
+    println!("cargo:rustc-link-lib=dylib=ggml-base");
     // Release packages place native libraries next to the executable's
     // parent `lib` directory. Keep the binary relocatable inside the Marina
     // user prefix instead of requiring LD_LIBRARY_PATH/DYLD_LIBRARY_PATH.

@@ -216,9 +216,10 @@ impl ModelRegistry {
         let previous_projector = model.vision_projector_location.clone();
         let previous_capabilities = model.capabilities.clone();
         let previous_memory_requirement = model.memory_requirement_mb;
-        model.vision_projector_location = projector_path.clone();
+        let has_projector = projector_path.is_some();
+        model.vision_projector_location = projector_path;
         model.memory_requirement_mb = total_size.div_ceil(1_048_576);
-        if projector_path.is_some() {
+        if has_projector {
             if !model
                 .capabilities
                 .iter()

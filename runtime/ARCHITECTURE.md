@@ -205,6 +205,23 @@ metrics. The backend owns context creation, sampling, decoding, and token
 piece conversion. The first native adapter uses the official llama.cpp C API;
 future adapters implement the same callback boundary.
 
+### Accelerator placement and memory
+
+Talvik separates registered artifacts, host-resident models, GPU placement,
+and active inference. The control plane serializes model loads, admits their
+estimated peak host and dedicated-device allocations independently, preserves
+host/VRAM reserves, and may evict only eligible idle unpinned residents.
+Shared/unified device memory is protected by host admission and is not counted
+again as dedicated VRAM.
+
+The llama.cpp adapter selects only devices enumerated by the linked ggml
+runtime and passes the chosen device plus `n_gpu_layers` through the real
+model-load call. Automatic GPU selection additionally requires an operator
+qualification allowlist. GPU-required placement never falls back to CPU;
+preferred placement records its fallback reason. Requested layers are never
+reported as actual layers: actual offload remains unknown when the pinned
+native API cannot verify it.
+
 ## Module responsibilities
 
 | Module | Responsibility | Must not own |

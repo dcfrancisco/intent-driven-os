@@ -53,6 +53,7 @@ struct GrammarBuilder {
 }
 
 impl GrammarBuilder {
+    #[allow(clippy::needless_pass_by_value)]
     fn add_rule(&mut self, body: String) -> String {
         let name = format!("schema-{}", self.rules.len());
         self.rules.push(format!("{name} ::= {body}"));
@@ -95,6 +96,7 @@ impl GrammarBuilder {
         }
     }
 
+    #[allow(clippy::format_push_string)]
     fn compile_object(
         &mut self,
         schema: &serde_json::Map<String, Value>,
@@ -251,6 +253,11 @@ mod tests {
                 model_id: ModelId::new("structured-test").expect("model id"),
                 path: ModelPath::new(model_path).expect("model path"),
                 vision_projector_path: None,
+                placement: oid_model_runner::PlacementRequest {
+                    policy: oid_model_runner::PlacementPolicy::CpuOnly,
+                    backend: oid_model_runner::ExecutionBackend::Cpu,
+                    gpu_layers: Some(0),
+                },
             })
             .expect("load native model");
 

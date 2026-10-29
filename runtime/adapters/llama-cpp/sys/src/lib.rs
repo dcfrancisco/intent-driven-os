@@ -13,12 +13,12 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_void, CStr, CString};
 #[cfg(native_mtmd)]
 use std::io::Cursor;
-#[cfg(native_llama_cpp)]
-use std::sync::atomic::Ordering;
 #[cfg(any(native_llama_cpp, test))]
 use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::AtomicPtr;
+#[cfg(native_llama_cpp)]
+use std::sync::atomic::Ordering;
 #[cfg(native_llama_cpp)]
 use std::sync::Mutex;
 use std::time::Duration;
@@ -265,6 +265,12 @@ mod ffi {
         ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
         pub fn llama_model_n_embd(model: *const c_void) -> i32;
+        pub fn ggml_backend_dev_count() -> usize;
+        pub fn ggml_backend_dev_get(index: usize) -> *mut c_void;
+        pub fn ggml_backend_dev_name(device: *mut c_void) -> *const c_char;
+        pub fn ggml_backend_dev_memory(device: *mut c_void, free: *mut usize, total: *mut usize);
+        pub fn ggml_backend_dev_backend_reg(device: *mut c_void) -> *mut c_void;
+        pub fn ggml_backend_reg_name(registry: *mut c_void) -> *const c_char;
         pub fn llama_get_embeddings(ctx: *mut c_void) -> *const f32;
         pub fn llama_chat_apply_template(
             template: *const c_char,
@@ -520,6 +526,143 @@ pub struct NativeModel {
     #[cfg_attr(not(native_llama_cpp), allow(dead_code))]
     pointer: *mut c_void,
     memory_bytes: u64,
+    placement: NativePlacement,
+}
+
+/// Native execution backend names understood by Talvik.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeBackend {
+    /// NVIDIA CUDA.
+    Cuda,
+    /// Khronos Vulkan.
+    Vulkan,
+    /// Apple Metal.
+    Metal,
+    /// Portable CPU backend.
+    Cpu,
+}
+
+impl NativeBackend {
+    /// Stable diagnostics name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cuda => "cuda",
+            Self::Vulkan => "vulkan",
+            Self::Metal => "metal",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
+/// One backend device enumerated by the linked ggml runtime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeDevice {
+    /// Backend family.
+    pub backend: NativeBackend,
+    /// Native device name.
+    pub name: String,
+    /// Free device memory, when reported.
+    pub free_memory_bytes: Option<u64>,
+    /// Total device memory, when reported.
+    pub total_memory_bytes: Option<u64>,
+    /// Whether the device shares host memory, when known.
+    pub shared_memory: Option<bool>,
+}
+
+/// Native model-load placement controls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeLoadOptions {
+    /// Selected backend.
+    pub backend: NativeBackend,
+    /// Requested GPU layers. Zero is always CPU-only.
+    pub gpu_layers: u32,
+}
+
+#[cfg(test)]
+const fn cpu_load_options() -> NativeLoadOptions {
+    NativeLoadOptions {
+        backend: NativeBackend::Cpu,
+        gpu_layers: 0,
+    }
+}
+
+/// Placement facts observed after native model loading.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativePlacement {
+    /// Selected backend.
+    pub backend: NativeBackend,
+    /// Selected device name, when known.
+    pub device: Option<String>,
+    /// Requested GPU layers.
+    pub requested_gpu_layers: u32,
+    /// Actual offloaded layers, only when the pinned API verifies the count.
+    pub offloaded_gpu_layers: Option<u32>,
+    /// Whether llama.cpp reports any non-CPU device used by the model.
+    pub accelerator_used: bool,
+}
+
+/// Enumerate devices registered by the linked ggml build.
+#[must_use]
+pub fn devices() -> Vec<NativeDevice> {
+    #[cfg(native_llama_cpp)]
+    unsafe {
+        let mut devices = Vec::new();
+        for index in 0..ffi::ggml_backend_dev_count() {
+            let device = ffi::ggml_backend_dev_get(index);
+            if device.is_null() {
+                continue;
+            }
+            let backend = ffi::ggml_backend_dev_backend_reg(device);
+            let backend_name = if backend.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(ffi::ggml_backend_reg_name(backend))
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+            };
+            let backend = if backend_name.contains("cuda") {
+                NativeBackend::Cuda
+            } else if backend_name.contains("vulkan") {
+                NativeBackend::Vulkan
+            } else if backend_name.contains("metal") {
+                NativeBackend::Metal
+            } else {
+                NativeBackend::Cpu
+            };
+            let name = CStr::from_ptr(ffi::ggml_backend_dev_name(device))
+                .to_string_lossy()
+                .into_owned();
+            let mut free = 0_usize;
+            let mut total = 0_usize;
+            ffi::ggml_backend_dev_memory(
+                device,
+                std::ptr::addr_of_mut!(free),
+                std::ptr::addr_of_mut!(total),
+            );
+            // The pinned ggml API does not expose a portable dedicated/shared
+            // pool flag. Metal is unified and CUDA reports dedicated device
+            // memory; Vulkan remains unknown because it may be discrete or
+            // integrated. CPU capacity is host memory.
+            let shared_memory = match backend {
+                NativeBackend::Metal | NativeBackend::Cpu => Some(true),
+                NativeBackend::Cuda => Some(false),
+                NativeBackend::Vulkan => None,
+            };
+            devices.push(NativeDevice {
+                backend,
+                name,
+                free_memory_bytes: u64::try_from(free).ok().filter(|value| *value > 0),
+                total_memory_bytes: u64::try_from(total).ok().filter(|value| *value > 0),
+                shared_memory,
+            });
+        }
+        devices
+    }
+    #[cfg(not(native_llama_cpp))]
+    {
+        Vec::new()
+    }
 }
 
 #[cfg(native_mtmd)]
@@ -724,6 +867,12 @@ impl NativeModel {
         self.memory_bytes
     }
 
+    /// Return placement facts observed during native loading.
+    #[must_use]
+    pub fn placement(&self) -> &NativePlacement {
+        &self.placement
+    }
+
     /// Drop the retained inference context and its KV cache for this model.
     ///
     /// # Errors
@@ -851,6 +1000,7 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
+    #[allow(clippy::too_many_lines)]
     fn format_prompt(&self, prompt: &str) -> Result<String, String> {
         unsafe {
             let template =
@@ -1069,6 +1219,7 @@ impl NativeModel {
     ///
     /// Returns an error when context creation, decoding, sampling, or native
     /// linking fails.
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_stream_with_grammar<F>(
         &self,
         prompt: &str,
@@ -1108,6 +1259,11 @@ impl NativeModel {
     ///
     /// Returns an error when input decoding, multimodal preprocessing, context
     /// creation, sampling, or native decoding fails.
+    #[allow(
+        clippy::missing_panics_doc,
+        clippy::too_many_arguments,
+        clippy::too_many_lines
+    )]
     pub fn generate_stream_with_grammar_and_images<F>(
         &self,
         prompt: &str,
@@ -1167,6 +1323,7 @@ impl NativeModel {
                 return Err("generation cancelled".to_owned());
             }
             let formatted_prompt = self.format_prompt(prompt)?;
+            #[allow(unused_assignments)]
             let mut prompt_tokens = Vec::new();
             let prompt_count: usize;
             #[cfg(native_mtmd)]
@@ -1496,7 +1653,8 @@ impl NativeModel {
                 let text = unsafe { Self::token_piece(vocab, token) }?;
                 let (text, mut terminal) = Self::terminal_piece_prefix(&text);
                 pending_utf8.extend_from_slice(text);
-                let (delta, marker_seen) = marker_filter.push(&take_complete_utf8(&mut pending_utf8));
+                let (delta, marker_seen) =
+                    marker_filter.push(&take_complete_utf8(&mut pending_utf8));
                 terminal |= marker_seen;
                 if !delta.is_empty() {
                     if delta == previous_piece {
@@ -1576,8 +1734,7 @@ impl NativeModel {
                 }
             }
             if !cancelled_result && !pending_utf8.is_empty() {
-                let (final_text, _) =
-                    marker_filter.push(&String::from_utf8_lossy(&pending_utf8));
+                let (final_text, _) = marker_filter.push(&String::from_utf8_lossy(&pending_utf8));
                 if !final_text.is_empty() && !callback(&final_text) {
                     cancelled_result = true;
                 }
@@ -1672,7 +1829,8 @@ mod tests {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
-        let model = super::load_model(&model_path, None).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None, super::cpu_load_options())
+            .expect("test GGUF should load");
         let formatted = model
             .format_prompt("Reply with exactly: MARINA_OK")
             .expect("embedded chat template should format the prompt");
@@ -1705,8 +1863,12 @@ mod tests {
         let images = [("image/png".to_owned(), image_bytes.as_slice())];
 
         super::initialize().expect("native backend should initialize");
-        let model = super::load_model(&model_path, Some(&projector_path))
-            .expect("vision model and projector should load");
+        let model = super::load_model(
+            &model_path,
+            Some(&projector_path),
+            super::cpu_load_options(),
+        )
+        .expect("vision model and projector should load");
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let mut answer = String::new();
         model
@@ -1785,7 +1947,8 @@ mod tests {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
-        let model = super::load_model(&model_path, None).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None, super::cpu_load_options())
+            .expect("test GGUF should load");
         let prompt = format!("Summarize briefly: {}", "token ".repeat(700));
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let result = model.generate_stream(
@@ -1815,7 +1978,8 @@ mod tests {
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
         let load_started = std::time::Instant::now();
-        let model = super::load_model(&model_path, None).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None, super::cpu_load_options())
+            .expect("test GGUF should load");
         let load_time = load_started.elapsed();
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let prompt = "Reply briefly to the user.";
@@ -2107,12 +2271,36 @@ impl Drop for NativeModel {
 ///
 /// Returns an error when native linking is unavailable, the path contains an
 /// embedded NUL, or llama.cpp rejects the model.
-pub fn load_model(path: &str, projector_path: Option<&str>) -> Result<NativeModel, String> {
+pub fn load_model(
+    path: &str,
+    projector_path: Option<&str>,
+    options: NativeLoadOptions,
+) -> Result<NativeModel, String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let path = CString::new(path).map_err(|_| "model path contains NUL".to_owned())?;
-        let pointer =
-            ffi::llama_model_load_from_file(path.as_ptr(), ffi::llama_model_default_params());
+        let available = devices();
+        let selected = available
+            .iter()
+            .position(|device| device.backend == options.backend);
+        if options.backend != NativeBackend::Cpu && selected.is_none() {
+            return Err(format!(
+                "requested {} backend is not compiled, initialized, and usable",
+                options.backend.as_str()
+            ));
+        }
+        let mut params = ffi::llama_model_default_params();
+        params.n_gpu_layers = i32::try_from(options.gpu_layers).unwrap_or(i32::MAX);
+        let mut native_devices = selected.map(|index| {
+            vec![
+                ffi::ggml_backend_dev_get(index),
+                std::ptr::null_mut::<c_void>(),
+            ]
+        });
+        if let Some(native_devices) = native_devices.as_mut() {
+            params.devices = native_devices.as_mut_ptr();
+        }
+        let pointer = ffi::llama_model_load_from_file(path.as_ptr(), params);
         if pointer.is_null() {
             return Err("llama.cpp rejected the model".to_owned());
         }
@@ -2151,6 +2339,7 @@ pub fn load_model(path: &str, projector_path: Option<&str>) -> Result<NativeMode
             return Err("this build does not include llama.cpp MTMD support".to_owned());
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
+        let device = selected.map(|index| available[index].name.clone());
         Ok(NativeModel {
             context: Mutex::new(None),
             #[cfg(native_mtmd)]
@@ -2159,11 +2348,25 @@ pub fn load_model(path: &str, projector_path: Option<&str>) -> Result<NativeMode
             mtmd_relay,
             pointer,
             memory_bytes,
+            placement: NativePlacement {
+                backend: if options.gpu_layers == 0 {
+                    NativeBackend::Cpu
+                } else {
+                    options.backend
+                },
+                device: (options.gpu_layers > 0).then_some(device).flatten(),
+                requested_gpu_layers: options.gpu_layers,
+                // The pinned API exposes device count, but not a reliable
+                // layer count. Keep this unknown instead of echoing the
+                // requested value as an observed fact.
+                offloaded_gpu_layers: (options.gpu_layers == 0).then_some(0),
+                accelerator_used: options.backend != NativeBackend::Cpu && options.gpu_layers > 0,
+            },
         })
     }
     #[cfg(not(native_llama_cpp))]
     {
-        let _ = (path, projector_path);
+        let _ = (path, projector_path, options);
         Err("native llama.cpp is unavailable".to_owned())
     }
 }

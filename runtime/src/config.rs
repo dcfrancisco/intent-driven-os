@@ -42,6 +42,79 @@ pub struct HttpConfig {
     pub authentication_enabled: bool,
 }
 
+/// Backend-neutral model placement configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlacementConfig {
+    /// Placement policy.
+    pub policy: oid_model_runner::PlacementPolicy,
+    /// Requested execution backend.
+    pub backend: oid_model_runner::ExecutionBackend,
+    /// Optional explicit GPU layer limit.
+    pub gpu_layers: Option<u32>,
+}
+
+/// Load placement controls from the normal Talvik environment/YAML boundary.
+///
+/// Environment variables take precedence over `placement_policy`,
+/// `execution_backend`, and `gpu_layers` in `config.yaml`.
+///
+/// # Errors
+///
+/// Returns an error for an unknown policy/backend or invalid layer count.
+pub fn placement_config() -> Result<PlacementConfig, String> {
+    let values = read_config_file(&config_file())?;
+    let policy = std::env::var("TALVIK_PLACEMENT")
+        .ok()
+        .or_else(|| values.get("placement_policy").cloned())
+        .unwrap_or_else(|| "automatic".to_owned());
+    let policy = match policy.trim().to_ascii_lowercase().as_str() {
+        "automatic" | "auto" => oid_model_runner::PlacementPolicy::Automatic,
+        "cpu" | "cpu_only" | "cpu-only" => oid_model_runner::PlacementPolicy::CpuOnly,
+        "gpu_preferred" | "gpu-preferred" | "preferred" => {
+            oid_model_runner::PlacementPolicy::GpuPreferred
+        }
+        "gpu_required" | "gpu-required" | "required" => {
+            oid_model_runner::PlacementPolicy::GpuRequired
+        }
+        value => return Err(format!("unsupported placement policy `{value}`")),
+    };
+    let backend = std::env::var("TALVIK_BACKEND")
+        .ok()
+        .or_else(|| values.get("execution_backend").cloned())
+        .unwrap_or_else(|| "auto".to_owned());
+    let backend = match backend.trim().to_ascii_lowercase().as_str() {
+        "auto" => oid_model_runner::ExecutionBackend::Auto,
+        "cuda" => oid_model_runner::ExecutionBackend::Cuda,
+        "vulkan" => oid_model_runner::ExecutionBackend::Vulkan,
+        "metal" => oid_model_runner::ExecutionBackend::Metal,
+        "cpu" => oid_model_runner::ExecutionBackend::Cpu,
+        value => return Err(format!("unsupported execution backend `{value}`")),
+    };
+    let gpu_layers = std::env::var("TALVIK_GPU_LAYERS")
+        .ok()
+        .or_else(|| values.get("gpu_layers").cloned())
+        .map(|value| {
+            value
+                .parse::<u32>()
+                .map_err(|_| format!("invalid gpu_layers `{value}`"))
+        })
+        .transpose()?;
+    if policy == oid_model_runner::PlacementPolicy::GpuRequired && gpu_layers == Some(0) {
+        return Err("gpu-required placement cannot request zero GPU layers".to_owned());
+    }
+    if policy == oid_model_runner::PlacementPolicy::CpuOnly
+        && backend != oid_model_runner::ExecutionBackend::Cpu
+        && backend != oid_model_runner::ExecutionBackend::Auto
+    {
+        return Err("cpu-only placement cannot request a GPU backend".to_owned());
+    }
+    Ok(PlacementConfig {
+        policy,
+        backend,
+        gpu_layers,
+    })
+}
+
 /// Load the native HTTP listener configuration.
 ///
 /// # Errors

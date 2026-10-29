@@ -39,6 +39,12 @@ pub struct ResourcePolicy {
     pub memory_budget_bytes: Option<u64>,
     /// Safety reservation retained after estimated allocations.
     pub safety_margin_bytes: u64,
+    /// Optional hard dedicated-VRAM budget.
+    pub gpu_memory_budget_bytes: Option<u64>,
+    /// Dedicated VRAM retained for the display driver and other applications.
+    pub vram_reserve_bytes: u64,
+    /// Peak-load overhead applied to model weight estimates, in percent.
+    pub load_peak_percent: u64,
     /// Whether idle models may be automatically unloaded for a request.
     pub automatic_eviction: bool,
     /// Maximum number of idle-model evictions for one request.
@@ -59,6 +65,9 @@ impl Default for ResourcePolicy {
             max_resident_models: 0,
             memory_budget_bytes: None,
             safety_margin_bytes: SAFETY_MARGIN_BYTES,
+            gpu_memory_budget_bytes: None,
+            vram_reserve_bytes: VRAM_RESERVE_BYTES,
+            load_peak_percent: 125,
             automatic_eviction: true,
             recovery_budget: 8,
             admission_timeout: Duration::from_secs(30),
@@ -86,6 +95,21 @@ impl ResourcePolicy {
             .and_then(|value| value.to_str().and_then(|value| value.parse().ok()))
         {
             policy.safety_margin_bytes = value;
+        }
+        if let Some(value) = std::env::var_os("TALVIK_GPU_MEMORY_BUDGET_BYTES")
+            .and_then(|value| value.to_str().and_then(|value| value.parse().ok()))
+        {
+            policy.gpu_memory_budget_bytes = Some(value);
+        }
+        if let Some(value) = std::env::var_os("TALVIK_VRAM_RESERVE_BYTES")
+            .and_then(|value| value.to_str().and_then(|value| value.parse().ok()))
+        {
+            policy.vram_reserve_bytes = value;
+        }
+        if let Some(value) = std::env::var_os("TALVIK_LOAD_PEAK_PERCENT")
+            .and_then(|value| value.to_str().and_then(|value| value.parse::<u64>().ok()))
+        {
+            policy.load_peak_percent = value.max(100);
         }
         if let Some(value) = std::env::var_os("TALVIK_AUTOMATIC_EVICTION") {
             policy.automatic_eviction = !matches!(
@@ -426,6 +450,7 @@ fn admit_generation(
 }
 
 const SAFETY_MARGIN_BYTES: u64 = 512 * 1_048_576;
+const VRAM_RESERVE_BYTES: u64 = 512 * 1_048_576;
 const KV_BYTES_PER_CONTEXT_TOKEN: u64 = 16 * 1024;
 const DEFAULT_CONTEXT_SIZE: u32 = 4_096;
 
@@ -481,11 +506,113 @@ fn admit_memory_with_resident(
     Ok(())
 }
 
+fn admit_gpu_load(
+    hardware: &HardwareSnapshot,
+    resident_gpu_bytes: u64,
+    model_bytes: u64,
+    policy: &ResourcePolicy,
+) -> Result<(), RuntimeError> {
+    let placement = crate::config::placement_config().map_err(|error| {
+        RuntimeError::ModelLifecycle(format!("invalid placement configuration: {error}"))
+    })?;
+    if placement.policy == oid_model_runner::PlacementPolicy::CpuOnly
+        || placement.backend == oid_model_runner::ExecutionBackend::Cpu
+    {
+        return Ok(());
+    }
+    let candidates: Vec<_> = hardware
+        .accelerator_devices
+        .iter()
+        .filter(|device| device.backend != oid_model_runner::ExecutionBackend::Cpu)
+        .filter(|device| {
+            placement.backend == oid_model_runner::ExecutionBackend::Auto
+                || placement.backend == device.backend
+        })
+        .collect();
+    if placement.policy == oid_model_runner::PlacementPolicy::Automatic
+        && placement.backend == oid_model_runner::ExecutionBackend::Auto
+    {
+        let qualified = std::env::var("TALVIK_QUALIFIED_GPU_BACKENDS").unwrap_or_default();
+        let qualified = qualified.split(',').map(str::trim).collect::<BTreeSet<_>>();
+        if !candidates
+            .iter()
+            .any(|device| qualified.contains(device.backend.as_str()))
+        {
+            return Ok(());
+        }
+    }
+    if candidates.is_empty() {
+        if placement.policy == oid_model_runner::PlacementPolicy::GpuRequired {
+            return Err(RuntimeError::ResourceAdmission {
+                retryable: false,
+                message: "GPU placement required but no compiled, initialized, usable backend is available".to_owned(),
+            });
+        }
+        return Ok(());
+    }
+    let dedicated = candidates
+        .iter()
+        .find(|device| device.shared_memory == Some(false));
+    let Some(device) = dedicated else {
+        // Shared/unified memory is already protected by host admission and
+        // must not be counted a second time as dedicated VRAM.
+        if candidates
+            .iter()
+            .any(|device| device.shared_memory.is_none())
+            && placement.policy == oid_model_runner::PlacementPolicy::GpuRequired
+        {
+            return Err(RuntimeError::ResourceAdmission {
+                retryable: true,
+                message:
+                    "GPU memory admission unavailable: dedicated versus shared memory is unknown"
+                        .to_owned(),
+            });
+        }
+        return Ok(());
+    };
+    let peak_model_bytes = model_bytes
+        .saturating_mul(policy.load_peak_percent)
+        .saturating_add(99)
+        / 100;
+    let incremental = peak_model_bytes.saturating_add(policy.vram_reserve_bytes);
+    let available = device
+        .free_memory_bytes
+        .ok_or_else(|| RuntimeError::ResourceAdmission {
+            retryable: true,
+            message: format!(
+                "GPU memory admission unavailable for {}: free dedicated VRAM is unknown",
+                device.name
+            ),
+        })?;
+    if available < incremental {
+        return Err(RuntimeError::ResourceAdmission {
+            retryable: true,
+            message: format!(
+                "GPU memory admission rejected: device={} available={} required={} model_peak={} reserve={}",
+                device.name, available, incremental, peak_model_bytes, policy.vram_reserve_bytes
+            ),
+        });
+    }
+    if let Some(budget) = policy.gpu_memory_budget_bytes {
+        let required = resident_gpu_bytes.saturating_add(incremental);
+        if budget < required {
+            return Err(RuntimeError::ResourceAdmission {
+                retryable: true,
+                message: format!(
+                    "GPU memory budget rejected: budget={budget} required={required} resident={resident_gpu_bytes}"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 impl RuntimeService for MarinaRuntime {
     fn status(&self) -> RuntimeStatus {
         <Self as RuntimeApi>::status(self)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn snapshot(&self) -> RuntimeSnapshot {
         let last_used = self
             .last_used
@@ -501,6 +628,37 @@ impl RuntimeService for MarinaRuntime {
                     .map(|model| ResidentModelSnapshot {
                         id: model.model_id.clone(),
                         memory_bytes: Some(model.memory_bytes),
+                        host_memory_bytes: model.host_memory_bytes,
+                        gpu_memory_bytes: model.gpu_memory_bytes,
+                        requested_placement: model
+                            .placement
+                            .as_ref()
+                            .map(|placement| placement.requested_policy.as_str().to_owned()),
+                        selected_backend: model
+                            .placement
+                            .as_ref()
+                            .map(|placement| placement.selected_backend.as_str().to_owned()),
+                        execution_device: model
+                            .placement
+                            .as_ref()
+                            .and_then(|placement| placement.selected_device.clone()),
+                        gpu_layers_requested: model
+                            .placement
+                            .as_ref()
+                            .map(|placement| placement.gpu_layers_requested),
+                        gpu_layers_offloaded: model
+                            .placement
+                            .as_ref()
+                            .and_then(|placement| placement.gpu_layers_offloaded),
+                        fallback_applied: model
+                            .placement
+                            .as_ref()
+                            .is_some_and(|placement| placement.fallback_applied),
+                        fallback_reason: model
+                            .placement
+                            .as_ref()
+                            .and_then(|placement| placement.fallback_reason.clone()),
+                        load_duration_ms: model.load_duration_ms,
                         idle_seconds: last_used
                             .get(&model.model_id)
                             .copied()
@@ -621,6 +779,7 @@ impl RuntimeService for MarinaRuntime {
         Ok(model)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
         let _residency_guard = self
             .residency_lock
@@ -664,15 +823,40 @@ impl RuntimeService for MarinaRuntime {
             .ok_or_else(|| {
                 RuntimeError::ModelLifecycle("model memory estimate overflow".to_owned())
             })?;
+        let peak_estimated_model_bytes = estimated_model_bytes
+            .saturating_mul(self.resource_policy.load_peak_percent)
+            .saturating_add(99)
+            / 100;
+        let hardware = self.hardware.snapshot();
+        let resident_gpu_bytes = self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .values()
+            .filter_map(|loaded| {
+                loaded.gpu_memory_bytes.or_else(|| {
+                    loaded.placement.as_ref().and_then(|placement| {
+                        (placement.selected_backend != oid_model_runner::ExecutionBackend::Cpu)
+                            .then_some(loaded.memory_bytes)
+                    })
+                })
+            })
+            .sum::<u64>();
+        admit_gpu_load(
+            &hardware,
+            resident_gpu_bytes,
+            estimated_model_bytes,
+            &self.resource_policy,
+        )?;
         // Loading is admitted against the default context reservation so a
         // model cannot become visibly Loaded while the default generation
         // request is already known to be impossible. The backend-reported
         // size is checked again after native loading because a GGUF may need
         // additional repack/working memory beyond its registry estimate.
         admit_memory_with_resident(
-            self.hardware.snapshot().available_ram_bytes,
+            hardware.available_ram_bytes,
             resident_bytes,
-            estimated_model_bytes,
+            peak_estimated_model_bytes,
             DEFAULT_CONTEXT_SIZE,
             &self.resource_policy,
         )?;
@@ -705,7 +889,10 @@ impl RuntimeService for MarinaRuntime {
                 Ok(())
             }
             Err(error) => {
-                let _ = self.models.set_status(id, &ModelStatus::Failed);
+                // A failed candidate load has no residency reservation and
+                // remains retryable. Do not leave durable metadata claiming
+                // that a non-resident model is loaded or permanently failed.
+                let _ = self.models.set_status(id, &ModelStatus::Registered);
                 self.bus
                     .publish(&RuntimeEvent::ErrorRaised(error.to_string()));
                 Err(error)
@@ -1499,6 +1686,10 @@ mod tests {
                 crate::backends::LoadedModel {
                     model_id: "alpha".to_owned(),
                     memory_bytes: 1,
+                    host_memory_bytes: Some(1),
+                    gpu_memory_bytes: None,
+                    placement: None,
+                    load_duration_ms: None,
                 },
             ),
             (
@@ -1506,6 +1697,10 @@ mod tests {
                 crate::backends::LoadedModel {
                     model_id: "beta".to_owned(),
                     memory_bytes: 1,
+                    host_memory_bytes: Some(1),
+                    gpu_memory_bytes: None,
+                    placement: None,
+                    load_duration_ms: None,
                 },
             ),
         ]);
@@ -1545,6 +1740,10 @@ mod tests {
             crate::backends::LoadedModel {
                 model_id: "recent".to_owned(),
                 memory_bytes: 1,
+                host_memory_bytes: Some(1),
+                gpu_memory_bytes: None,
+                placement: None,
+                load_duration_ms: None,
             },
         );
         runtime

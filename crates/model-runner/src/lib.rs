@@ -91,6 +91,118 @@ pub struct LoadModelRequest {
     pub path: ModelPath,
     /// Optional multimodal projector paired with the text model.
     pub vision_projector_path: Option<ModelPath>,
+    /// Backend-neutral placement requested for this load.
+    pub placement: PlacementRequest,
+}
+
+/// Accelerator backend requested or selected for a model.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ExecutionBackend {
+    /// Let Talvik select an eligible compiled and usable backend.
+    #[default]
+    Auto,
+    /// NVIDIA CUDA.
+    Cuda,
+    /// Khronos Vulkan.
+    Vulkan,
+    /// Apple Metal.
+    Metal,
+    /// Portable CPU execution.
+    Cpu,
+}
+
+impl ExecutionBackend {
+    /// Stable configuration and diagnostics name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Cuda => "cuda",
+            Self::Vulkan => "vulkan",
+            Self::Metal => "metal",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
+/// Policy controlling how a model may be placed.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PlacementPolicy {
+    /// Select conservatively from qualified routes and available memory.
+    #[default]
+    Automatic,
+    /// Keep all model layers on the CPU.
+    CpuOnly,
+    /// Prefer a usable GPU but permit an observable CPU fallback.
+    GpuPreferred,
+    /// Require successful GPU placement; CPU fallback is forbidden.
+    GpuRequired,
+}
+
+impl PlacementPolicy {
+    /// Stable configuration and diagnostics name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Automatic => "automatic",
+            Self::CpuOnly => "cpu_only",
+            Self::GpuPreferred => "gpu_preferred",
+            Self::GpuRequired => "gpu_required",
+        }
+    }
+}
+
+/// Placement controls passed through the backend-neutral load boundary.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlacementRequest {
+    /// Placement policy.
+    pub policy: PlacementPolicy,
+    /// Backend preference or requirement.
+    pub backend: ExecutionBackend,
+    /// Maximum model layers to request for GPU offload. `None` lets the
+    /// selected backend choose the maximum supported count.
+    pub gpu_layers: Option<u32>,
+}
+
+/// Actual and requested placement facts retained with a resident model.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelPlacement {
+    /// Requested policy.
+    pub requested_policy: PlacementPolicy,
+    /// Requested backend.
+    pub requested_backend: ExecutionBackend,
+    /// Backend successfully selected by the native runtime.
+    pub selected_backend: ExecutionBackend,
+    /// Selected device name, when the native backend reports it.
+    pub selected_device: Option<String>,
+    /// Requested number of offloaded layers.
+    pub gpu_layers_requested: u32,
+    /// Actual offloaded layers, only when the native API can verify the value.
+    pub gpu_layers_offloaded: Option<u32>,
+    /// Whether CPU fallback was applied.
+    pub fallback_applied: bool,
+    /// Original selection or load failure that caused fallback.
+    pub fallback_reason: Option<String>,
+}
+
+/// Backend-neutral accelerator capability reported by a native runtime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceCapability {
+    /// Backend family.
+    pub backend: ExecutionBackend,
+    /// Native device label.
+    pub name: String,
+    /// Whether this backend is part of the linked native build.
+    pub compiled: bool,
+    /// Whether initialization and enumeration succeeded.
+    pub available: bool,
+    /// Free dedicated device memory, when measurable.
+    pub free_memory_bytes: Option<u64>,
+    /// Total dedicated device memory, when measurable.
+    pub total_memory_bytes: Option<u64>,
+    /// Whether capacity is shared with host RAM, when the backend can
+    /// distinguish the memory pool.
+    pub shared_memory: Option<bool>,
 }
 
 /// A successfully loaded model.
@@ -106,6 +218,12 @@ pub struct LoadedModel {
     pub load_time: Option<Duration>,
     /// Backend-reported model memory, when available.
     pub memory_bytes: Option<u64>,
+    /// Host allocation attributable to model weights, when measurable.
+    pub host_memory_bytes: Option<u64>,
+    /// Device allocation attributable to model weights, when measurable.
+    pub gpu_memory_bytes: Option<u64>,
+    /// Requested and actual placement facts.
+    pub placement: ModelPlacement,
 }
 
 /// Minimum generation controls for the first inference slice.
@@ -488,7 +606,10 @@ pub trait ModelRunner: Send + Sync {
         Err(ModelRunnerError::NotImplemented("embeddings".to_owned()))
     }
     /// Report whether the selected resident model exposes tool-capable chat.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed backend error when capability inspection fails.
     fn tool_support(&self, _model_id: &ModelId) -> Result<bool, ModelRunnerError> {
         Ok(false)
     }
@@ -515,6 +636,16 @@ pub trait ModelRunner: Send + Sync {
     ///
     /// Returns a typed backend or synchronization error.
     fn stats(&self) -> Result<ModelRuntimeStats, ModelRunnerError>;
+    /// Inspect the requested and actual placement of one resident model.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ModelNotLoaded` when the model is not resident.
+    fn placement(&self, _model_id: &ModelId) -> Result<ModelPlacement, ModelRunnerError> {
+        Err(ModelRunnerError::NotImplemented(
+            "model placement diagnostics".to_owned(),
+        ))
+    }
     /// Unload the active model safely.
     ///
     /// # Errors

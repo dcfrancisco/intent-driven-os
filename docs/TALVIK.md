@@ -10,6 +10,21 @@ The public name remains subject to legal, trademark, package-registry, and
 domain clearance. That review is deliberately non-blocking and tracked in
 WP-0075 and `runtime/BACKLOG.md`.
 
+## Execution placement
+
+Talvik's native llama.cpp load path supports `TALVIK_BACKEND` values `auto`,
+`cuda`, `vulkan`, `metal`, and `cpu`, with `TALVIK_PLACEMENT` values
+`automatic`, `cpu_only`, `gpu_preferred`, and `gpu_required`. Set
+`TALVIK_GPU_LAYERS` to cap GPU offload. GPU-required loads fail if the selected
+native backend is not compiled, initialized, usable, or admitted; they never
+silently become CPU loads. Automatic selection uses only backends listed in
+`TALVIK_QUALIFIED_GPU_BACKENDS`.
+
+GPU source readiness is not hardware qualification. CUDA, Vulkan, Metal, GPU
+performance, and IDE integration are currently **UNVERIFIED**. See
+[`qualification/talvik-gpu-qualification.md`](./qualification/talvik-gpu-qualification.md)
+for build variants, exact commands, evidence requirements, and memory controls.
+
 ## Current product boundary
 
 The qualified CPU-first slice supports multiple resident GGUF models, one

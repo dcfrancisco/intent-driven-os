@@ -27,6 +27,14 @@ pub struct LoadedModel {
     pub model_id: String,
     /// Backend-reported model memory in bytes.
     pub memory_bytes: u64,
+    /// Host memory attributable to model weights, when measurable.
+    pub host_memory_bytes: Option<u64>,
+    /// Dedicated GPU memory attributable to model weights, when measurable.
+    pub gpu_memory_bytes: Option<u64>,
+    /// Requested and actual execution placement.
+    pub placement: Option<oid_model_runner::ModelPlacement>,
+    /// Model load duration in milliseconds, when measured.
+    pub load_duration_ms: Option<u128>,
 }
 
 /// Runtime view of a backend registration.
@@ -578,6 +586,10 @@ impl Backend for MockBackend {
         Ok(LoadedModel {
             model_id: model.id.clone(),
             memory_bytes: model.memory_requirement_mb * 1_048_576,
+            host_memory_bytes: Some(model.memory_requirement_mb * 1_048_576),
+            gpu_memory_bytes: None,
+            placement: None,
+            load_duration_ms: None,
         })
     }
 
@@ -678,6 +690,10 @@ mod tests {
             Ok(LoadedModel {
                 model_id: model.id.clone(),
                 memory_bytes: 1,
+                host_memory_bytes: Some(1),
+                gpu_memory_bytes: None,
+                placement: None,
+                load_duration_ms: None,
             })
         }
 
