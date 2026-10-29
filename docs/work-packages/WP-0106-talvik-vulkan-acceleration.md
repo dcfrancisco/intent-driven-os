@@ -2,11 +2,12 @@
 
 ## Status
 
-In progress. Runtime/HTTP placement reporting and `oid-marina-chat` timing and
-benchmark display are implemented for the current CPU path. The current
-Windows host exposes an Intel Iris Xe Vulkan device, but Talvik Vulkan
-compilation, model offloading, inference, and performance have not been
-qualified.
+Source implementation complete; all CPU and GPU tests and hardware
+qualification pending by explicit instruction. The native load path now
+selects CPU/CUDA/Vulkan/Metal devices enumerated by ggml, applies
+`n_gpu_layers`, forbids silent fallback for GPU-required placement, and reports
+requested versus observed placement. CUDA, Vulkan, Metal, performance, and IDE
+readiness remain UNVERIFIED.
 
 ## Purpose
 
@@ -158,8 +159,25 @@ inference correctness, memory admission, fallback, or performance.
 ADR-0029; ADR-0007, ADR-0010, ADR-0024; WP-0027, WP-0025, WP-0058, WP-0060,
 WP-0078, WP-0079, WP-0080, WP-0090, WP-0105.
 
+## Evidence gate status
+
+| Capability | Required evidence | Status |
+| --- | --- | --- |
+| GPU abstraction | Source implementation | Implemented |
+| Backend selection | Selection and explicit failure handling | Implemented; tests pending |
+| Model placement | Real llama.cpp load integration | Implemented; hardware unverified |
+| Memory admission | Conservative host/VRAM budgeting and existing eviction | Implemented; tests pending |
+| Diagnostics | Requested versus actual values | Implemented; actual layer count remains unknown |
+| CPU compatibility | CPU regression suite | Pending; deliberately not run in this slice |
+| CUDA qualification | Supported NVIDIA hardware evidence | Pending |
+| Vulkan qualification | Supported GPU hardware evidence | Pending |
+| Metal qualification | Supported Apple Silicon hardware evidence | Pending |
+| GPU performance | Matched hardware benchmark | Pending |
+| IDE integration | Separate release gate | Unresolved |
+
 ## Next dependency
 
-Review the ADR proposal and confirm the pinned llama.cpp Vulkan/device APIs,
-runtime configuration ownership, and admission data source before native
-implementation begins.
+Execute the pending CPU regression suite, then run
+`docs/qualification/talvik-gpu-qualification.md` on supported Windows/Linux
+GPU hosts and Apple Silicon. Review native logs because the pinned API does not
+provide a reliable actual offloaded-layer count.

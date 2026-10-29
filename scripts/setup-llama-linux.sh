@@ -1,16 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build the pinned llama.cpp CPU backend for a native Linux x86_64 Marina
-# installation. The checkout and build remain outside the repository.
+# Build the pinned llama.cpp CPU, CUDA, or Vulkan backend for native Linux
+# x86_64. GPU variants remain explicit and require their vendor toolchains.
 # This deliberately uses a conservative instruction-set baseline: operators
 # may create a separate optimized build, but the default does not require
 # AVX, AVX2, AVX-512, FMA, F16C, SSE4.2, or BMI2.
 LLAMA_CPP_ROOT="${LLAMA_CPP_ROOT:-${TMPDIR:-/tmp}/oid-llama.cpp}"
-LLAMA_CPP_BUILD="${LLAMA_CPP_BUILD:-${TMPDIR:-/tmp}/oid-llama-linux-cpu-build}"
-LLAMA_CPP_INSTALL_DIR="${LLAMA_CPP_INSTALL_DIR:-${HOME}/.marina/lib}"
+TALVIK_LLAMA_BACKEND="${TALVIK_LLAMA_BACKEND:-cpu}"
+LLAMA_CPP_BUILD="${LLAMA_CPP_BUILD:-${TMPDIR:-/tmp}/oid-llama-linux-${TALVIK_LLAMA_BACKEND}-build}"
+if [[ -z "${LLAMA_CPP_INSTALL_DIR:-}" ]]; then
+  if [[ "$TALVIK_LLAMA_BACKEND" == cpu ]]; then
+    LLAMA_CPP_INSTALL_DIR="${HOME}/.marina/lib"
+  else
+    LLAMA_CPP_INSTALL_DIR="${HOME}/.marina/lib-${TALVIK_LLAMA_BACKEND}"
+  fi
+fi
 LLAMA_CPP_REPOSITORY="${LLAMA_CPP_REPOSITORY:-https://github.com/ggml-org/llama.cpp.git}"
 LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-18443257a30c884d5332abb8e7dc43c7ffe42fda}"
+
+case "$TALVIK_LLAMA_BACKEND" in
+  cpu) GGML_CUDA=OFF; GGML_VULKAN=OFF ;;
+  cuda) GGML_CUDA=ON; GGML_VULKAN=OFF; command -v nvcc >/dev/null || { echo "nvcc is required for CUDA." >&2; exit 1; } ;;
+  vulkan) GGML_CUDA=OFF; GGML_VULKAN=ON; command -v glslc >/dev/null || { echo "glslc from the Vulkan SDK is required." >&2; exit 1; } ;;
+  *) echo "TALVIK_LLAMA_BACKEND must be cpu, cuda, or vulkan." >&2; exit 2 ;;
+esac
 
 [[ "$(uname -s)" == "Linux" ]] || {
   echo "This script requires Linux; detected $(uname -s)." >&2
@@ -43,6 +57,8 @@ cmake -S "$LLAMA_CPP_ROOT" -B "$LLAMA_CPP_BUILD" \
   -DGGML_SSE42=OFF \
   -DGGML_BMI2=OFF \
   -DGGML_OPENMP=OFF \
+  -DGGML_CUDA="$GGML_CUDA" \
+  -DGGML_VULKAN="$GGML_VULKAN" \
   -DGGML_METAL=OFF \
   -DGGML_BLAS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
@@ -76,6 +92,6 @@ echo
 echo "Native Linux x86_64 llama.cpp is installed at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
 echo "Build Talvik with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 cargo build -p oid-console --release --bin talvik --bin talvikd"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 TALVIK_BACKEND=$TALVIK_LLAMA_BACKEND cargo build -p oid-console --release --bin talvik --bin talvikd"
 echo "Run with:"
 echo "LD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR \$HOME/.marina/bin/talvikd"

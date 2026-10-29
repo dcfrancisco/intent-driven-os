@@ -1,6 +1,6 @@
 # ADR-0029: Optional Vulkan Acceleration for Talvik
 
-- Status: Proposed
+- Status: Accepted; CUDA/Vulkan/Metal hardware qualification pending
 - Date: 2026-10-27
 - System: Talvik Model Runtime
 - Related: ADR-0003, ADR-0007, ADR-0010, ADR-0013, ADR-0024;
@@ -25,9 +25,9 @@ performance. The probe did not report an adapter-memory size.
 
 ## Decision
 
-Talvik should add optional Vulkan acceleration through its existing llama.cpp
-adapter, without introducing an Intel-specific runtime path, changing the
-inference API, requiring CUDA, or weakening CPU-only support.
+Talvik adds optional CUDA, Vulkan, and Metal placement through its existing
+llama.cpp adapter, without introducing vendor-specific runtime APIs, changing
+the inference API, or weakening CPU-only support.
 
 The implementation work package SHALL:
 
@@ -93,7 +93,6 @@ prompt/context, token limits, sampling options, and test procedure.
 
 ## Implementation work package
 
-WP-0106 SHALL deliver the optional Vulkan llama.cpp path, backend-neutral
-runtime reporting, safe fallback/admission behavior, and a repeatable CPU
-versus Vulkan qualification procedure. GPU qualification remains pending
-until real hardware evidence is recorded.
+WP-0106 delivers the source path, backend-neutral reporting, safe
+fallback/admission behavior, and repeatable qualification procedures. GPU
+qualification remains pending until real hardware evidence is recorded.

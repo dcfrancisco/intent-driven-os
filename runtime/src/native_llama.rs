@@ -43,6 +43,12 @@ impl LlamaCppAdapter {
         LlamaCppModelRunner::native_available()
     }
 
+    /// Enumerate devices initialized by the linked llama.cpp build.
+    #[must_use]
+    pub fn devices() -> Vec<oid_model_runner::DeviceCapability> {
+        LlamaCppModelRunner::devices()
+    }
+
     fn forget_cancellation(&self, request_id: &str) {
         if let Ok(mut values) = self.cancellations.lock() {
             values.remove(request_id);
@@ -105,11 +111,27 @@ impl Backend for LlamaCppAdapter {
                 model_id,
                 path,
                 vision_projector_path,
+                placement: {
+                    let placement = crate::config::placement_config().map_err(|error| {
+                        RuntimeError::InvalidModel(format!(
+                            "invalid placement configuration: {error}"
+                        ))
+                    })?;
+                    oid_model_runner::PlacementRequest {
+                        policy: placement.policy,
+                        backend: placement.backend,
+                        gpu_layers: placement.gpu_layers,
+                    }
+                },
             })
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
         Ok(LoadedModel {
             model_id: loaded.model_id.to_string(),
             memory_bytes: loaded.memory_bytes.unwrap_or_default(),
+            host_memory_bytes: loaded.host_memory_bytes,
+            gpu_memory_bytes: loaded.gpu_memory_bytes,
+            placement: Some(loaded.placement),
+            load_duration_ms: loaded.load_time.map(|duration| duration.as_millis()),
         })
     }
 
@@ -181,6 +203,7 @@ impl Backend for LlamaCppAdapter {
             stop_sequences: request.options.stop_sequences.clone(),
             structured_output: request.structured_output.clone(),
         };
+        let stream_model_id = stream_request.model_id.clone();
         let stream = self
             .runner
             .generate(stream_request)
@@ -252,13 +275,21 @@ impl Backend for LlamaCppAdapter {
                         },
                         cache_hit: stats.cache_hit,
                         reused_prompt_tokens: stats.reused_prompt_tokens,
-                        execution: Some(ExecutionPlacement {
-                            backend: Some("cpu".to_owned()),
-                            device: Some("CPU".to_owned()),
-                            requested_offloaded_layers: Some(0),
-                            offloaded_layers: Some(0),
-                            fallback_reason: None,
-                        }),
+                        execution: self
+                            .runner
+                            .placement(&stream_model_id)
+                            .ok()
+                            .map(|placement| ExecutionPlacement {
+                                backend: Some(placement.selected_backend.as_str().to_owned()),
+                                device: placement.selected_device.or_else(|| {
+                                    (placement.selected_backend
+                                        == oid_model_runner::ExecutionBackend::Cpu)
+                                        .then(|| "CPU".to_owned())
+                                }),
+                                requested_offloaded_layers: Some(placement.gpu_layers_requested),
+                                offloaded_layers: placement.gpu_layers_offloaded,
+                                fallback_reason: placement.fallback_reason,
+                            }),
                     });
                 }
                 Ok(GenerationEvent::Cancelled(_)) => {

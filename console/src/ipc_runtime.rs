@@ -777,6 +777,16 @@ fn parse_runtime_snapshot(
         .map(|model| ResidentModelSnapshot {
             id: model.id.clone(),
             memory_bytes: None,
+            host_memory_bytes: None,
+            gpu_memory_bytes: None,
+            requested_placement: None,
+            selected_backend: None,
+            execution_device: None,
+            gpu_layers_requested: None,
+            gpu_layers_offloaded: None,
+            fallback_applied: false,
+            fallback_reason: None,
+            load_duration_ms: None,
             idle_seconds: 0,
         })
         .collect();

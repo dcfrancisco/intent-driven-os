@@ -59,6 +59,26 @@ pub struct ResidentModelSnapshot {
     pub id: String,
     /// Backend-reported or registry-estimated resident bytes, when measurable.
     pub memory_bytes: Option<u64>,
+    /// Host memory attributable to the model, when measured.
+    pub host_memory_bytes: Option<u64>,
+    /// Dedicated device memory attributable to the model, when measured.
+    pub gpu_memory_bytes: Option<u64>,
+    /// Requested placement policy.
+    pub requested_placement: Option<String>,
+    /// Backend selected successfully for this resident model.
+    pub selected_backend: Option<String>,
+    /// Selected device label, when known.
+    pub execution_device: Option<String>,
+    /// Requested GPU layer count.
+    pub gpu_layers_requested: Option<u32>,
+    /// Actual GPU layer count, only when verified.
+    pub gpu_layers_offloaded: Option<u32>,
+    /// Whether an observable fallback was applied.
+    pub fallback_applied: bool,
+    /// Original reason for fallback.
+    pub fallback_reason: Option<String>,
+    /// Model load duration in milliseconds, when measured.
+    pub load_duration_ms: Option<u128>,
     /// Seconds since the runtime last used this resident model.
     pub idle_seconds: u64,
 }

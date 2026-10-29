@@ -4,11 +4,13 @@ param(
     [string]$LlamaBuild,
     [string]$NativeLibDir,
     [switch]$Vulkan,
+    [switch]$Cuda,
     [string]$Repository = "https://github.com/ggml-org/llama.cpp.git",
     [string]$Commit = "18443257a30c884d5332abb8e7dc43c7ffe42fda"
 )
 
 $ErrorActionPreference = "Stop"
+if ($Vulkan -and $Cuda) { throw "Select only one of -Vulkan or -Cuda." }
 
 $nativeHome = if ($env:TALVIK_HOME) {
     $env:TALVIK_HOME
@@ -19,11 +21,11 @@ $nativeHome = if ($env:TALVIK_HOME) {
 }
 
 if (-not $LlamaBuild) {
-    $buildDirectory = if ($Vulkan) { "vk" } else { "talvik-llama-windows-cpu-build" }
+    $buildDirectory = if ($Vulkan) { "vk" } elseif ($Cuda) { "cuda" } else { "talvik-llama-windows-cpu-build" }
     $LlamaBuild = Join-Path $env:TEMP $buildDirectory
 }
 if (-not $NativeLibDir) {
-    $nativeLibFlavor = if ($Vulkan) { "lib-vulkan" } else { "lib" }
+    $nativeLibFlavor = if ($Vulkan) { "lib-vulkan" } elseif ($Cuda) { "lib-cuda" } else { "lib" }
     $NativeLibDir = Join-Path $nativeHome $nativeLibFlavor
 }
 
@@ -52,6 +54,9 @@ if ($Vulkan) {
         }
     }
 }
+if ($Cuda) {
+    Require-Command "nvcc" "Install the supported NVIDIA CUDA Toolkit and open a new Developer PowerShell."
+}
 
 $installedTargets = & rustup target list --installed
 if ($LASTEXITCODE -ne 0 -or -not ($installedTargets | Select-String -SimpleMatch "x86_64-pc-windows-msvc")) {
@@ -69,9 +74,11 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to fetch llama.cpp revision $Commit." }
 if ($LASTEXITCODE -ne 0) { throw "Failed to select llama.cpp revision $Commit." }
 
 $vulkanOption = if ($Vulkan) { "ON" } else { "OFF" }
-$toolsOption = if ($Vulkan) { "ON" } else { "OFF" }
+$cudaOption = if ($Cuda) { "ON" } else { "OFF" }
+$toolsOption = if ($Vulkan -or $Cuda) { "ON" } else { "OFF" }
 & cmake -S $LlamaRoot -B $LlamaBuild `
     "-DGGML_VULKAN=$vulkanOption" `
+    "-DGGML_CUDA=$cudaOption" `
     "-DGGML_NATIVE=OFF" `
     "-DGGML_AVX=OFF" `
     "-DGGML_AVX2=OFF" `
@@ -92,7 +99,7 @@ $toolsOption = if ($Vulkan) { "ON" } else { "OFF" }
     "-DCMAKE_BUILD_TYPE=Release"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
 
-$buildTargets = if ($Vulkan) { @("llama", "mtmd", "llama-cli") } else { @("llama", "mtmd") }
+$buildTargets = if ($Vulkan -or $Cuda) { @("llama", "mtmd", "llama-cli") } else { @("llama", "mtmd") }
 & cmake --build $LlamaBuild --config Release --target $buildTargets --parallel 2
 if ($LASTEXITCODE -ne 0) { throw "llama.cpp build failed." }
 
@@ -110,17 +117,19 @@ foreach ($nativeFile in $nativeFiles) {
 
 Write-Host "Native Windows x86_64 llama.cpp is installed at: $NativeLibDir"
 if ($Vulkan) {
-    Write-Host "This builds Vulkan-capable llama.cpp; Talvik GPU layer selection and offload verification are not implemented yet."
+    Write-Host "This builds Vulkan-capable llama.cpp; hardware qualification remains pending."
+} elseif ($Cuda) {
+    Write-Host "This builds CUDA-capable llama.cpp; hardware qualification remains pending."
 }
 Write-Host "Build Talvik with:"
 Write-Host "`$env:LLAMA_CPP_LIB_DIR = '$NativeLibDir'"
 Write-Host "`$env:LLAMA_CPP_REQUIRED = '1'"
 Write-Host "`$env:LLAMA_CPP_MTMD_REQUIRED = '1'"
 Write-Host "cargo build --release -p oid-console --bin talvik --bin talvikd"
-if ($Vulkan) {
+if ($Vulkan -or $Cuda) {
     $llamaCli = Get-ChildItem -Path $LlamaBuild -Recurse -File -Filter "llama-cli.exe" |
         Select-Object -First 1
-    if (-not $llamaCli) { throw "Vulkan build completed without producing llama-cli.exe." }
-    Write-Host "Vulkan device probe: $($llamaCli.FullName) --list-devices"
-    Write-Host "Vulkan libraries were kept separate from the CPU installation."
+    if (-not $llamaCli) { throw "GPU build completed without producing llama-cli.exe." }
+    Write-Host "GPU device probe: $($llamaCli.FullName) --list-devices"
+    Write-Host "GPU libraries were kept separate from the CPU installation."
 }

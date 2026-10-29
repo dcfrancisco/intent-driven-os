@@ -49,6 +49,7 @@ impl StructuredOutput {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_schema_node(
     schema: &Value,
     path: &str,

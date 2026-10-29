@@ -1,5 +1,6 @@
 //! Platform-neutral hardware discovery service.
 
+use oid_model_runner::DeviceCapability;
 use oid_shared::{EventBus, RuntimeEvent};
 use std::collections::BTreeSet;
 use std::fs;
@@ -23,10 +24,15 @@ pub struct HardwareSnapshot {
     pub installed_ram_bytes: Option<u64>,
     /// Available system RAM in bytes when discoverable.
     pub available_ram_bytes: Option<u64>,
+    /// Current Talvik process resident memory, when supported.
+    pub process_memory_bytes: Option<u64>,
     /// Safe, normalized SIMD capability names.
     pub simd_capabilities: Vec<String>,
     /// GPU discovery remains a placeholder in this milestone.
     pub gpu: Option<String>,
+    /// Devices initialized by the linked inference runtime. This is distinct
+    /// from a GPU merely installed in the host.
+    pub accelerator_devices: Vec<DeviceCapability>,
     /// NPU discovery remains a placeholder in this milestone.
     pub npu: Option<String>,
 }
@@ -109,6 +115,12 @@ fn detect_snapshot() -> HardwareSnapshot {
     };
     let simd_capabilities = simd_capabilities();
     let machine_variant = machine_variant(&simd_capabilities);
+    let process_memory_bytes = process_memory_bytes();
+    let accelerator_devices = crate::LlamaCppAdapter::devices();
+    let gpu = accelerator_devices
+        .iter()
+        .find(|device| device.backend != oid_model_runner::ExecutionBackend::Cpu)
+        .map(|device| device.name.clone());
     HardwareSnapshot {
         operating_system: std::env::consts::OS.to_owned(),
         architecture: std::env::consts::ARCH.to_owned(),
@@ -118,10 +130,22 @@ fn detect_snapshot() -> HardwareSnapshot {
         physical_cores: physical_cores.or(Some(logical_cores)),
         installed_ram_bytes,
         available_ram_bytes,
+        process_memory_bytes,
         simd_capabilities,
-        gpu: None,
+        gpu,
+        accelerator_devices,
         npu: None,
     }
+}
+
+fn process_memory_bytes() -> Option<u64> {
+    let mut system = sysinfo::System::new_all();
+    let pid = sysinfo::get_current_pid().ok()?;
+    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+    system
+        .process(pid)
+        .map(sysinfo::Process::memory)
+        .filter(|memory| *memory > 0)
 }
 
 fn machine_variant(simd: &[String]) -> String {

@@ -4,9 +4,10 @@
 
 use oid_llama_cpp_sys as native;
 use oid_model_runner::{
-    CancellationToken, ContentPart, GenerationEvent, GenerationRequest, GenerationStats,
-    GenerationStream, GenerationTermination, LoadModelRequest, LoadedModel, ModelId, ModelRunner,
-    ModelRunnerError, ModelRuntimeStats, ModelState,
+    CancellationToken, ContentPart, DeviceCapability, ExecutionBackend, GenerationEvent,
+    GenerationRequest, GenerationStats, GenerationStream, GenerationTermination, LoadModelRequest,
+    LoadedModel, ModelId, ModelPlacement, ModelRunner, ModelRunnerError, ModelRuntimeStats,
+    ModelState, PlacementPolicy,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,7 +18,7 @@ mod structured_output;
 
 const DEFAULT_MEDIA_MARKER: &str = "<__media__>";
 
-fn generation_input<'a>(request: &'a GenerationRequest) -> (String, Vec<(String, &'a [u8])>) {
+fn generation_input(request: &GenerationRequest) -> (String, Vec<(String, &[u8])>) {
     if request.content.is_empty() {
         return (request.prompt.clone(), Vec::new());
     }
@@ -39,6 +40,7 @@ fn generation_input<'a>(request: &'a GenerationRequest) -> (String, Vec<(String,
 #[derive(Debug)]
 struct Loaded {
     model: native::NativeModel,
+    placement: ModelPlacement,
 }
 
 /// Direct local llama.cpp model runner.
@@ -77,14 +79,134 @@ impl LlamaCppModelRunner {
         native::is_available()
     }
 
+    /// Enumerate devices that the linked llama.cpp/ggml build initialized.
+    #[must_use]
+    pub fn devices() -> Vec<DeviceCapability> {
+        native::devices()
+            .into_iter()
+            .map(|device| DeviceCapability {
+                backend: Self::execution_backend(device.backend),
+                name: device.name,
+                compiled: true,
+                available: true,
+                free_memory_bytes: device.free_memory_bytes,
+                total_memory_bytes: device.total_memory_bytes,
+                shared_memory: device.shared_memory,
+            })
+            .collect()
+    }
+
     fn unavailable() -> ModelRunnerError {
         ModelRunnerError::BackendUnavailable(
             "configure LLAMA_CPP_LIB_DIR and rebuild to enable llama.cpp".to_owned(),
         )
     }
+
+    fn native_backend(backend: ExecutionBackend) -> Option<native::NativeBackend> {
+        match backend {
+            ExecutionBackend::Cuda => Some(native::NativeBackend::Cuda),
+            ExecutionBackend::Vulkan => Some(native::NativeBackend::Vulkan),
+            ExecutionBackend::Metal => Some(native::NativeBackend::Metal),
+            ExecutionBackend::Cpu => Some(native::NativeBackend::Cpu),
+            ExecutionBackend::Auto => None,
+        }
+    }
+
+    fn execution_backend(backend: native::NativeBackend) -> ExecutionBackend {
+        match backend {
+            native::NativeBackend::Cuda => ExecutionBackend::Cuda,
+            native::NativeBackend::Vulkan => ExecutionBackend::Vulkan,
+            native::NativeBackend::Metal => ExecutionBackend::Metal,
+            native::NativeBackend::Cpu => ExecutionBackend::Cpu,
+        }
+    }
+
+    fn qualified_backends() -> Vec<ExecutionBackend> {
+        std::env::var("TALVIK_QUALIFIED_GPU_BACKENDS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|value| match value.trim().to_ascii_lowercase().as_str() {
+                "cuda" => Some(ExecutionBackend::Cuda),
+                "vulkan" => Some(ExecutionBackend::Vulkan),
+                "metal" => Some(ExecutionBackend::Metal),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn select_backend(request: &LoadModelRequest) -> Result<ExecutionBackend, ModelRunnerError> {
+        if request.placement.policy == PlacementPolicy::GpuRequired
+            && request.placement.gpu_layers == Some(0)
+        {
+            return Err(ModelRunnerError::InvalidRequest(
+                "GPU-required placement cannot request zero GPU layers".to_owned(),
+            ));
+        }
+        if request.placement.policy == PlacementPolicy::CpuOnly
+            || request.placement.backend == ExecutionBackend::Cpu
+        {
+            return Ok(ExecutionBackend::Cpu);
+        }
+        let available: Vec<_> = native::devices()
+            .into_iter()
+            .filter(|device| device.backend != native::NativeBackend::Cpu)
+            .map(|device| Self::execution_backend(device.backend))
+            .collect();
+        Self::choose_backend(
+            request.placement.policy,
+            request.placement.backend,
+            &available,
+            &Self::qualified_backends(),
+        )
+    }
+
+    fn choose_backend(
+        policy: PlacementPolicy,
+        requested: ExecutionBackend,
+        available: &[ExecutionBackend],
+        qualified: &[ExecutionBackend],
+    ) -> Result<ExecutionBackend, ModelRunnerError> {
+        if policy == PlacementPolicy::CpuOnly || requested == ExecutionBackend::Cpu {
+            return Ok(ExecutionBackend::Cpu);
+        }
+        if requested != ExecutionBackend::Auto {
+            if available.contains(&requested) {
+                return Ok(requested);
+            }
+            if policy == PlacementPolicy::GpuRequired {
+                return Err(ModelRunnerError::BackendUnavailable(format!(
+                    "requested {} backend is not compiled, initialized, and usable",
+                    requested.as_str()
+                )));
+            }
+            return Ok(ExecutionBackend::Cpu);
+        }
+        for candidate in [
+            ExecutionBackend::Cuda,
+            ExecutionBackend::Metal,
+            ExecutionBackend::Vulkan,
+        ] {
+            if available.contains(&candidate)
+                && (matches!(
+                    policy,
+                    PlacementPolicy::GpuPreferred | PlacementPolicy::GpuRequired
+                ) || qualified.contains(&candidate))
+            {
+                return Ok(candidate);
+            }
+        }
+        if policy == PlacementPolicy::GpuRequired {
+            return Err(ModelRunnerError::BackendUnavailable(
+                "GPU placement is required but no requested/qualified compiled backend is usable"
+                    .to_owned(),
+            ));
+        }
+        Ok(ExecutionBackend::Cpu)
+    }
 }
 
 impl ModelRunner for LlamaCppModelRunner {
+    #[allow(clippy::too_many_lines)]
     fn load(&self, request: LoadModelRequest) -> Result<LoadedModel, ModelRunnerError> {
         if !native::is_available() {
             return Err(Self::unavailable());
@@ -97,7 +219,7 @@ impl ModelRunner for LlamaCppModelRunner {
         let projector_path = request
             .vision_projector_path
             .as_ref()
-            .map(|path| path.as_str());
+            .map(oid_model_runner::ModelPath::as_str);
         if let Some(path) = projector_path {
             if !std::path::Path::new(path).is_file() {
                 return Err(ModelRunnerError::ModelNotFound(path.to_owned()));
@@ -129,7 +251,65 @@ impl ModelRunner for LlamaCppModelRunner {
             })?;
         }
         let started = Instant::now();
-        let model = match native::load_model(request.path.as_str(), projector_path) {
+        let selected = match Self::select_backend(&request) {
+            Ok(selected) => selected,
+            Err(error) => {
+                if models.is_empty() {
+                    self.initialized.store(false, Ordering::SeqCst);
+                    native::shutdown();
+                }
+                if let Ok(mut state) = self.state.lock() {
+                    *state = if models.is_empty() {
+                        ModelState::Failed
+                    } else {
+                        ModelState::Ready
+                    };
+                }
+                return Err(error);
+            }
+        };
+        let requested_layers = if selected == ExecutionBackend::Cpu {
+            0
+        } else {
+            request
+                .placement
+                .gpu_layers
+                .unwrap_or(u32::try_from(i32::MAX).unwrap_or(u32::MAX))
+        };
+        let selected_native = Self::native_backend(selected).unwrap_or(native::NativeBackend::Cpu);
+        let first_load = native::load_model(
+            request.path.as_str(),
+            projector_path,
+            native::NativeLoadOptions {
+                backend: selected_native,
+                gpu_layers: requested_layers,
+            },
+        );
+        let mut fallback_reason = (selected == ExecutionBackend::Cpu
+            && (request.placement.policy == PlacementPolicy::GpuPreferred
+                || !matches!(
+                    request.placement.backend,
+                    ExecutionBackend::Auto | ExecutionBackend::Cpu
+                )))
+        .then(|| "no requested GPU backend was compiled, initialized, and usable".to_owned());
+        let model_result = match first_load {
+            Err(error)
+                if selected != ExecutionBackend::Cpu
+                    && request.placement.policy != PlacementPolicy::GpuRequired =>
+            {
+                fallback_reason = Some(error);
+                native::load_model(
+                    request.path.as_str(),
+                    projector_path,
+                    native::NativeLoadOptions {
+                        backend: native::NativeBackend::Cpu,
+                        gpu_layers: 0,
+                    },
+                )
+            }
+            result => result,
+        };
+        let model = match model_result {
             Ok(model) => model,
             Err(error) => {
                 if models.is_empty() {
@@ -147,7 +327,26 @@ impl ModelRunner for LlamaCppModelRunner {
             }
         };
         let memory_bytes = model.memory_bytes();
-        let loaded_model = Loaded { model };
+        let native_placement = model.placement().clone();
+        let selected_backend = Self::execution_backend(native_placement.backend);
+        let placement = ModelPlacement {
+            requested_policy: request.placement.policy,
+            requested_backend: request.placement.backend,
+            selected_backend,
+            selected_device: native_placement.device,
+            gpu_layers_requested: if selected_backend == ExecutionBackend::Cpu {
+                0
+            } else {
+                requested_layers
+            },
+            gpu_layers_offloaded: native_placement.offloaded_gpu_layers,
+            fallback_applied: fallback_reason.is_some(),
+            fallback_reason,
+        };
+        let loaded_model = Loaded {
+            model,
+            placement: placement.clone(),
+        };
         models.insert(request.model_id.clone(), loaded_model);
         if let Ok(mut state) = self.state.lock() {
             *state = ModelState::Ready;
@@ -158,6 +357,9 @@ impl ModelRunner for LlamaCppModelRunner {
             format: "GGUF".to_owned(),
             load_time: Some(started.elapsed()),
             memory_bytes: Some(memory_bytes),
+            host_memory_bytes: (selected_backend == ExecutionBackend::Cpu).then_some(memory_bytes),
+            gpu_memory_bytes: None,
+            placement,
         })
     }
 
@@ -181,14 +383,11 @@ impl ModelRunner for LlamaCppModelRunner {
             return Err(error);
         }
         {
-            let resident_models = match models.lock() {
-                Ok(models) => models,
-                Err(_) => {
-                    self.generating.store(false, Ordering::SeqCst);
-                    return Err(ModelRunnerError::BackendFailure(
-                        "model lock poisoned".to_owned(),
-                    ));
-                }
+            let Ok(resident_models) = models.lock() else {
+                self.generating.store(false, Ordering::SeqCst);
+                return Err(ModelRunnerError::BackendFailure(
+                    "model lock poisoned".to_owned(),
+                ));
             };
             for (resident_id, loaded) in resident_models.iter() {
                 if resident_id != &model_id {
@@ -329,6 +528,15 @@ impl ModelRunner for LlamaCppModelRunner {
         })
     }
 
+    fn placement(&self, model_id: &ModelId) -> Result<ModelPlacement, ModelRunnerError> {
+        self.models
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?
+            .get(model_id)
+            .map(|loaded| loaded.placement.clone())
+            .ok_or(ModelRunnerError::ModelNotLoaded)
+    }
+
     fn embeddings(
         &self,
         model_id: &ModelId,
@@ -454,8 +662,45 @@ impl ModelRunner for LlamaCppModelRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::generation_input;
-    use oid_model_runner::{ContentPart, GenerationRequest, ImageInput, ModelId};
+    use super::{generation_input, LlamaCppModelRunner};
+    use oid_model_runner::{
+        ContentPart, ExecutionBackend, GenerationRequest, ImageInput, ModelId, PlacementPolicy,
+    };
+
+    #[test]
+    fn automatic_selection_uses_only_qualified_available_gpu_routes() {
+        assert_eq!(
+            LlamaCppModelRunner::choose_backend(
+                PlacementPolicy::Automatic,
+                ExecutionBackend::Auto,
+                &[ExecutionBackend::Vulkan],
+                &[],
+            )
+            .expect("CPU fallback"),
+            ExecutionBackend::Cpu
+        );
+        assert_eq!(
+            LlamaCppModelRunner::choose_backend(
+                PlacementPolicy::Automatic,
+                ExecutionBackend::Auto,
+                &[ExecutionBackend::Vulkan],
+                &[ExecutionBackend::Vulkan],
+            )
+            .expect("qualified Vulkan"),
+            ExecutionBackend::Vulkan
+        );
+    }
+
+    #[test]
+    fn required_gpu_never_silently_falls_back_to_cpu() {
+        assert!(LlamaCppModelRunner::choose_backend(
+            PlacementPolicy::GpuRequired,
+            ExecutionBackend::Cuda,
+            &[ExecutionBackend::Vulkan],
+            &[],
+        )
+        .is_err());
+    }
 
     #[test]
     fn multimodal_input_preserves_text_image_order_and_uses_the_mtmd_marker() {
