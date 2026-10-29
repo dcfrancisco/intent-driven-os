@@ -201,6 +201,7 @@ fn chat(
             request_id: request_id.clone(),
             model_id: model.to_owned(),
             prompt: format!("\u{001e}user\n{prompt}"),
+            content: Vec::new(),
             options: GenerationOptions {
                 max_tokens: 128,
                 context_size: 4096,

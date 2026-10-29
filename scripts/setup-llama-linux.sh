@@ -47,22 +47,28 @@ cmake -S "$LLAMA_CPP_ROOT" -B "$LLAMA_CPP_BUILD" \
   -DGGML_BLAS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_MTMD=ON \
+  -DMTMD_VIDEO=OFF \
   -DLLAMA_CURL=OFF \
   -DCMAKE_BUILD_RPATH='$ORIGIN' \
   -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
   -DCMAKE_INSTALL_RPATH='$ORIGIN' \
   -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=OFF \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build "$LLAMA_CPP_BUILD" --target llama --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
+cmake --build "$LLAMA_CPP_BUILD" --target llama mtmd --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
 mkdir -p "$LLAMA_CPP_INSTALL_DIR"
 find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
   \( -type f -o -type l \) \
-  \( -name 'libllama.so' -o -name 'libllama.so.*' -o -name 'libggml*.so' -o -name 'libggml*.so.*' \) \
+  \( -name 'libllama.so' -o -name 'libllama.so.*' -o -name 'libmtmd.so' -o -name 'libmtmd.so.*' -o -name 'libggml*.so' -o -name 'libggml*.so.*' \) \
   -exec cp -a {} "$LLAMA_CPP_INSTALL_DIR" \;
 
 test -e "$LLAMA_CPP_INSTALL_DIR/libllama.so" || {
   echo "libllama.so was not produced in $LLAMA_CPP_INSTALL_DIR" >&2
+  exit 1
+}
+test -e "$LLAMA_CPP_INSTALL_DIR/libmtmd.so" || {
+  echo "libmtmd.so was not produced in $LLAMA_CPP_INSTALL_DIR" >&2
   exit 1
 }
 
@@ -70,6 +76,6 @@ echo
 echo "Native Linux x86_64 llama.cpp is installed at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
 echo "Build Talvik with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 cargo build -p oid-console --release --bin talvik --bin talvikd"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 cargo build -p oid-console --release --bin talvik --bin talvikd"
 echo "Run with:"
 echo "LD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR \$HOME/.marina/bin/talvikd"

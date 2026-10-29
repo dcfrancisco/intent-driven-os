@@ -82,6 +82,33 @@ def main() -> None:
         raise SystemExit("Responses API did not return a text response")
     print("PASS non-stream Responses", flush=True)
 
+    response_stream = client.responses.create(
+        model=model,
+        instructions="Reply briefly.",
+        input="Say hello.",
+        max_output_tokens=8,
+        stream=True,
+        extra_body={"context_size": 512},
+    )
+    response_stream_text = []
+    response_event_types = []
+    response_completed = False
+    for event in response_stream:
+        response_event_types.append(event.type)
+        if event.type == "response.output_text.delta":
+            response_stream_text.append(event.delta)
+        elif event.type == "response.completed":
+            response_completed = event.response.status == "completed"
+        elif event.type in {"error", "response.failed"}:
+            raise SystemExit(f"Responses stream failed: {event}")
+    if not response_stream_text or not response_completed:
+        raise SystemExit("Responses stream did not produce text and complete")
+    if not {"response.created", "response.output_text.delta", "response.completed"}.issubset(
+        response_event_types
+    ):
+        raise SystemExit("Responses stream omitted required lifecycle events")
+    print("PASS streaming Responses", flush=True)
+
     if os.environ.get("TALVIK_QUALIFY_TOOLS", "").lower() in {"1", "true", "yes"}:
         qualify_tool_round_trip(client, model)
 
@@ -108,17 +135,14 @@ def qualify_tool_round_trip(client, model: str) -> None:
         messages=[
             {
                 "role": "user",
-                "content": (
-                    "Call the get_weather function with city set to Manila. Do not answer "
-                    "with plain text."
-                ),
+                "content": "What is the weather in Manila?",
             }
         ],
         tools=tools,
         tool_choice="auto",
         parallel_tool_calls=False,
         max_tokens=16,
-        context_size=512,
+        extra_body={"context_size": 512},
         temperature=0,
     )
     calls = tool_request.choices[0].message.tool_calls
@@ -135,7 +159,7 @@ def qualify_tool_round_trip(client, model: str) -> None:
         tools=tools,
         tool_choice="required",
         max_tokens=16,
-        context_size=512,
+        extra_body={"context_size": 512},
         temperature=0,
     )
     required_calls = required.choices[0].message.tool_calls
@@ -154,7 +178,7 @@ def qualify_tool_round_trip(client, model: str) -> None:
         tools=tools,
         tool_choice={"type": "function", "function": {"name": "get_weather"}},
         max_tokens=16,
-        context_size=512,
+        extra_body={"context_size": 512},
         temperature=0,
     )
     selected_calls = selected.choices[0].message.tool_calls
@@ -193,7 +217,7 @@ def qualify_tool_round_trip(client, model: str) -> None:
         ],
         tools=tools,
         max_tokens=8,
-        context_size=512,
+        extra_body={"context_size": 512},
         temperature=0,
     )
     if not round_trip.choices[0].message.content:

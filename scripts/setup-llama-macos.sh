@@ -63,9 +63,11 @@ fi
   -DGGML_BLAS=OFF \
   -DLLAMA_BUILD_TESTS=OFF \
   -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_MTMD=ON \
+  -DMTMD_VIDEO=OFF \
   -DLLAMA_CURL=OFF \
   -DCMAKE_BUILD_TYPE=Release
-"$cmake_command" --build "$LLAMA_CPP_BUILD" --target llama -j2
+"$cmake_command" --build "$LLAMA_CPP_BUILD" --target llama mtmd -j2
 
 mkdir -p "$LLAMA_CPP_INSTALL_DIR"
 # Preserve CMake's versioned-library symlinks (libllama.dylib -> ...). The
@@ -80,4 +82,4 @@ echo
 echo "Talvik native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
 echo "Build Talvik with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo build --release -p oid-console --bin talvik --bin talvikd"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo build --release -p oid-console --bin talvik --bin talvikd"

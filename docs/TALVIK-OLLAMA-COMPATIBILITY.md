@@ -8,11 +8,13 @@ adopted local model-runner interoperability profile.
 
 ## Status
 
-Talvik runs local GGUF models through llama.cpp and now exposes an initial
-Ollama-shaped **text inference and model-introspection subset**. This is not a
-claim of complete Ollama compatibility. Ollama's API changes over time, and
-endpoints below are classified by behavior, not merely by whether a route
-exists.
+Talvik runs local GGUF models through llama.cpp and exposes an initial
+Ollama-shaped **text and local-image inference plus model-introspection
+subset**. Inline image parsing and Windows native image inference are tested;
+third-party vision-client workflows and Linux/macOS native vision qualification
+remain open. This is not a claim of complete Ollama compatibility. Ollama's API
+changes over time, and endpoints below are classified by behavior, not merely
+by whether a route exists.
 
 | Ollama endpoint | Talvik status | Current behavior / gap |
 |---|---|---|
@@ -20,8 +22,8 @@ exists.
 | `GET /api/tags` | Partial; Python client qualified | Lists registered GGUF models. Local artifact size and modification time are reported when the filesystem provides them; remote or missing files remain unknown. Talvik diagnostics add fields. |
 | `GET /api/ps` | Partial; Python client qualified | Lists actual resident models and memory snapshots. Expiration timestamps and VRAM use are not implemented. |
 | `POST /api/show` | Partial; Python client qualified | Reports known GGUF family, quantization, and registry-declared capabilities. Includes `model_info: {}` when raw metadata is unavailable. Modelfile, template, license, parameters, and raw GGUF metadata are not available. |
-| `POST /api/chat` | Partial; Python client qualified | Text-only, one generation; NDJSON stream by default. Some Ollama options, keep-alive controls, prompt templates, images, thinking, and complete tool semantics are unsupported. |
-| `POST /api/generate` | Partial; Python client qualified | String prompt, system, suffix, and supported generation options; NDJSON stream by default. Raw mode, context reuse payloads, images, custom templates, and some standard options are unsupported. |
+| `POST /api/chat` | Partial; text client qualified, image parser/native path tested | One generation; NDJSON stream by default. User messages may provide bounded base64 images in `images` when a local projector is paired. Some Ollama options, keep-alive controls, prompt templates, thinking, and complete tool semantics are unsupported. |
+| `POST /api/generate` | Partial; text client qualified, image parser/native path tested | String prompt, system, and supported generation options; NDJSON stream by default. Bounded base64 `images` are supported when a local projector is paired. Raw mode, context reuse payloads, custom templates, suffix completion, and some standard options are unsupported. |
 | `POST /api/embed` | Partial | String or batch text input and embeddings for models/backends that support them. Dimensions, options, truncation policy, per-call keep-alive, and measured prompt token count are not implemented. |
 | `POST /api/embeddings` | Partial legacy | Supports the legacy string `prompt` request and single-vector `embedding` response when embeddings are available. |
 | `POST /api/create` | Unsupported | No Ollama Modelfile/template build pipeline. |
@@ -43,8 +45,13 @@ returning fabricated results.
 - `stream` defaults to `true` for `/api/chat` and `/api/generate`. Streaming is
   newline-delimited JSON (`application/x-ndjson`), not SSE. Clients should
   parse one JSON object per line and stop on the record whose `done` is true.
-- Chat message content and generate prompts must be text. Image content and
-  other multimodal inputs are rejected.
+- Chat message content and generate prompts are text; image inputs are passed
+  separately as bounded base64 `images` arrays. A compatible local projector
+  must be explicitly paired with the selected model. Other modalities are
+  rejected.
+- Image requests are limited to four PNG, JPEG, BMP, or GIF images, 10 MiB of
+  encoded bytes per image, 8192 pixels per dimension, and 16 megapixels total.
+  Image data remains request-scoped and is not persisted.
 - `options` maps `num_ctx`, `num_predict`, `temperature`, `top_p`, `top_k`,
   `seed`, and `stop` to backend-neutral generation options. Unsupported option
   names are rejected with an Ollama-shaped error.

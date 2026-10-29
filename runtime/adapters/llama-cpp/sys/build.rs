@@ -4,9 +4,11 @@ use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(native_llama_cpp)");
+    println!("cargo:rustc-check-cfg=cfg(native_mtmd)");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_LIB_DIR");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_LIBRARY");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_REQUIRED");
+    println!("cargo:rerun-if-env-changed=LLAMA_CPP_MTMD_REQUIRED");
 
     let configured_dir = env::var_os("LLAMA_CPP_LIB_DIR").map(PathBuf::from);
     let default_dir = env::var_os("HOME").map(|home| PathBuf::from(home).join(".marina/lib"));
@@ -34,6 +36,11 @@ fn main() {
             "configured LLAMA_CPP_LIB_DIR does not contain lib{library_name}: {}",
             lib_dir.display()
         );
+        assert!(
+            env::var_os("LLAMA_CPP_MTMD_REQUIRED").is_none(),
+            "LLAMA_CPP_MTMD_REQUIRED is set but {} does not contain libmtmd",
+            lib_dir.display()
+        );
         return;
     }
 
@@ -48,4 +55,23 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
     }
     println!("cargo:rustc-cfg=native_llama_cpp");
+
+    let mtmd_library = "mtmd";
+    let has_mtmd = [
+        lib_dir.join("libmtmd.dylib"),
+        lib_dir.join("libmtmd.so"),
+        lib_dir.join("mtmd.lib"),
+    ]
+    .iter()
+    .any(|path| path.exists());
+    if has_mtmd {
+        println!("cargo:rustc-link-lib=dylib={mtmd_library}");
+        println!("cargo:rustc-cfg=native_mtmd");
+    } else {
+        assert!(
+            env::var_os("LLAMA_CPP_MTMD_REQUIRED").is_none(),
+            "LLAMA_CPP_MTMD_REQUIRED is set but {} does not contain libmtmd",
+            lib_dir.display()
+        );
+    }
 }

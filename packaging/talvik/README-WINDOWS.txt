@@ -30,11 +30,12 @@ In PowerShell window 2, check status and try generation:
 
    talvik status
    talvik models
-   talvik run qwen2.5-0.5b-instruct-q4_k_m "What is 36 x 36? Answer with one number."
+   talvik run --default "What is 36 x 36? Answer with one number."
 
-The first daemon startup may download the configured default model. Model
-download and inference require an internet connection and adequate disk space
-and memory. Stop the foreground daemon with Ctrl+C.
+The first daemon startup downloads the configured Gemma 4 model and vision
+projector if missing (about 4.8 GiB total). Download and inference require an
+internet connection and adequate disk space and memory. Stop the foreground
+daemon with Ctrl+C.
 
 This is an unsigned preview ZIP, not an MSI or a Windows Service installer.
 Windows inference, cancellation, and recovery are not yet fully qualified.

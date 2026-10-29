@@ -108,5 +108,6 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0107 | Talvik Per-User Windows MSI | Build, sign, release, upgrade, and uninstall a user-scoped Talvik MSI |
 | WP-0108 | OpenAI Inference API Compatibility | Implement and qualify the OpenAI model-serving API surface |
 | WP-0109 | Talvik Ollama-Compatible Model Runner API | Implement and qualify Ollama's local model-runner API profile |
+| WP-0110 | Talvik Gemma 4 Default Model | Bootstrap the pinned Gemma 4 model and projector as Talvik's default |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

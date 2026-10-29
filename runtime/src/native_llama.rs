@@ -93,9 +93,19 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
         let path = ModelPath::new(model.location.clone())
             .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
+        let vision_projector_path = model
+            .vision_projector_location
+            .as_ref()
+            .map(|location| ModelPath::new(location.clone()))
+            .transpose()
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
         let loaded = self
             .runner
-            .load(LoadModelRequest { model_id, path })
+            .load(LoadModelRequest {
+                model_id,
+                path,
+                vision_projector_path,
+            })
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
         Ok(LoadedModel {
             model_id: loaded.model_id.to_string(),
@@ -161,6 +171,7 @@ impl Backend for LlamaCppAdapter {
             model_id: ModelId::new(request.model_id.clone())
                 .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?,
             prompt: request.input.clone(),
+            content: request.content.clone(),
             max_tokens: request.options.max_tokens,
             temperature: request.options.temperature,
             top_p: request.options.top_p,

@@ -125,7 +125,7 @@ fn respond(mut stream: Stream) -> io::Result<()> {
     let mut request = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut request)?;
     match request.trim_end_matches(['\r', '\n']).split('\t').next() {
-        Some("hello") => writeln!(stream, "OK protocol\t2"),
+        Some("hello") => writeln!(stream, "OK protocol\t3"),
         Some("status") => writeln!(
             stream,
             "OK status\tHealthy\tNone\t\t\t0.1\tmock\tfalse\ttest\ttest\tfalse\t0 B\t0\t0\t8\tfalse\t0\t0\t\t\tfalse\t\t"
@@ -135,7 +135,7 @@ fn respond(mut stream: Stream) -> io::Result<()> {
         Some("model_pull") => writeln!(stream, "ERROR\tmock daemon does not pull models"),
         Some("tokenize") => writeln!(stream, "OK tokenize\t0"),
         Some("cancel") => writeln!(stream, "OK cancelled"),
-        Some("generate_v2") => {
+        Some("generate_v2" | "generate_v3") => {
             writeln!(stream, "TOKEN\tmock response")?;
             writeln!(
                 stream,

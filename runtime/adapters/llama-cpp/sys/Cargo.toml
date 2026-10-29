@@ -9,6 +9,9 @@ authors.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png"] }
+
 [lints.rust]
 unsafe_code = "allow"
 missing_debug_implementations = "warn"

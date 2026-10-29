@@ -48,6 +48,7 @@ fn generation_request_rejects_invalid_controls() {
     let request = GenerationRequest {
         model_id: ModelId::new("model").expect("model id"),
         prompt: "hello".to_owned(),
+        content: Vec::new(),
         max_tokens: 0,
         temperature: 0.8,
         top_p: 0.95,
@@ -72,6 +73,7 @@ fn generation_request_accepts_default_controls() {
     let request = GenerationRequest {
         model_id: ModelId::new("model").expect("model id"),
         prompt: "hello".to_owned(),
+        content: Vec::new(),
         max_tokens: 128,
         temperature: 0.8,
         top_p: 0.95,
@@ -91,6 +93,7 @@ fn generation_request_rejects_empty_prompts() {
     let request = GenerationRequest {
         model_id: ModelId::new("model").expect("model id"),
         prompt: "  ".to_owned(),
+        content: Vec::new(),
         max_tokens: 1,
         temperature: 0.0,
         top_p: 1.0,
@@ -103,7 +106,7 @@ fn generation_request_rejects_empty_prompts() {
     assert_eq!(
         request.validate(),
         Err(ModelRunnerError::InvalidRequest(
-            "prompt is empty".to_owned()
+            "generation input is empty".to_owned()
         ))
     );
 }

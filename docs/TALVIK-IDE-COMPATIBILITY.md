@@ -1,7 +1,23 @@
 # Talvik IDE compatibility
 
-Status: configuration and HTTP preflight prepared; interactive Continue
-qualification remains NOT VERIFIED in this environment.
+Status: Windows x64 OpenAI SDK/API subset passed with Qwen 2.5 0.5B;
+interactive Continue qualification remains NOT VERIFIED, and Cline was not
+installed.
+
+## Windows SDK/API qualification — 2026-10-29
+
+The official OpenAI Python SDK 3.41.0 and JavaScript SDK 7.45.1 passed
+model discovery, streaming and non-streaming Chat Completions and legacy
+Completions, text Responses, tool-choice modes, and a tool-call/result-message
+round trip against a loopback release daemon using Qwen 2.5 0.5B Q4_K_M.
+Automatic tool-call SSE and an 896-dimensional embedding response also passed.
+A planning-style request used Chat Completions; Talvik has no separate Plan
+endpoint. Responses streaming returned the expected HTTP 501.
+
+The daemon was loopback-only and HTTP authentication was disabled. Continue
+2.0.0 was installed but no interactive VS Code/Continue session was run, so
+these API tests do not qualify IDE integration. Cline was not installed, and
+Talvik did not execute the transported tool calls.
 
 ## Host and daemon contract
 
@@ -100,8 +116,8 @@ TALVIK_HTTP_ADDR=127.0.0.1:11434 TALVIK_HTTP_AUTH=true \
   $HOME/.marina/bin/talvikd
 ```
 
-The current restricted execution environment returned `Operation not
-permitted` while creating the loopback listener. Therefore model listing,
+During that macOS-host qualification attempt, the restricted execution
+environment returned `Operation not permitted` while creating the loopback listener. Therefore model listing,
 chat, streaming, and tool-call HTTP results are NOT EXECUTED here, and no
 interactive Continue PASS is claimed. The owner can run the commands above in
 the normal user session and attach `/tmp/talvik-continue-api.log` plus the

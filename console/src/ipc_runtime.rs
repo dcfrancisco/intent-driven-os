@@ -1,14 +1,16 @@
 //! OID runtime adapter for Talvik's local IPC service.
 
 use crate::ipc;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use oid_runtime::{
     backends::{
         BackendDescriptor, BackendHealth, BackendSummary, EmbeddingsRequest, EmbeddingsResult,
     },
     generation::ExecutionPlacement,
-    GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics, GenerationStream,
-    GenerationTermination, HardwareService, HardwareSnapshot, ModelMetadata, ModelStatus,
-    ResidentModelSnapshot, RuntimeError, RuntimeService, RuntimeSnapshot,
+    ContentPart, GenerationMessage, GenerationRequest, GenerationResult, GenerationStatistics,
+    GenerationStream, GenerationTermination, HardwareService, HardwareSnapshot, ModelMetadata,
+    ModelStatus, ResidentModelSnapshot, RuntimeError, RuntimeService, RuntimeSnapshot,
+    StructuredOutput,
 };
 use oid_shared::{EventBus, LifecycleState, RuntimeEvent, RuntimeStatus};
 use std::collections::HashSet;
@@ -119,7 +121,7 @@ impl IpcRuntimeService {
             .iter()
             .map(|line| {
                 let fields = line.split('\t').collect::<Vec<_>>();
-                if fields.len() != 4 || fields[0] != "MODEL" {
+                if !(4..=5).contains(&fields.len()) || fields[0] != "MODEL" {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "invalid Talvik model-list response",
@@ -136,6 +138,10 @@ impl IpcRuntimeService {
                     capabilities: Vec::new(),
                     status: parse_model_status(fields[3]),
                     checksum: None,
+                    vision_projector_location: fields
+                        .get(4)
+                        .map(|field| ipc::decode_field(field))
+                        .filter(|value| !value.is_empty()),
                     location: "talvikd".to_owned(),
                 })
             })
@@ -303,6 +309,7 @@ impl RuntimeService for IpcRuntimeService {
             capabilities: Vec::new(),
             status: parse_model_status(fields[4]),
             checksum: nonempty(ipc::decode_field(fields[6])),
+            vision_projector_location: None,
             location: ipc::decode_field(fields[5]),
         })
     }
@@ -310,6 +317,22 @@ impl RuntimeService for IpcRuntimeService {
     fn model_load(&self, id: &str) -> Result<(), RuntimeError> {
         Self::mutation(
             &format!("model_load\t{}", ipc::encode_field(id)),
+            REQUEST_TIMEOUT,
+        )
+    }
+
+    fn model_set_vision_projector(
+        &self,
+        id: &str,
+        projector_path: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let projector = projector_path.map_or_else(String::new, str::to_owned);
+        Self::mutation(
+            &format!(
+                "model_vision\t{}\t{}",
+                ipc::encode_field(id),
+                ipc::encode_field(&projector)
+            ),
             REQUEST_TIMEOUT,
         )
     }
@@ -477,8 +500,30 @@ impl RuntimeService for IpcRuntimeService {
 fn generation_request_line(request: &GenerationRequest) -> String {
     let stop_sequences = serde_json::to_string(&request.options.stop_sequences)
         .expect("serializing a list of strings cannot fail");
+    let structured_output = match &request.structured_output {
+        Some(StructuredOutput::JsonObject) => serde_json::json!({"type": "json_object"}),
+        Some(StructuredOutput::JsonSchema(schema)) => {
+            serde_json::json!({"type": "json_schema", "schema": schema})
+        }
+        None => serde_json::Value::Null,
+    };
+    let content = request
+        .content
+        .iter()
+        .map(|part| match part {
+            ContentPart::Text(text) => serde_json::json!({"type": "text", "text": text}),
+            ContentPart::Image(image) => serde_json::json!({
+                "type": "image",
+                "media_type": image.media_type,
+                "data": STANDARD.encode(&image.data)
+            }),
+        })
+        .collect::<Vec<_>>();
+    let structured_output =
+        serde_json::to_string(&structured_output).expect("structured output JSON is serializable");
+    let content = serde_json::to_string(&content).expect("generation content is serializable");
     format!(
-        "generate_v2\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "generate_v3\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         ipc::encode_field(&request.model_id),
         ipc::encode_field(&request.request_id),
         request.options.max_tokens,
@@ -488,6 +533,8 @@ fn generation_request_line(request: &GenerationRequest) -> String {
         request.options.seed,
         request.options.context_size,
         ipc::encode_field(&stop_sequences),
+        ipc::encode_field(&structured_output),
+        ipc::encode_field(&content),
         ipc::encode_field(&request.prompt),
     )
 }
@@ -818,6 +865,7 @@ mod tests {
         generation_request_line, parse_generation_terminal, parse_status_response,
         receive_generation,
     };
+    use base64::Engine as _;
     use oid_runtime::{GenerationOptions, GenerationRequest, GenerationStatistics};
     use std::collections::HashSet;
     use std::io::Write;
@@ -853,6 +901,7 @@ mod tests {
                 capabilities: Vec::new(),
                 status: oid_runtime::ModelStatus::Loaded,
                 checksum: None,
+                vision_projector_location: None,
                 location: "talvikd".to_owned(),
             }],
         )
@@ -878,6 +927,7 @@ mod tests {
             request_id: "request-1".to_owned(),
             model_id: "qwen".to_owned(),
             prompt: "first line\nsecond\tline".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions {
                 max_tokens: 32,
                 temperature: 0.4,
@@ -887,11 +937,12 @@ mod tests {
                 context_size: 2048,
                 stop_sequences: vec!["END".to_owned()],
             },
+            structured_output: None,
         };
         let line = generation_request_line(&request);
         let fields = line.split('\t').collect::<Vec<_>>();
 
-        assert_eq!(fields[0], "generate_v2");
+        assert_eq!(fields[0], "generate_v3");
         assert_eq!(fields[3], "32");
         assert_eq!(fields[4], "0.4");
         assert_eq!(fields[5], "0.8");
@@ -899,9 +950,45 @@ mod tests {
         assert_eq!(fields[7], "7");
         assert_eq!(fields[8], "2048");
         assert_eq!(crate::ipc::decode_field(fields[9]), r#"["END"]"#);
+        assert_eq!(crate::ipc::decode_field(fields[10]), "null");
+        assert_eq!(crate::ipc::decode_field(fields[11]), "[]");
         assert_eq!(
-            crate::ipc::decode_field(&fields[10..].join("\t")),
+            crate::ipc::decode_field(&fields[12..].join("\t")),
             request.prompt
+        );
+    }
+
+    #[test]
+    fn generation_request_line_carries_images_and_structured_output() {
+        let request = GenerationRequest {
+            request_id: "vision-request".to_owned(),
+            model_id: "vision-model".to_owned(),
+            prompt: "Describe this: <__media__>".to_owned(),
+            content: vec![
+                oid_runtime::ContentPart::Text("Describe this: ".to_owned()),
+                oid_runtime::ContentPart::Image(oid_runtime::ImageInput {
+                    media_type: "image/png".to_owned(),
+                    data: vec![1, 2, 3],
+                }),
+            ],
+            options: GenerationOptions::default(),
+            structured_output: Some(oid_runtime::StructuredOutput::JsonObject),
+        };
+        let line = generation_request_line(&request);
+        let fields = line.split('\t').collect::<Vec<_>>();
+        let structured: serde_json::Value =
+            serde_json::from_str(&crate::ipc::decode_field(fields[10])).expect("JSON constraint");
+        let content: serde_json::Value =
+            serde_json::from_str(&crate::ipc::decode_field(fields[11])).expect("content JSON");
+
+        assert_eq!(structured["type"], "json_object");
+        assert_eq!(content[0]["text"], "Describe this: ");
+        assert_eq!(content[1]["media_type"], "image/png");
+        assert_eq!(
+            super::STANDARD
+                .decode(content[1]["data"].as_str().expect("base64 data"))
+                .expect("decode image"),
+            [1, 2, 3]
         );
     }
 
@@ -911,7 +998,9 @@ mod tests {
             request_id: "request-1".to_owned(),
             model_id: "qwen".to_owned(),
             prompt: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let line = "DONE\tcompleted\tgeneration-1\t5\t3\t8\t1200\t1100\t1000\t200\t300\t800\t4.5\ttrue\tlength\tfalse\t0\tcpu\tCPU\t0\t0\t";
         let message = parse_generation_terminal(line, &request, "world".to_owned())
@@ -947,7 +1036,9 @@ mod tests {
             request_id: "request-1".to_owned(),
             model_id: "qwen".to_owned(),
             prompt: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let message = parse_generation_terminal("DONE\tcompleted\t4", &request, "world".to_owned())
             .expect("legacy response remains supported");
@@ -979,7 +1070,9 @@ mod tests {
             request_id: "request-1".to_owned(),
             model_id: "qwen".to_owned(),
             prompt: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let active_generations = Arc::new(Mutex::new(HashSet::from([request.request_id.clone()])));
         let (sender, receiver) = mpsc::channel();

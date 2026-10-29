@@ -50,14 +50,15 @@ name: Talvik
 model_directory: ~/.marina/models
 registry_path: ~/.marina/models.registry
 state_directory: ~/.marina
-default_model: qwen2.5-0.5b-instruct-q4_k_m
+default_model: gemma-4-e4b-it-q4_0
 ```
 
 Environment variables such as `TALVIK_HOME`, `TALVIK_CONFIG`,
 `TALVIK_MODEL_DIR`, `TALVIK_REGISTRY`, `TALVIK_STATE_DIR`, and
-`TALVIK_DEFAULT_MODEL` override the YAML file. On daemon startup, Talvik loads
-the default model and downloads its pinned GGUF artifact if it is not installed.
-Set `default_model: none` to disable automatic loading. The equivalent
+`TALVIK_DEFAULT_MODEL` overrides the YAML file. On daemon startup, Talvik loads
+the default model and downloads its pinned GGUF and vision-projector artifacts
+if they are not installed (about 4.8 GiB for the Gemma default). Set
+`default_model: none` to disable automatic loading. The equivalent
 `MARINA_*` variables remain compatibility aliases. See
 [Talvik Model Runtime](docs/TALVIK.md)
 for commands, routing configuration, security defaults, and migration rules.
@@ -265,21 +266,20 @@ talvik version
 Start Talvik in Terminal 1 with HTTP bound to loopback:
 
 ```bash
-TALVIK_DEFAULT_MODEL=qwen2.5-0.5b-instruct-q4_k_m \
 TALVIK_HTTP_ADDR=127.0.0.1:11434 \
 talvikd
 ```
 
-The configured default is this pinned small Qwen GGUF; Talvik downloads it if
-it is missing and loads it during startup. Wait for the daemon to report that
-the model loaded.
+The configured Gemma 4 E4B-it default and vision projector download if missing
+and load during startup. The first download is about 4.8 GiB; wait for the
+daemon to report that the model loaded.
 In Terminal 2, check the daemon and run a local generation through Talvik's
 IPC client:
 
 ```bash
 talvik status
 talvik models
-talvik run qwen2.5-0.5b-instruct-q4_k_m "What is 36 x 36? Answer with one number."
+talvik run --default "What is 36 x 36? Answer with one number."
 talvik --json status
 ```
 
@@ -292,7 +292,7 @@ curl --fail-with-body --silent --show-error \
   http://127.0.0.1:11434/v1/chat/completions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen2.5-0.5b-instruct-q4_k_m","messages":[{"role":"user","content":"Reply exactly: Talvik on M4 works"}],"max_tokens":24}'
+  -d '{"model":"gemma-4-e4b-it-q4_0","messages":[{"role":"user","content":"Reply exactly: Talvik on M4 works"}],"max_tokens":24}'
 unset TOKEN
 ```
 
@@ -352,7 +352,7 @@ at `$HOME/.marina/marina.sock` on Linux/macOS, or loopback TCP on Windows via
 The native transport remains local-only; the IDE HTTP bridge is a separate
 loopback compatibility edge.
 
-At the OID prompt, use `:model load qwen2.5-0.5b-instruct-q4_k_m`, followed by
+At the OID prompt, use `:model load gemma-4-e4b-it-q4_0`, followed by
 `:generate The capital of France is`. Use `:generate --max-tokens 4 ...` for a
 short smoke test; the default is 128 tokens. Ctrl+C during generation cancels
 the active request and leaves the console available for another command.

@@ -701,6 +701,41 @@ impl RuntimeService for MarinaRuntime {
         }
     }
 
+    fn model_set_vision_projector(
+        &self,
+        id: &str,
+        projector_path: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
+        if self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .contains_key(id)
+        {
+            return Err(RuntimeError::ModelLifecycle(
+                "unload the model before changing its vision projector".to_owned(),
+            ));
+        }
+        if let Some(path) = projector_path {
+            if !path.to_ascii_lowercase().ends_with(".gguf") {
+                return Err(RuntimeError::InvalidModel(
+                    "vision projector path must end in .gguf".to_owned(),
+                ));
+            }
+            if !std::path::Path::new(path).is_file() {
+                return Err(RuntimeError::InvalidModel(format!(
+                    "vision projector does not exist: {path}"
+                )));
+            }
+        }
+        self.models
+            .set_vision_projector(id, projector_path.map(str::to_owned))
+    }
+
     fn model_unload(&self, id: &str) -> Result<(), RuntimeError> {
         let _residency_guard = self
             .residency_lock
@@ -781,10 +816,27 @@ impl RuntimeService for MarinaRuntime {
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
+        request.validate_input()?;
         if let Some(structured_output) = &request.structured_output {
             structured_output
                 .validate()
                 .map_err(RuntimeError::InvalidRequest)?;
+        }
+        if request
+            .content
+            .iter()
+            .any(|part| matches!(part, crate::generation::ContentPart::Image(_)))
+        {
+            let model = self
+                .models
+                .inspect(&request.model_id)
+                .ok_or_else(|| RuntimeError::ModelNotFound(request.model_id.clone()))?;
+            if model.vision_projector_location.is_none() {
+                return Err(RuntimeError::InvalidRequest(format!(
+                    "model {} has no configured vision projector",
+                    request.model_id
+                )));
+            }
         }
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
@@ -845,6 +897,7 @@ impl RuntimeService for MarinaRuntime {
                 request_id: request.request_id.clone(),
                 model_id: request.model_id.clone(),
                 input: request.prompt.clone(),
+                content: request.content.clone(),
                 options: request.options.clone(),
                 structured_output: request.structured_output.clone(),
             };
@@ -1061,13 +1114,25 @@ mod tests {
         SAFETY_MARGIN_BYTES,
     };
     use crate::{
-        GenerationMessage, GenerationOptions, GenerationRequest, HardwareService, HardwareSnapshot,
-        LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry, ModelStatus, RuntimeService,
+        ContentPart, GenerationMessage, GenerationOptions, GenerationRequest, HardwareService,
+        HardwareSnapshot, ImageInput, LlamaCppAdapter, MockBackend, ModelMetadata, ModelRegistry,
+        ModelStatus, RuntimeService,
     };
     use oid_shared::{EventBus, RuntimeConfig, RuntimeEvent};
     use std::sync::atomic::AtomicBool;
     use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
+
+    fn temporary_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "talvik-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn marina_runtime_is_deterministic_and_publishes_events() {
@@ -1100,6 +1165,130 @@ mod tests {
     }
 
     #[test]
+    fn vision_requests_require_an_explicit_projector_pairing() {
+        let root = temporary_root("vision-admission");
+        std::fs::create_dir_all(&root).expect("create test root");
+        let runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "vision-model".to_owned(),
+                name: "vision-model.gguf".to_owned(),
+                family: "test".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "none".to_owned(),
+                context_window: 1024,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Registered,
+                checksum: None,
+                vision_projector_location: None,
+                location: root.join("vision-model.gguf").display().to_string(),
+            })
+            .expect("register model");
+        let request = GenerationRequest {
+            request_id: "vision-request".to_owned(),
+            model_id: "vision-model".to_owned(),
+            prompt: String::new(),
+            content: vec![
+                ContentPart::Text("Describe this image: ".to_owned()),
+                ContentPart::Image(ImageInput {
+                    media_type: "image/png".to_owned(),
+                    data: vec![1, 2, 3],
+                }),
+            ],
+            options: GenerationOptions::default(),
+            structured_output: None,
+        };
+        assert!(matches!(
+            runtime.generate(request),
+            Err(oid_shared::RuntimeError::InvalidRequest(message))
+                if message.contains("no configured vision projector")
+        ));
+        std::fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn projector_configuration_is_validated_and_locked_to_model_residency() {
+        let root = temporary_root("vision-pairing");
+        std::fs::create_dir_all(&root).expect("create test root");
+        let model_artifact = root.join("vision-model.gguf");
+        std::fs::write(&model_artifact, b"vision model").expect("write model fixture");
+        let projector = root.join("mmproj.gguf");
+        std::fs::write(&projector, b"projector").expect("write projector fixture");
+        let runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "vision-model".to_owned(),
+                name: "vision-model.gguf".to_owned(),
+                family: "test".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "none".to_owned(),
+                context_window: 1024,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Registered,
+                checksum: None,
+                vision_projector_location: None,
+                location: model_artifact.display().to_string(),
+            })
+            .expect("register model");
+
+        assert!(runtime
+            .model_set_vision_projector("vision-model", Some("missing.bin"))
+            .is_err());
+        runtime
+            .model_set_vision_projector(
+                "vision-model",
+                Some(projector.to_str().expect("projector path")),
+            )
+            .expect("configure projector");
+        runtime.model_load("vision-model").expect("load model");
+        assert!(runtime
+            .model_set_vision_projector("vision-model", None)
+            .is_err());
+        runtime.model_unload("vision-model").expect("unload model");
+        runtime
+            .model_set_vision_projector("vision-model", None)
+            .expect("clear projector");
+        assert_eq!(
+            runtime
+                .model_inspect("vision-model")
+                .expect("inspect model")
+                .vision_projector_location,
+            None
+        );
+        assert_eq!(
+            runtime
+                .model_inspect("vision-model")
+                .expect("inspect model")
+                .memory_requirement_mb,
+            std::fs::metadata(&model_artifact)
+                .expect("model file size")
+                .len()
+                .div_ceil(1_048_576)
+        );
+        std::fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
     fn startup_clears_persisted_transient_model_statuses() {
         let root = std::env::temp_dir().join(format!(
             "oid-runtime-status-reset-{}-{}",
@@ -1124,6 +1313,7 @@ mod tests {
                 capabilities: vec!["text".to_owned()],
                 status: ModelStatus::Loaded,
                 checksum: None,
+                vision_projector_location: None,
                 location: root.join("stale-model.gguf").display().to_string(),
             })
             .expect("register stale model");
@@ -1257,6 +1447,7 @@ mod tests {
                 capabilities: vec!["chat".to_owned()],
                 status: ModelStatus::Registered,
                 checksum: None,
+                vision_projector_location: None,
                 location: root.join("alpha.gguf").display().to_string(),
             })
             .expect("register model");
@@ -1369,6 +1560,7 @@ mod tests {
             request_id: id.to_owned(),
             model_id: "model".to_owned(),
             prompt: "prompt".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         };
@@ -1443,6 +1635,7 @@ mod tests {
                     capabilities: vec!["chat".to_owned()],
                     status: ModelStatus::Registered,
                     checksum: None,
+                    vision_projector_location: None,
                     location: root.join(format!("{id}.gguf")).display().to_string(),
                 })
                 .expect("register model");
@@ -1500,6 +1693,7 @@ mod tests {
                     capabilities: vec!["chat".to_owned()],
                     status: ModelStatus::Registered,
                     checksum: None,
+                    vision_projector_location: None,
                     location: root.join(format!("{id}.gguf")).display().to_string(),
                 })
                 .expect("register model");
@@ -1513,6 +1707,7 @@ mod tests {
             request_id: "pinned-rejection".to_owned(),
             model_id: "beta".to_owned(),
             prompt: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         });
@@ -1530,6 +1725,7 @@ mod tests {
                 request_id: "active".to_owned(),
                 model_id: "alpha".to_owned(),
                 prompt: "hello".to_owned(),
+                content: Vec::new(),
                 options: GenerationOptions::default(),
                 structured_output: None,
             })
@@ -1539,6 +1735,7 @@ mod tests {
                 request_id: "queued".to_owned(),
                 model_id: "alpha".to_owned(),
                 prompt: "queued".to_owned(),
+                content: Vec::new(),
                 options: GenerationOptions::default(),
                 structured_output: None,
             })
@@ -1573,6 +1770,7 @@ mod tests {
             request_id: format!("request-{id}"),
             model_id: id.to_owned(),
             prompt: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions {
                 max_tokens: 1,
                 ..GenerationOptions::default()
@@ -1641,6 +1839,7 @@ mod tests {
                     capabilities: vec!["chat".to_owned()],
                     status: ModelStatus::Registered,
                     checksum: None,
+                    vision_projector_location: None,
                     location: root.join(format!("{id}.gguf")).display().to_string(),
                 })
                 .expect("register model");

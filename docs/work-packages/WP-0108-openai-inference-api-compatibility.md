@@ -3,15 +3,15 @@
 ## Status
 
 In progress. ADR-0031 accepts the target profile. Talvik implements a partial
-text profile covering Chat Completions, legacy Completions, non-streaming
-Responses, and conditional embeddings; the endpoint inventory, protocol
+text profile covering Chat Completions, legacy Completions, text Responses
+with SSE, and conditional embeddings; the endpoint inventory, protocol
 implementation, backend capabilities, and qualification remain incomplete.
 
 The implementation distinguishes Chat Completions from legacy Completions,
 emits legacy `text_completion` response/chunk shapes for string prompts,
 includes `created`, returns structured errors for malformed JSON and missing
 required models, rejects several recognized unsupported options, and supports
-a non-streaming text-only `/v1/responses` path. Chat Completions now accepts
+non-streaming and typed SSE text responses on `/v1/responses`. Chat Completions now accepts
 `tool_choice: "auto"` and `"none"`, preserves tool-call IDs across the
 assistant/tool-result prompt translation, and rejects unmatched or
 name-mismatched tool results. Required and function-specific choices are
@@ -20,9 +20,11 @@ enforces a single-call limit. Chat Completions now incrementally parses
 bounded tool-call markup across generation chunks, validates each completed
 call before emitting it, and streams OpenAI-shaped tool-call deltas. Local
 tests cover fragmented markers and arguments, escaped Unicode, multiple calls,
-invalid/incomplete/oversized calls, and SSE delta shape. Responses
-streaming/continuation and multimodal inputs remain unimplemented. Forced tool
-behavior and the new streaming path await live model and SDK qualification.
+invalid/incomplete/oversized calls, and SSE delta shape. Model-output failures
+now carry specific error codes; streaming failures emit an error event without
+a success terminal sentinel. Responses continuation and multimodal inputs
+remain unimplemented. The Responses SSE path awaits live model and SDK
+qualification.
 
 The Python and JavaScript qualifiers exercise automatic, required, and
 function-specific tool choices, single-call behavior, and the tool-call/result

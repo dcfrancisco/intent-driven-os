@@ -1,15 +1,23 @@
 schema_version: 1
 
 default_model:
-  id: qwen2.5-0.5b-instruct-q4_k_m
+  id: gemma-4-e4b-it-q4_0
   format: gguf
-  quantization: Q4_K_M
+  quantization: Q4_0
   source:
-    repository: Qwen/Qwen2.5-0.5B-Instruct-GGUF
-    revision: 6dd44a1
-    filename: qwen2.5-0.5b-instruct-q4_k_m.gguf
-    url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf
-    sha256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+    repository: ggml-org/gemma-4-E4B-it-GGUF
+    revision: a69f018d7678a2b9f5e705f8903d6fb29b9b25dc
+    filename: gemma-4-E4B-it-Q4_0.gguf
+    url: https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/gemma-4-E4B-it-Q4_0.gguf
+    sha256: a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2
+  vision_projector:
+    format: gguf
+    quantization: Q8_0
+    repository: ggml-org/gemma-4-E4B-it-GGUF
+    revision: a69f018d7678a2b9f5e705f8903d6fb29b9b25dc
+    filename: mmproj-gemma-4-E4B-it-Q8_0.gguf
+    url: https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/mmproj-gemma-4-E4B-it-Q8_0.gguf
+    sha256: 197f49a93027f9843772bd24a6a9e0be2a32a788de5a3def330e9c585d86edd1
   runtime:
     backend: auto
     context_size: 4096
@@ -20,6 +28,7 @@ default_model:
     auto_register: true
     auto_load: true
 
-# The artifact revision, URL, and SHA-256 were verified against the upstream
-# model repository on 2026-10-28. This manifest is metadata only; packaging
-# never downloads model files.
+# The GGUF and projector are derived from Google's Apache-2.0 Gemma 4 E4B-it
+# model. Their revision, URLs, and SHA-256 values were checked against the
+# public ggml-org Hugging Face repository on 2026-10-29. This manifest is
+# metadata only; packaging never downloads model files.

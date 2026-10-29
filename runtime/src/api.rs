@@ -93,6 +93,25 @@ pub trait RuntimeService: Send + Sync {
     ///
     /// Returns an error when the model is unknown or the backend rejects it.
     fn model_load(&self, id: &str) -> Result<(), oid_shared::RuntimeError>;
+    /// Pair a registered text model with a local GGUF vision projector.
+    ///
+    /// Pass `None` to remove an existing projector pairing. A resident model
+    /// must be unloaded before its pairing can be changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model or projector is invalid, the model is
+    /// resident, or registry persistence fails.
+    fn model_set_vision_projector(
+        &self,
+        id: &str,
+        projector_path: Option<&str>,
+    ) -> Result<(), oid_shared::RuntimeError> {
+        let _ = (id, projector_path);
+        Err(oid_shared::RuntimeError::NotImplemented(
+            "vision projector configuration",
+        ))
+    }
     /// Unload the active model.
     ///
     /// # Errors

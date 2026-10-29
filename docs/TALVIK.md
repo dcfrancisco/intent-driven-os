@@ -45,9 +45,9 @@ In another terminal:
 ```sh
 talvik status
 talvik models
-talvik load qwen2.5-0.5b-instruct-q4_k_m
-talvik run qwen2.5-0.5b-instruct-q4_k_m "What is the capital of France?"
-talvik unload qwen2.5-0.5b-instruct-q4_k_m
+talvik load gemma-4-e4b-it-q4_0
+talvik run --default "What is the capital of France?"
+talvik unload gemma-4-e4b-it-q4_0
 ```
 
 Import an artifact with an expected SHA-256 when available:
@@ -58,8 +58,9 @@ talvik import <source-url-or-path> <model-id> <sha256>
 
 ## Optional ordered fallback
 
-Routing is disabled by default. Direct `talvik run <model> <prompt>` remains
-the primary, explicit path. To opt into the bounded first routing slice:
+Routing is disabled by default. Use `talvik run --default <prompt>` for the
+configured model or `talvik run <model> <prompt>` to select one explicitly. To
+opt into the bounded first routing slice:
 
 ```sh
 export TALVIK_ROUTING_ENABLED=1
@@ -87,9 +88,11 @@ Talvik uses the following configuration variables:
 | `TALVIK_MODEL_DIRECTORY` | Canonical alias for the model store |
 | `TALVIK_REGISTRY` | Registry file |
 | `TALVIK_STATE_DIR` | Runtime state |
-| `TALVIK_DEFAULT_MODEL` | Model Talvik loads at daemon startup; defaults to the pinned Qwen 0.5B GGUF |
+| `TALVIK_DEFAULT_MODEL` | Model Talvik loads at daemon startup; defaults to the pinned Gemma 4 E4B-it Q4_0 GGUF |
 | `TALVIK_DEFAULT_MODEL_SOURCE` | Source URL/path for acquiring a missing custom default model |
 | `TALVIK_DEFAULT_MODEL_SHA256` | Expected SHA-256 for the default model download |
+| `TALVIK_DEFAULT_VISION_PROJECTOR_SOURCE` | Source URL/path for a missing default vision projector |
+| `TALVIK_DEFAULT_VISION_PROJECTOR_SHA256` | Expected SHA-256 for the default vision projector |
 | `TALVIK_AUTO_BOOTSTRAP` | Enable default-model bootstrap; defaults to true |
 | `TALVIK_AUTO_DOWNLOAD` | Permit download of a missing default model; defaults to true |
 | `TALVIK_AUTO_LOAD` | Load the configured default model at startup; defaults to true |
@@ -114,9 +117,9 @@ requests, and separates model and state volumes.
 The authenticated HTTP surface also provides a partial Ollama-compatible
 local model-runner API: `/api/chat`, `/api/generate`, `/api/embed`,
 `/api/embeddings`, `/api/show`, `/api/tags`, `/api/ps`, and `/api/version`.
-Text inference uses NDJSON streaming by default. Registry distribution,
-Modelfile creation, model copy/delete, per-request keep-alive, and multimodal
-support remain incomplete. See
+Text inference uses NDJSON streaming by default. Local image input is supported
+for models with an explicitly paired projector; audio, video, Modelfile
+creation, model copy/delete, and per-request keep-alive remain incomplete. See
 [Talvik Ollama API Compatibility](./TALVIK-OLLAMA-COMPATIBILITY.md),
 [ADR-0032](./adr/0032-talvik-ollama-model-runner-api.md), and
 [WP-0109](./work-packages/WP-0109-talvik-ollama-model-runner-api.md).
@@ -127,12 +130,13 @@ Defaults resolve under `$HOME/.marina`. The `MARINA_*` environment variables
 remain compatibility aliases, while `TALVIK_*` variables take precedence.
 Talvik does not delete or silently migrate existing data.
 
-At startup, `talvikd` loads `qwen2.5-0.5b-instruct-q4_k_m` by default. If it is
-not registered, Talvik acquires the pinned GGUF artifact from Hugging Face and
-verifies its SHA-256 before loading. A pull or load failure is reported as a
-warning and the daemon continues. Set `default_model: none` or
-`TALVIK_DEFAULT_MODEL=none` to disable automatic loading. For another default
-model, configure its source and optional checksum as well.
+At startup, `talvikd` loads `gemma-4-e4b-it-q4_0` by default. On first use it
+downloads the pinned GGUF and Q8_0 vision projector from Hugging Face (about
+4.8 GiB combined), verifies both SHA-256 hashes, pairs the projector, and loads
+the model. A pull or load failure is reported as a warning and the daemon
+continues. Set `default_model: none` or `TALVIK_DEFAULT_MODEL=none` to disable
+automatic loading. To use a smaller model, set `TALVIK_DEFAULT_MODEL` and
+configure its source and optional checksum.
 
 ## Security defaults
 

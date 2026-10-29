@@ -4,9 +4,9 @@
 
 use oid_llama_cpp_sys as native;
 use oid_model_runner::{
-    CancellationToken, GenerationEvent, GenerationRequest, GenerationStats, GenerationStream,
-    GenerationTermination, LoadModelRequest, LoadedModel, ModelId, ModelRunner, ModelRunnerError,
-    ModelRuntimeStats, ModelState,
+    CancellationToken, ContentPart, GenerationEvent, GenerationRequest, GenerationStats,
+    GenerationStream, GenerationTermination, LoadModelRequest, LoadedModel, ModelId, ModelRunner,
+    ModelRunnerError, ModelRuntimeStats, ModelState,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +14,27 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 mod structured_output;
+
+const DEFAULT_MEDIA_MARKER: &str = "<__media__>";
+
+fn generation_input<'a>(request: &'a GenerationRequest) -> (String, Vec<(String, &'a [u8])>) {
+    if request.content.is_empty() {
+        return (request.prompt.clone(), Vec::new());
+    }
+
+    let mut prompt = String::new();
+    let mut images = Vec::new();
+    for part in &request.content {
+        match part {
+            ContentPart::Text(text) => prompt.push_str(text),
+            ContentPart::Image(image) => {
+                prompt.push_str(DEFAULT_MEDIA_MARKER);
+                images.push((image.media_type.clone(), image.data.as_slice()));
+            }
+        }
+    }
+    (prompt, images)
+}
 
 #[derive(Debug)]
 struct Loaded {
@@ -73,6 +94,16 @@ impl ModelRunner for LlamaCppModelRunner {
                 request.path.as_str().to_owned(),
             ));
         }
+        let projector_path = request
+            .vision_projector_path
+            .as_ref()
+            .map(|path| path.as_str());
+        if let Some(path) = projector_path {
+            if !std::path::Path::new(path).is_file() {
+                return Err(ModelRunnerError::ModelNotFound(path.to_owned()));
+            }
+        }
+
         let mut models = self
             .models
             .lock()
@@ -98,7 +129,7 @@ impl ModelRunner for LlamaCppModelRunner {
             })?;
         }
         let started = Instant::now();
-        let model = match native::load_model(request.path.as_str()) {
+        let model = match native::load_model(request.path.as_str(), projector_path) {
             Ok(model) => model,
             Err(error) => {
                 if models.is_empty() {
@@ -201,8 +232,9 @@ impl ModelRunner for LlamaCppModelRunner {
                         .is_ok()
                 };
                 let grammar = structured_output::compile(request.structured_output.as_ref())?;
-                let native_stats = loaded.model.generate_stream_with_grammar(
-                    &request.prompt,
+                let (prompt, images) = generation_input(&request);
+                let native_stats = loaded.model.generate_stream_with_grammar_and_images(
+                    &prompt,
                     request.context_size,
                     request.max_tokens,
                     request.temperature,
@@ -211,6 +243,7 @@ impl ModelRunner for LlamaCppModelRunner {
                     request.seed.unwrap_or(0),
                     &request.stop_sequences,
                     grammar.as_deref(),
+                    &images,
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;
@@ -416,5 +449,41 @@ impl ModelRunner for LlamaCppModelRunner {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generation_input;
+    use oid_model_runner::{ContentPart, GenerationRequest, ImageInput, ModelId};
+
+    #[test]
+    fn multimodal_input_preserves_text_image_order_and_uses_the_mtmd_marker() {
+        let request = GenerationRequest {
+            model_id: ModelId::new("vision").expect("model id"),
+            prompt: "ignored fallback".to_owned(),
+            content: vec![
+                ContentPart::Text("before ".to_owned()),
+                ContentPart::Image(ImageInput {
+                    media_type: "image/png".to_owned(),
+                    data: vec![1, 2, 3],
+                }),
+                ContentPart::Text(" after".to_owned()),
+            ],
+            max_tokens: 8,
+            temperature: 0.0,
+            top_p: 1.0,
+            top_k: 1,
+            context_size: 128,
+            seed: None,
+            stop_sequences: Vec::new(),
+            structured_output: None,
+        };
+        let (prompt, images) = generation_input(&request);
+
+        assert_eq!(prompt, "before <__media__> after");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, "image/png");
+        assert_eq!(images[0].1, [1, 2, 3]);
     }
 }

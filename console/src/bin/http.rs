@@ -1,8 +1,9 @@
 //! Native loopback HTTP API for Marina.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use oid_runtime::{
-    auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
-    GenerationTermination, MarinaRuntime, RuntimeService, StructuredOutput,
+    auth, ContentPart, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
+    GenerationTermination, ImageInput, MarinaRuntime, RuntimeService, StructuredOutput,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -12,9 +13,118 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const MAX_REQUEST_BODY_BYTES: usize = 1_048_576;
+const MAX_REQUEST_BODY_BYTES: usize = 56 * 1_048_576;
 const MAX_CONTEXT_TOKENS: u64 = 32_768;
 const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+const IMAGE_MARKER: &str = "<__media__>";
+
+fn decode_data_image(value: &str) -> Result<ImageInput, String> {
+    let value = value
+        .strip_prefix("data:")
+        .ok_or_else(|| "image URL must use the data: scheme".to_owned())?;
+    let (metadata, encoded) = value
+        .split_once(',')
+        .ok_or_else(|| "image data URL is missing its payload".to_owned())?;
+    let (media_type, encoding) = metadata
+        .split_once(';')
+        .ok_or_else(|| "image data URL must declare base64 encoding".to_owned())?;
+    if encoding != "base64"
+        || !matches!(
+            media_type,
+            "image/png" | "image/jpeg" | "image/bmp" | "image/gif"
+        )
+    {
+        return Err("only base64 PNG, JPEG, BMP, and GIF images are supported".to_owned());
+    }
+    if encoded.len() > ImageInput::MAX_ENCODED_BYTES.saturating_mul(4) / 3 + 8 {
+        return Err("encoded image exceeds the 10 MiB limit".to_owned());
+    }
+    let data = STANDARD
+        .decode(encoded)
+        .map_err(|error| format!("invalid base64 image data: {error}"))?;
+    if data.is_empty() || data.len() > ImageInput::MAX_ENCODED_BYTES {
+        return Err("decoded image must be between 1 byte and 10 MiB".to_owned());
+    }
+    Ok(ImageInput {
+        media_type: media_type.to_owned(),
+        data,
+    })
+}
+
+fn decode_ollama_image(value: &str) -> Result<ImageInput, String> {
+    if value.len() > ImageInput::MAX_ENCODED_BYTES.saturating_mul(4) / 3 + 8 {
+        return Err("encoded image exceeds the 10 MiB limit".to_owned());
+    }
+    let data = STANDARD
+        .decode(value)
+        .map_err(|error| format!("invalid base64 image data: {error}"))?;
+    if data.is_empty() || data.len() > ImageInput::MAX_ENCODED_BYTES {
+        return Err("decoded image must be between 1 byte and 10 MiB".to_owned());
+    }
+    let media_type = if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if data.starts_with(&[0xff, 0xd8, 0xff]) {
+        "image/jpeg"
+    } else if data.starts_with(b"BM") {
+        "image/bmp"
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        "image/gif"
+    } else {
+        return Err("image data must be PNG, JPEG, BMP, or GIF".to_owned());
+    };
+    Ok(ImageInput {
+        media_type: media_type.to_owned(),
+        data,
+    })
+}
+
+fn push_text_part(parts: &mut Vec<ContentPart>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(ContentPart::Text(previous)) = parts.last_mut() {
+        previous.push_str(text);
+    } else {
+        parts.push(ContentPart::Text(text.to_owned()));
+    }
+}
+
+fn push_image_part(parts: &mut Vec<ContentPart>, image: ImageInput) -> Result<(), String> {
+    let image_count = parts
+        .iter()
+        .filter(|part| matches!(part, ContentPart::Image(_)))
+        .count();
+    if image_count >= ImageInput::MAX_IMAGES_PER_REQUEST {
+        return Err(format!(
+            "at most {} images are supported per request",
+            ImageInput::MAX_IMAGES_PER_REQUEST
+        ));
+    }
+    parts.push(ContentPart::Image(image));
+    Ok(())
+}
+
+fn flatten_content(parts: &[ContentPart]) -> String {
+    let mut prompt = String::new();
+    for part in parts {
+        match part {
+            ContentPart::Text(text) => prompt.push_str(text),
+            ContentPart::Image(_) => prompt.push_str(IMAGE_MARKER),
+        }
+    }
+    prompt
+}
+
+fn prepend_text_part(parts: &mut Vec<ContentPart>, prefix: &str) {
+    if prefix.is_empty() {
+        return;
+    }
+    if let Some(ContentPart::Text(first)) = parts.first_mut() {
+        first.insert_str(0, prefix);
+    } else {
+        parts.insert(0, ContentPart::Text(prefix.to_owned()));
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OpenAiGenerationEndpoint {
@@ -667,6 +777,7 @@ fn generate_ollama(
         Ok(prompt) => prompt,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
     };
+    let base_prompt = prompt.clone();
     let options = match ollama_generation_options(body) {
         Ok(options) => options,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
@@ -692,6 +803,10 @@ fn generate_ollama(
         )
     } else {
         (prompt, false)
+    };
+    let request_content = match ollama_request_content(body, endpoint, &base_prompt, &prompt) {
+        Ok(content) => content,
+        Err(message) => return respond_ollama_error(stream, 400, message),
     };
     let request_id = unique_request_id();
     let request_started = Instant::now();
@@ -727,6 +842,7 @@ fn generate_ollama(
         request_id: request_id.clone(),
         model_id: model.to_owned(),
         prompt,
+        content: request_content,
         options,
         structured_output: structured_output.clone(),
     }) {
@@ -1016,27 +1132,33 @@ fn validate_ollama_generation_request(
             }
             if messages.iter().any(|message| {
                 message
-                    .get("images")
-                    .is_some_and(|images| !images.is_null())
-                    || message
-                        .get("content")
-                        .is_some_and(|content| !content.is_string() && !content.is_null())
+                    .get("content")
+                    .is_some_and(|content| !content.is_string() && !content.is_null())
             }) {
-                return Err((
-                    501,
-                    "only text message content is supported; image and multimodal inputs are unavailable".to_owned(),
-                ));
+                return Err((400, "message content must be a string".to_owned()));
+            }
+            for message in messages {
+                if let Some(images) = message.get("images").filter(|images| !images.is_null()) {
+                    let Some(images) = images.as_array() else {
+                        return Err((400, "message images must be an array".to_owned()));
+                    };
+                    if images.iter().any(|image| !image.is_string()) {
+                        return Err((400, "message images must contain base64 strings".to_owned()));
+                    }
+                }
             }
         }
         OllamaGenerationEndpoint::Generate => {
             if !body.get("prompt").is_some_and(Value::is_string) {
                 return Err((400, "prompt must be a string".to_owned()));
             }
-            if body.get("images").is_some_and(|images| !images.is_null()) {
-                return Err((
-                    501,
-                    "image inputs are not supported by the selected runtime".to_owned(),
-                ));
+            if let Some(images) = body.get("images").filter(|images| !images.is_null()) {
+                let Some(images) = images.as_array() else {
+                    return Err((400, "images must be an array".to_owned()));
+                };
+                if images.iter().any(|image| !image.is_string()) {
+                    return Err((400, "images must contain base64 strings".to_owned()));
+                }
             }
         }
     }
@@ -1128,6 +1250,47 @@ fn ollama_prompt(
             Ok(output)
         }
     }
+}
+
+fn ollama_request_content(
+    body: &Value,
+    endpoint: OllamaGenerationEndpoint,
+    base_prompt: &str,
+    final_prompt: &str,
+) -> Result<Vec<ContentPart>, String> {
+    let mut parts = match endpoint {
+        OllamaGenerationEndpoint::Chat => build_chat_content(&json!({
+            "messages": body.get("messages").ok_or_else(|| "messages is required".to_owned())?
+        }))?,
+        OllamaGenerationEndpoint::Generate => {
+            let mut parts = vec![ContentPart::Text(base_prompt.to_owned())];
+            if let Some(images) = body.get("images").filter(|images| !images.is_null()) {
+                let images = images
+                    .as_array()
+                    .ok_or_else(|| "images must be an array".to_owned())?;
+                for encoded in images {
+                    let encoded = encoded
+                        .as_str()
+                        .ok_or_else(|| "images must contain base64 strings".to_owned())?;
+                    push_image_part(&mut parts, decode_ollama_image(encoded)?)?;
+                }
+            }
+            parts
+        }
+    };
+    if !parts
+        .iter()
+        .any(|part| matches!(part, ContentPart::Image(_)))
+    {
+        return Ok(Vec::new());
+    }
+    let content_prompt = flatten_content(&parts);
+    let prefix = final_prompt
+        .strip_suffix(&content_prompt)
+        .unwrap_or_default()
+        .to_owned();
+    prepend_text_part(&mut parts, &prefix);
+    Ok(parts)
 }
 
 fn ollama_generation_options(body: &Value) -> Result<GenerationOptions, (u16, String)> {
@@ -1251,14 +1414,242 @@ fn openai_tool_stream_delta(part: &ToolStreamPart, include_role: bool) -> Option
 fn write_openai_stream_error(
     stream: &mut TcpStream,
     headers_sent: bool,
+    code: &str,
     message: &str,
 ) -> std::io::Result<()> {
+    write_openai_stream_failure(
+        stream,
+        headers_sent,
+        502,
+        "model_output_error",
+        code,
+        message,
+    )
+}
+
+fn write_openai_stream_failure(
+    stream: &mut TcpStream,
+    headers_sent: bool,
+    status: u16,
+    error_type: &str,
+    code: &str,
+    message: &str,
+) -> std::io::Result<()> {
+    let error = json!({"error": {
+        "type": error_type,
+        "message": message,
+        "param": Value::Null,
+        "code": code
+    }});
     if !headers_sent {
-        return respond_error(stream, 502, message.to_owned());
+        return respond_json(stream, status, error);
     }
-    let event = json!({"error": {"type": "server_error", "message": message}});
-    write!(stream, "data: {event}\n\ndata: [DONE]\n\n")?;
+    let frame = openai_stream_error_frame(error_type, code, message);
+    stream.write_all(frame.as_bytes())?;
     stream.flush()
+}
+
+fn openai_stream_error_frame(error_type: &str, code: &str, message: &str) -> String {
+    let error = openai_error(error_type, code, message);
+    format!("event: error\ndata: {error}\n\n")
+}
+
+fn openai_model_output_error(code: &str, message: &str) -> Value {
+    openai_error("model_output_error", code, message)
+}
+
+fn openai_error(error_type: &str, code: &str, message: &str) -> Value {
+    json!({"error": {
+        "type": error_type,
+        "message": message,
+        "param": Value::Null,
+        "code": code
+    }})
+}
+
+fn respond_model_output_error(
+    stream: &mut TcpStream,
+    code: &str,
+    message: &str,
+) -> std::io::Result<()> {
+    respond_json(stream, 502, openai_model_output_error(code, message))
+}
+
+fn responses_sse_frame(event_type: &str, sequence_number: u64, payload: Value) -> String {
+    let mut event = payload.as_object().cloned().unwrap_or_default();
+    event.insert("type".to_owned(), json!(event_type));
+    event.insert("sequence_number".to_owned(), json!(sequence_number));
+    format!("event: {event_type}\ndata: {}\n\n", Value::Object(event))
+}
+
+fn write_responses_sse_event(
+    stream: &mut TcpStream,
+    sequence_number: &mut u64,
+    event_type: &str,
+    payload: Value,
+) -> std::io::Result<()> {
+    let frame = responses_sse_frame(event_type, *sequence_number, payload);
+    *sequence_number = sequence_number.saturating_add(1);
+    stream.write_all(frame.as_bytes())?;
+    stream.flush()
+}
+
+fn responses_output_message(request_id: &str, status: &str, text: &str) -> Value {
+    json!({
+        "id": format!("msg_{request_id}"),
+        "type": "message",
+        "status": status,
+        "role": "assistant",
+        "content": [{
+            "type": "output_text",
+            "text": text,
+            "annotations": []
+        }]
+    })
+}
+
+fn responses_object(
+    request_id: &str,
+    created: u64,
+    model: &str,
+    body: &Value,
+    temperature: f32,
+    top_p: f32,
+    status: &str,
+    output: Vec<Value>,
+    usage: Value,
+    error: Value,
+    incomplete_details: Value,
+) -> Value {
+    json!({
+        "id": format!("resp_{request_id}"),
+        "object": "response",
+        "created_at": created,
+        "status": status,
+        "background": false,
+        "error": error,
+        "incomplete_details": incomplete_details,
+        "instructions": body.get("instructions").cloned().unwrap_or(Value::Null),
+        "max_output_tokens": body.get("max_output_tokens").cloned().unwrap_or(Value::Null),
+        "model": model,
+        "output": output,
+        "parallel_tool_calls": false,
+        "previous_response_id": Value::Null,
+        "temperature": temperature,
+        "text": {"format": {"type": "text"}},
+        "top_p": top_p,
+        "truncation": "disabled",
+        "usage": usage,
+        "metadata": body.get("metadata").cloned().unwrap_or_else(|| json!({})),
+        "store": false
+    })
+}
+
+fn write_responses_stream_start(
+    stream: &mut TcpStream,
+    sequence_number: &mut u64,
+    request_id: &str,
+    created: u64,
+    model: &str,
+    body: &Value,
+    temperature: f32,
+    top_p: f32,
+) -> std::io::Result<()> {
+    let message_id = format!("msg_{request_id}");
+    let response = responses_object(
+        request_id,
+        created,
+        model,
+        body,
+        temperature,
+        top_p,
+        "in_progress",
+        Vec::new(),
+        Value::Null,
+        Value::Null,
+        Value::Null,
+    );
+    write_responses_sse_event(
+        stream,
+        sequence_number,
+        "response.created",
+        json!({"response": response}),
+    )?;
+    write_responses_sse_event(
+        stream,
+        sequence_number,
+        "response.in_progress",
+        json!({"response": response}),
+    )?;
+    write_responses_sse_event(
+        stream,
+        sequence_number,
+        "response.output_item.added",
+        json!({
+            "output_index": 0,
+            "item": {
+                "id": message_id,
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": []
+            }
+        }),
+    )?;
+    write_responses_sse_event(
+        stream,
+        sequence_number,
+        "response.content_part.added",
+        json!({
+            "item_id": message_id,
+            "output_index": 0,
+            "content_index": 0,
+            "part": {"type": "output_text", "text": "", "annotations": []}
+        }),
+    )
+}
+
+fn write_responses_stream_failure(
+    stream: &mut TcpStream,
+    sequence_number: &mut u64,
+    request_id: &str,
+    created: u64,
+    model: &str,
+    body: &Value,
+    temperature: f32,
+    top_p: f32,
+    partial_output: &str,
+    code: &str,
+    message: &str,
+) -> std::io::Result<()> {
+    let output = if partial_output.is_empty() {
+        Vec::new()
+    } else {
+        vec![responses_output_message(
+            request_id,
+            "incomplete",
+            partial_output,
+        )]
+    };
+    let response = responses_object(
+        request_id,
+        created,
+        model,
+        body,
+        temperature,
+        top_p,
+        "failed",
+        output,
+        Value::Null,
+        json!({"type": "server_error", "code": code, "message": message}),
+        Value::Null,
+    );
+    write_responses_sse_event(
+        stream,
+        sequence_number,
+        "response.failed",
+        json!({"response": response}),
+    )
 }
 
 fn write_ollama_tool_stream_part(
@@ -1653,12 +2044,18 @@ fn validate_openai_tool_history(body: &Value) -> Result<(), String> {
 }
 
 fn build_chat_prompt(body: &Value) -> Result<String, String> {
+    let parts = build_chat_content(body)?;
+    Ok(flatten_content(&parts))
+}
+
+fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
     let Some(messages) = body.get("messages") else {
-        return body
+        let prompt = body
             .get("prompt")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .ok_or_else(|| "messages is required".to_owned());
+            .ok_or_else(|| "messages is required".to_owned())?;
+        return Ok(vec![ContentPart::Text(prompt)]);
     };
     let messages = messages
         .as_array()
@@ -1667,7 +2064,7 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
         return Err("messages must contain at least one message".to_owned());
     }
 
-    let mut prompt = String::new();
+    let mut parts = Vec::new();
     for message in messages {
         let role = message
             .get("role")
@@ -1676,24 +2073,25 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
         if !matches!(role, "system" | "developer" | "user" | "assistant" | "tool") {
             return Err(format!("unsupported message role: {role}"));
         }
-        let content = if role == "assistant" {
-            message
-                .get("tool_calls")
-                .filter(|calls| !calls.is_null())
-                .map(|calls| format!("<tool_calls>{calls}</tool_calls>"))
-                .or_else(|| {
-                    message
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                })
-                .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?
+        push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
+        if role == "assistant" {
+            if let Some(calls) = message.get("tool_calls").filter(|calls| !calls.is_null()) {
+                push_text_part(&mut parts, &format!("<tool_calls>{calls}</tool_calls>"));
+            } else {
+                let content = message
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?;
+                push_text_part(&mut parts, content);
+            }
         } else {
             let content = message
                 .get("content")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "message content must be a string".to_owned())?;
+                .ok_or_else(|| "message content is required".to_owned())?;
             if role == "tool" {
+                let content = content
+                    .as_str()
+                    .ok_or_else(|| "tool message content must be a string".to_owned())?;
                 let name = message
                     .get("name")
                     .and_then(Value::as_str)
@@ -1702,17 +2100,66 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
                     .get("tool_call_id")
                     .and_then(Value::as_str)
                     .map_or_else(String::new, |id| format!(" (tool_call_id: {id})"));
-                format!("Tool result for {name}{call_id}: {content}")
+                push_text_part(
+                    &mut parts,
+                    &format!("Tool result for {name}{call_id}: {content}"),
+                );
+            } else if let Some(content) = content.as_str() {
+                push_text_part(&mut parts, content);
+            } else if let Some(content) = content.as_array() {
+                for part in content {
+                    match part.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            let text =
+                                part.get("text").and_then(Value::as_str).ok_or_else(|| {
+                                    "text content parts require string text".to_owned()
+                                })?;
+                            push_text_part(&mut parts, text);
+                        }
+                        Some("image_url") if role == "user" => {
+                            let image_url = part.get("image_url").ok_or_else(|| {
+                                "image_url content parts require an image_url value".to_owned()
+                            })?;
+                            let url = image_url
+                                .as_str()
+                                .or_else(|| image_url.get("url").and_then(Value::as_str))
+                                .ok_or_else(|| {
+                                    "image_url must contain a data URL string".to_owned()
+                                })?;
+                            let image = decode_data_image(url)?;
+                            push_image_part(&mut parts, image)?;
+                        }
+                        Some("image_url") => {
+                            return Err(
+                                "image inputs are only supported in user messages".to_owned()
+                            )
+                        }
+                        Some(kind) => {
+                            return Err(format!("unsupported chat content part type `{kind}`"))
+                        }
+                        None => return Err("chat content parts require a type".to_owned()),
+                    }
+                }
             } else {
-                content.to_owned()
+                return Err("message content must be a string or content-part array".to_owned());
             }
-        };
-        prompt.push('\u{001e}');
-        prompt.push_str(role);
-        prompt.push('\n');
-        prompt.push_str(&content);
+        }
+        if let Some(images) = message.get("images").filter(|images| !images.is_null()) {
+            let images = images
+                .as_array()
+                .ok_or_else(|| "message images must be an array".to_owned())?;
+            if role != "user" && !images.is_empty() {
+                return Err("image inputs are only supported in user messages".to_owned());
+            }
+            for encoded in images {
+                let encoded = encoded
+                    .as_str()
+                    .ok_or_else(|| "message images must contain base64 strings".to_owned())?;
+                push_image_part(&mut parts, decode_ollama_image(encoded)?)?;
+            }
+        }
     }
-    Ok(prompt)
+    Ok(parts)
 }
 
 fn build_completion_prompt(body: &Value) -> Result<String, String> {
@@ -1868,6 +2315,20 @@ fn validate_generated_tool_calls(
                 ))
             }
         }
+    }
+}
+
+fn tool_call_output_error_code(message: &str) -> &'static str {
+    if message.contains("incomplete tool call") || message.contains("incomplete tool-call marker") {
+        "incomplete_tool_call"
+    } else if message == "model returned an undeclared tool name" {
+        "undeclared_tool_name"
+    } else if message.contains("parallel calls were disabled") {
+        "parallel_tool_calls_not_allowed"
+    } else if message.contains("required tool call") || message.contains("required function") {
+        "tool_choice_not_satisfied"
+    } else {
+        "invalid_tool_call"
     }
 }
 
@@ -2126,9 +2587,6 @@ fn validate_generation_request(
         if body.get("tools").is_some() {
             return Err((501, "tools are not supported by Responses yet".to_owned()));
         }
-        if body.get("stream").and_then(Value::as_bool) == Some(true) {
-            return Err((501, "streaming Responses are not supported yet".to_owned()));
-        }
     }
     if endpoint == OpenAiGenerationEndpoint::ChatCompletions
         && body.get("prompt").is_some()
@@ -2270,15 +2728,19 @@ fn generate(
         .get("parallel_tool_calls")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    let prompt_result = match endpoint {
-        OpenAiGenerationEndpoint::ChatCompletions => build_chat_prompt(body),
-        OpenAiGenerationEndpoint::Completions => build_completion_prompt(body),
-        OpenAiGenerationEndpoint::Responses => build_response_prompt(body),
+    let (prompt_result, mut request_content) = match endpoint {
+        OpenAiGenerationEndpoint::ChatCompletions => match build_chat_content(body) {
+            Ok(content) => (Ok(flatten_content(&content)), content),
+            Err(error) => (Err(error), Vec::new()),
+        },
+        OpenAiGenerationEndpoint::Completions => (build_completion_prompt(body), Vec::new()),
+        OpenAiGenerationEndpoint::Responses => (build_response_prompt(body), Vec::new()),
     };
     let mut prompt = match prompt_result {
         Ok(prompt) => prompt,
         Err(message) => return respond_error(stream, 400, message),
     };
+    let base_prompt = prompt.clone();
     if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
         if let Some(tools) = tool_definitions {
             prompt.insert_str(
@@ -2303,6 +2765,18 @@ fn generate(
             501,
             "tools are not supported by the legacy Completions endpoint".to_owned(),
         );
+    }
+    if request_content
+        .iter()
+        .any(|part| matches!(part, ContentPart::Image(_)))
+    {
+        let prefix = prompt
+            .strip_suffix(&base_prompt)
+            .unwrap_or_default()
+            .to_owned();
+        prepend_text_part(&mut request_content, &prefix);
+    } else {
+        request_content.clear();
     }
     let request_id = body
         .get("request_id")
@@ -2367,6 +2841,7 @@ fn generate(
         request_id: request_id.clone(),
         model_id: model.to_owned(),
         prompt,
+        content: request_content,
         options,
         structured_output: structured_output.clone(),
     }) {
@@ -2384,6 +2859,7 @@ fn generate(
     let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
     let mut streamed_tool_calls = Vec::new();
     let mut stream_headers_sent = false;
+    let mut response_sequence_number = 0;
     if streaming && !defer_stream_headers {
         write!(
             stream,
@@ -2391,6 +2867,28 @@ fn generate(
         )?;
         stream.flush()?;
         stream_headers_sent = true;
+        if endpoint == OpenAiGenerationEndpoint::Responses {
+            if let Err(error) = write_responses_stream_start(
+                stream,
+                &mut response_sequence_number,
+                &request_id,
+                created,
+                model,
+                body,
+                response_temperature,
+                response_top_p,
+            ) {
+                generation.cancel();
+                if !drain_cancelled_generation(&generation) {
+                    eprintln!(
+                        "Talvik HTTP generation cleanup timed out request_id={}",
+                        request_id
+                    );
+                }
+                finish_owner(owners, &request_id);
+                return Err(error);
+            }
+        }
     }
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
@@ -2427,6 +2925,7 @@ fn generate(
                             return write_openai_stream_error(
                                 stream,
                                 stream_headers_sent,
+                                "invalid_model_output",
                                 &message,
                             );
                         }
@@ -2458,6 +2957,7 @@ fn generate(
                                 return write_openai_stream_error(
                                     stream,
                                     stream_headers_sent,
+                                    tool_call_output_error_code(&message),
                                     &message,
                                 );
                             }
@@ -2502,7 +3002,28 @@ fn generate(
                             "choices": [{"index": 0, "text": token, "logprobs": Value::Null, "finish_reason": Value::Null}]
                         }),
                         OpenAiGenerationEndpoint::Responses => {
-                            unreachable!("Responses streaming is rejected during validation")
+                            if let Err(error) = write_responses_sse_event(
+                                stream,
+                                &mut response_sequence_number,
+                                "response.output_text.delta",
+                                json!({
+                                    "item_id": format!("msg_{request_id}"),
+                                    "output_index": 0,
+                                    "content_index": 0,
+                                    "delta": token
+                                }),
+                            ) {
+                                generation.cancel();
+                                if !drain_cancelled_generation(&generation) {
+                                    eprintln!(
+                                        "Talvik HTTP generation cleanup timed out request_id={}",
+                                        request_id
+                                    );
+                                }
+                                finish_owner(owners, &request_id);
+                                return Err(error);
+                            }
+                            continue;
                         }
                     };
                     write!(stream, "data: {event}\n\n")?;
@@ -2524,10 +3045,15 @@ fn generate(
                             return write_openai_stream_error(
                                 stream,
                                 stream_headers_sent,
+                                tool_call_output_error_code(&message),
                                 &message,
                             );
                         }
-                        return respond_error(stream, 502, message);
+                        return respond_model_output_error(
+                            stream,
+                            "invalid_model_output",
+                            &message,
+                        );
                     }
                 }
                 let finish_reason = completion_finish_reason(result.statistics.termination);
@@ -2543,6 +3069,7 @@ fn generate(
                                 return write_openai_stream_error(
                                     stream,
                                     stream_headers_sent,
+                                    tool_call_output_error_code(&message),
                                     &message,
                                 );
                             }
@@ -2568,6 +3095,7 @@ fn generate(
                                     return write_openai_stream_error(
                                         stream,
                                         stream_headers_sent,
+                                        tool_call_output_error_code(&message),
                                         &message,
                                     );
                                 }
@@ -2588,7 +3116,13 @@ fn generate(
                     } else {
                         match parse_tool_calls(&output, &unique_request_id()) {
                             Ok(calls) => calls,
-                            Err(message) => return respond_error(stream, 502, message),
+                            Err(message) => {
+                                return respond_model_output_error(
+                                    stream,
+                                    tool_call_output_error_code(&message),
+                                    &message,
+                                );
+                            }
                         }
                     }
                 } else {
@@ -2603,9 +3137,14 @@ fn generate(
                 }) {
                     let message = "model returned an undeclared tool name";
                     return if streaming {
-                        write_openai_stream_error(stream, stream_headers_sent, message)
+                        write_openai_stream_error(
+                            stream,
+                            stream_headers_sent,
+                            "undeclared_tool_name",
+                            message,
+                        )
                     } else {
-                        respond_error(stream, 502, message.to_owned())
+                        respond_model_output_error(stream, "undeclared_tool_name", message)
                     };
                 }
                 if let Err(message) = validate_generated_tool_calls(
@@ -2614,9 +3153,18 @@ fn generate(
                     parallel_tool_calls,
                 ) {
                     return if streaming {
-                        write_openai_stream_error(stream, stream_headers_sent, &message)
+                        write_openai_stream_error(
+                            stream,
+                            stream_headers_sent,
+                            tool_call_output_error_code(&message),
+                            &message,
+                        )
                     } else {
-                        respond_error(stream, 502, message)
+                        respond_model_output_error(
+                            stream,
+                            tool_call_output_error_code(&message),
+                            &message,
+                        )
                     };
                 }
                 if endpoint == OpenAiGenerationEndpoint::Responses {
@@ -2631,42 +3179,64 @@ fn generate(
                             "total_tokens": result.statistics.prompt_tokens.saturating_add(result.statistics.generated_tokens)
                         })
                     });
-                    return respond_json(
-                        stream,
-                        200,
-                        json!({
-                            "id": format!("resp_{}", result.request_id),
-                            "object": "response",
-                            "created_at": created,
-                            "status": "completed",
-                            "background": false,
-                            "error": Value::Null,
-                            "incomplete_details": Value::Null,
-                            "instructions": body.get("instructions").cloned().unwrap_or(Value::Null),
-                            "max_output_tokens": body.get("max_output_tokens").cloned().unwrap_or(Value::Null),
-                            "model": model,
-                            "output": [{
-                                "id": format!("msg_{}", result.request_id),
-                                "type": "message",
-                                "status": "completed",
-                                "role": "assistant",
-                                "content": [{
+                    let output_message =
+                        responses_output_message(&result.request_id, "completed", &output);
+                    let response = responses_object(
+                        &result.request_id,
+                        created,
+                        model,
+                        body,
+                        response_temperature,
+                        response_top_p,
+                        "completed",
+                        vec![output_message.clone()],
+                        usage.unwrap_or(Value::Null),
+                        Value::Null,
+                        Value::Null,
+                    );
+                    if streaming {
+                        let message_id = format!("msg_{}", result.request_id);
+                        write_responses_sse_event(
+                            stream,
+                            &mut response_sequence_number,
+                            "response.output_text.done",
+                            json!({
+                                "item_id": message_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "text": output
+                            }),
+                        )?;
+                        write_responses_sse_event(
+                            stream,
+                            &mut response_sequence_number,
+                            "response.content_part.done",
+                            json!({
+                                "item_id": message_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "part": {
                                     "type": "output_text",
                                     "text": output,
                                     "annotations": []
-                                }]
-                            }],
-                            "parallel_tool_calls": false,
-                            "previous_response_id": Value::Null,
-                            "temperature": response_temperature,
-                            "text": {"format": {"type": "text"}},
-                            "top_p": response_top_p,
-                            "truncation": "disabled",
-                            "usage": usage,
-                            "metadata": {},
-                            "store": false
-                        }),
-                    );
+                                }
+                            }),
+                        )?;
+                        write_responses_sse_event(
+                            stream,
+                            &mut response_sequence_number,
+                            "response.output_item.done",
+                            json!({"output_index": 0, "item": output_message}),
+                        )?;
+                        write_responses_sse_event(
+                            stream,
+                            &mut response_sequence_number,
+                            "response.completed",
+                            json!({"response": response}),
+                        )?;
+                        return Ok(());
+                    }
+                    return respond_json(stream, 200, response);
                 }
                 if streaming {
                     if defer_stream_headers && !stream_headers_sent {
@@ -2800,6 +3370,21 @@ fn generate(
                     request_id, model, result.statistics.generated_tokens
                 );
                 if endpoint == OpenAiGenerationEndpoint::Responses {
+                    if streaming {
+                        return write_responses_stream_failure(
+                            stream,
+                            &mut response_sequence_number,
+                            &request_id,
+                            created,
+                            model,
+                            body,
+                            response_temperature,
+                            response_top_p,
+                            &output,
+                            "cancelled",
+                            "Responses generation was cancelled",
+                        );
+                    }
                     return respond_error(
                         stream,
                         500,
@@ -2879,6 +3464,31 @@ fn generate(
                 eprintln!(
                     "Talvik HTTP generation failed request_id={request_id} model={model} error={error}"
                 );
+                if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
+                    return write_responses_stream_failure(
+                        stream,
+                        &mut response_sequence_number,
+                        &request_id,
+                        created,
+                        model,
+                        body,
+                        response_temperature,
+                        response_top_p,
+                        &output,
+                        "generation_failed",
+                        &error.to_string(),
+                    );
+                }
+                if streaming {
+                    return write_openai_stream_failure(
+                        stream,
+                        stream_headers_sent,
+                        500,
+                        "server_error",
+                        "generation_failed",
+                        &error.to_string(),
+                    );
+                }
                 return respond_error(stream, 500, error.to_string());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -2886,7 +3496,57 @@ fn generate(
                 finish_owner(owners, &request_id);
                 eprintln!("Talvik HTTP generation timed_out request_id={request_id} model={model}");
                 if drain_cancelled_generation(&generation) {
+                    if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
+                        return write_responses_stream_failure(
+                            stream,
+                            &mut response_sequence_number,
+                            &request_id,
+                            created,
+                            model,
+                            body,
+                            response_temperature,
+                            response_top_p,
+                            &output,
+                            "timeout",
+                            "generation request timed out",
+                        );
+                    }
+                    if streaming {
+                        return write_openai_stream_failure(
+                            stream,
+                            stream_headers_sent,
+                            504,
+                            "timeout_error",
+                            "generation_timeout",
+                            "generation request timed out",
+                        );
+                    }
                     return respond_error(stream, 504, "generation request timed out".to_owned());
+                }
+                if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
+                    return write_responses_stream_failure(
+                        stream,
+                        &mut response_sequence_number,
+                        &request_id,
+                        created,
+                        model,
+                        body,
+                        response_temperature,
+                        response_top_p,
+                        &output,
+                        "cancellation_cleanup_timeout",
+                        "generation cancellation did not complete within the cleanup deadline",
+                    );
+                }
+                if streaming {
+                    return write_openai_stream_failure(
+                        stream,
+                        stream_headers_sent,
+                        500,
+                        "server_error",
+                        "cancellation_cleanup_timeout",
+                        "generation cancellation did not complete within the cleanup deadline",
+                    );
                 }
                 return respond_error(
                     stream,
@@ -2897,6 +3557,31 @@ fn generate(
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 finish_owner(owners, &request_id);
+                if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
+                    return write_responses_stream_failure(
+                        stream,
+                        &mut response_sequence_number,
+                        &request_id,
+                        created,
+                        model,
+                        body,
+                        response_temperature,
+                        response_top_p,
+                        &output,
+                        "generation_stream_closed",
+                        "generation stream closed before completion",
+                    );
+                }
+                if streaming {
+                    return write_openai_stream_failure(
+                        stream,
+                        stream_headers_sent,
+                        500,
+                        "server_error",
+                        "generation_stream_closed",
+                        "generation stream closed before completion",
+                    );
+                }
                 return respond_error(stream, 500, "generation stream closed".to_owned());
             }
         }
@@ -3071,6 +3756,7 @@ fn reason(status: u16) -> &'static str {
         409 => "Conflict",
         413 => "Payload Too Large",
         429 => "Too Many Requests",
+        502 => "Bad Gateway",
         501 => "Not Implemented",
         504 => "Gateway Timeout",
         500 => "Internal Server Error",
@@ -3102,22 +3788,86 @@ fn unique_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_ollama_statistics, build_chat_prompt, build_completion_prompt, build_response_prompt,
-        completion_finish_reason, completion_termination_reason, generation_options, iso8601_now,
-        ollama_generation_options, ollama_prompt, ollama_tool_call, ollama_tool_stream_chunk,
-        openai_tool_stream_delta, parse_ollama_format, parse_openai_response_format,
-        parse_tool_calls, request_body_size_is_allowed, validate_generated_tool_calls,
-        validate_generation_request, validate_ollama_generation_request,
-        validate_openai_tool_history, validate_streamed_tool_call, GenerationTermination,
-        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser,
-        ToolStreamPart, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
+        add_ollama_statistics, build_chat_content, build_chat_prompt, build_completion_prompt,
+        build_response_prompt, completion_finish_reason, completion_termination_reason,
+        flatten_content, generation_options, iso8601_now, ollama_generation_options, ollama_prompt,
+        ollama_request_content, ollama_tool_call, ollama_tool_stream_chunk,
+        openai_model_output_error, openai_stream_error_frame, openai_tool_stream_delta,
+        parse_ollama_format, parse_openai_response_format, parse_tool_calls, reason,
+        request_body_size_is_allowed, responses_sse_frame, tool_call_output_error_code,
+        validate_generated_tool_calls, validate_generation_request,
+        validate_ollama_generation_request, validate_openai_tool_history,
+        validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
+        OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
+        MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
+    use base64::Engine as _;
     use serde_json::json;
 
     #[test]
     fn rejects_oversized_http_bodies() {
         assert!(request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES));
         assert!(!request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES + 1));
+    }
+
+    #[test]
+    fn openai_chat_content_preserves_inline_image_order() {
+        let body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type":"text","text":"What is in this picture? "},
+                    {"type":"image_url","image_url":{"url":"data:image/png;base64,AQID"}},
+                    {"type":"text","text":" Answer briefly."}
+                ]
+            }]
+        });
+        let content = build_chat_content(&body).expect("inline data image should be accepted");
+
+        assert_eq!(content.len(), 3);
+        assert!(matches!(&content[1], oid_runtime::ContentPart::Image(image)
+            if image.media_type == "image/png" && image.data == [1, 2, 3]));
+        assert_eq!(
+            flatten_content(&content),
+            "\u{001e}user\nWhat is in this picture? <__media__> Answer briefly."
+        );
+        assert_eq!(
+            build_chat_prompt(&body).expect("chat prompt"),
+            flatten_content(&content)
+        );
+    }
+
+    #[test]
+    fn rejects_remote_openai_image_urls() {
+        let body = json!({
+            "messages": [{
+                "role":"user",
+                "content":[{"type":"image_url","image_url":{"url":"https://example.invalid/image.png"}}]
+            }]
+        });
+        assert!(build_chat_content(&body)
+            .expect_err("remote image URLs must not be fetched")
+            .contains("data: scheme"));
+    }
+
+    #[test]
+    fn ollama_generate_accepts_bounded_inline_base64_images() {
+        let png_bytes = b"\x89PNG\r\n\x1a\nfixture";
+        let body = json!({
+            "prompt":"Describe this image.",
+            "images":[super::STANDARD.encode(png_bytes)]
+        });
+        let content = ollama_request_content(
+            &body,
+            OllamaGenerationEndpoint::Generate,
+            "Describe this image.",
+            "Describe this image.",
+        )
+        .expect("Ollama base64 image should be accepted");
+
+        assert_eq!(content.len(), 2);
+        assert!(matches!(&content[1], oid_runtime::ContentPart::Image(image)
+            if image.media_type == "image/png" && image.data == png_bytes));
     }
 
     #[test]
@@ -3535,7 +4285,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_text_responses_input_and_rejects_unavailable_streaming() {
+    fn maps_text_responses_input_and_accepts_streaming() {
         let response = json!({"instructions":"Be concise.","input":"hello"});
         assert_eq!(
             build_response_prompt(&response).expect("Responses prompt"),
@@ -3547,8 +4297,54 @@ mod tests {
                 OpenAiGenerationEndpoint::Responses
             )
             .map_err(|(status, _)| status),
-            Err(501)
+            Ok(())
         );
+    }
+
+    #[test]
+    fn formats_responses_sse_events_with_type_and_sequence_number() {
+        let frame = responses_sse_frame(
+            "response.output_text.delta",
+            3,
+            json!({"item_id":"msg_test","delta":"hello"}),
+        );
+        assert!(frame.starts_with("event: response.output_text.delta\n"));
+        let data = frame
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("SSE event data");
+        let event: serde_json::Value = serde_json::from_str(data).expect("valid event JSON");
+        assert_eq!(event["type"], "response.output_text.delta");
+        assert_eq!(event["sequence_number"], 3);
+        assert_eq!(event["delta"], "hello");
+    }
+
+    #[test]
+    fn classifies_model_output_failures_and_gateway_status() {
+        let error = openai_model_output_error("incomplete_tool_call", "model ended early");
+        assert_eq!(error["error"]["type"], "model_output_error");
+        assert_eq!(error["error"]["code"], "incomplete_tool_call");
+        assert_eq!(
+            tool_call_output_error_code("model ended with an incomplete tool call"),
+            "incomplete_tool_call"
+        );
+        assert_eq!(
+            tool_call_output_error_code("model did not produce the required tool call"),
+            "tool_choice_not_satisfied"
+        );
+        assert_eq!(reason(502), "Bad Gateway");
+    }
+
+    #[test]
+    fn streamed_model_output_errors_do_not_end_with_success_sentinel() {
+        let frame = openai_stream_error_frame(
+            "model_output_error",
+            "incomplete_tool_call",
+            "model ended early",
+        );
+        assert!(frame.starts_with("event: error\n"));
+        assert!(frame.contains("\"code\":\"incomplete_tool_call\""));
+        assert!(!frame.contains("[DONE]"));
     }
 
     #[test]
@@ -3683,7 +4479,7 @@ mod tests {
     fn rejects_unavailable_ollama_features_and_options() {
         assert_eq!(
             validate_ollama_generation_request(
-                &json!({"model":"m","prompt":"hello","images":["base64"]}),
+                &json!({"model":"m","prompt":"hello","keep_alive":"5m"}),
                 OllamaGenerationEndpoint::Generate
             )
             .map_err(|(status, _)| status),

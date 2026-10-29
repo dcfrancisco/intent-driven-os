@@ -250,6 +250,7 @@ mod tests {
             .load(LoadModelRequest {
                 model_id: ModelId::new("structured-test").expect("model id"),
                 path: ModelPath::new(model_path).expect("model path"),
+                vision_projector_path: None,
             })
             .expect("load native model");
 
@@ -276,6 +277,7 @@ mod tests {
             let request = GenerationRequest {
                 model_id: loaded.model_id.clone(),
                 prompt: (*prompt).to_owned(),
+                content: Vec::new(),
                 max_tokens: 32,
                 temperature: 0.0,
                 top_p: 1.0,
@@ -312,6 +314,7 @@ mod tests {
         let cancellation_request = GenerationRequest {
             model_id: loaded.model_id.clone(),
             prompt: "Generate a large JSON object.".to_owned(),
+            content: Vec::new(),
             max_tokens: 512,
             temperature: 0.0,
             top_p: 1.0,
@@ -356,6 +359,7 @@ mod tests {
             .generate(GenerationRequest {
                 model_id: loaded.model_id.clone(),
                 prompt: r#"Output exactly {"result":{"ok":true}}."#.to_owned(),
+                content: Vec::new(),
                 max_tokens: 32,
                 temperature: 0.0,
                 top_p: 1.0,

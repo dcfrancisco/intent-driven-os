@@ -20,9 +20,12 @@ Commands:
   status                         Show daemon health and resident models
   models                         List discovered models and lifecycle state
   import <source> [id] [sha256]  Acquire and verify a GGUF artifact
+  vision <model-id> <projector>  Pair a GGUF vision projector with a model
+  vision-clear <model-id>        Remove a model's vision projector pairing
   load <model-id>                Load a model into residency
   unload <model-id>              Unload one resident model
-  run <model-id> <prompt>        Stream a prompt through a model
+  run <model-id> <prompt>        Stream a prompt through a selected model
+  run --default <prompt>         Stream a prompt through the loaded default model
   run --route <prompt>           Use explicitly enabled ordered fallback
   cancel <request-id>            Request cancellation of a generation
   auth token create [label]      Create a scoped local API token
@@ -107,6 +110,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             }
         }
+        "vision" => {
+            let model_id = required(&mut args, "model id")?;
+            let projector = required(&mut args, "projector path")?;
+            if args.next().is_some() {
+                return Err("vision accepts a model id and projector path".into());
+            }
+            request_formatted(
+                &format!(
+                    "model_vision\t{}\t{}",
+                    ipc::encode_field(&model_id),
+                    ipc::encode_field(&projector)
+                ),
+                json_output,
+                "vision",
+            )?;
+        }
+        "vision-clear" => {
+            let model_id = required(&mut args, "model id")?;
+            if args.next().is_some() {
+                return Err("vision-clear accepts one model id".into());
+            }
+            request_formatted(
+                &format!("model_vision\t{}\t", ipc::encode_field(&model_id)),
+                json_output,
+                "vision",
+            )?;
+        }
         "cancel" => request(&format!(
             "cancel\t{}",
             ipc::encode_field(&required(&mut args, "request id")?)
@@ -154,19 +184,27 @@ fn import(
 fn run_prompt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
     let target = required(&mut args, "model id or --route")?;
     if target == "--help" {
-        println!("Usage: talvik run <model-id> <prompt> | talvik run --route <prompt>");
+        println!(
+            "Usage: talvik run <model-id> <prompt> | talvik run --default <prompt> | talvik run --route <prompt>"
+        );
         return Ok(());
     }
     let prompt = args.collect::<Vec<_>>().join(" ");
     if prompt.is_empty() {
         return Err("prompt required".into());
     }
-    if target == "--route" {
-        route_generate(&prompt)
-    } else {
-        generate(&target, &prompt)
+    match target.as_str() {
+        "--route" => route_generate(&prompt),
+        "--default" => {
+            let default_model =
+                oid_runtime::config::default_model()?.ok_or("no default model is configured")?;
+            generate(&default_model.id, &prompt)
+                .map(|_| ())
+                .map_err(|failure| failure.message.into())
+        }
+        _ => generate(&target, &prompt)
             .map(|_| ())
-            .map_err(|failure| failure.message.into())
+            .map_err(|failure| failure.message.into()),
     }
 }
 

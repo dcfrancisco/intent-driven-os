@@ -11,6 +11,8 @@
 use std::ffi::c_void;
 #[cfg(native_llama_cpp)]
 use std::ffi::{c_char, c_void, CStr, CString};
+#[cfg(native_mtmd)]
+use std::io::Cursor;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicPtr};
@@ -184,6 +186,36 @@ struct SamplerChainParams {
     no_perf: bool,
 }
 
+#[cfg(native_mtmd)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MtmdContextParams {
+    use_gpu: bool,
+    device: *mut c_void,
+    print_timings: bool,
+    n_threads: i32,
+    image_marker: *const c_char,
+    media_marker: *const c_char,
+    flash_attn_type: i32,
+    warmup: bool,
+    image_min_tokens: i32,
+    image_max_tokens: i32,
+    eval_callback: Option<unsafe extern "C" fn(*mut c_void, bool, *mut c_void) -> bool>,
+    eval_callback_data: *mut c_void,
+    batch_max_tokens: i32,
+    progress_callback: Option<unsafe extern "C" fn(f32, *mut c_void) -> bool>,
+    progress_callback_data: *mut c_void,
+}
+
+#[cfg(native_mtmd)]
+#[repr(C)]
+struct MtmdInputText {
+    text: *const c_char,
+    text_len: usize,
+    add_special: bool,
+    parse_special: bool,
+}
+
 #[cfg(native_llama_cpp)]
 unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
     if data.is_null() {
@@ -192,6 +224,20 @@ unsafe extern "C" fn abort_callback(data: *mut c_void) -> bool {
     let relay = &*data.cast::<CancellationRelay>();
     let current = relay.current.load(Ordering::SeqCst);
     !current.is_null() && (*current).load(Ordering::SeqCst)
+}
+
+#[cfg(native_mtmd)]
+unsafe extern "C" fn mtmd_eval_callback(
+    _tensor: *mut c_void,
+    _ask: bool,
+    data: *mut c_void,
+) -> bool {
+    if data.is_null() {
+        return true;
+    }
+    let relay = &*data.cast::<CancellationRelay>();
+    let current = relay.current.load(Ordering::SeqCst);
+    current.is_null() || !(*current).load(Ordering::SeqCst)
 }
 
 #[cfg(native_llama_cpp)]
@@ -274,10 +320,55 @@ mod ffi {
     }
 }
 
+#[cfg(native_mtmd)]
+mod mtmd_ffi {
+    use super::{c_char, c_void, MtmdContextParams, MtmdInputText};
+
+    #[allow(improper_ctypes)]
+    extern "C" {
+        pub fn mtmd_context_params_default() -> MtmdContextParams;
+        pub fn mtmd_init_from_file(
+            projector_path: *const c_char,
+            model: *const c_void,
+            params: MtmdContextParams,
+        ) -> *mut c_void;
+        pub fn mtmd_free(context: *mut c_void);
+        pub fn mtmd_support_vision(context: *const c_void) -> bool;
+        pub fn mtmd_bitmap_init(width: u32, height: u32, rgb: *const u8) -> *mut c_void;
+        pub fn mtmd_bitmap_free(bitmap: *mut c_void);
+        pub fn mtmd_input_chunks_init() -> *mut c_void;
+        pub fn mtmd_input_chunks_free(chunks: *mut c_void);
+        pub fn mtmd_helper_get_n_tokens(chunks: *const c_void) -> usize;
+        pub fn mtmd_tokenize(
+            context: *mut c_void,
+            output: *mut c_void,
+            text: *const MtmdInputText,
+            bitmaps: *const *const c_void,
+            bitmap_count: usize,
+        ) -> i32;
+        pub fn mtmd_helper_eval_chunks(
+            context: *mut c_void,
+            llama_context: *mut c_void,
+            chunks: *const c_void,
+            n_past: i32,
+            sequence_id: i32,
+            batch_size: i32,
+            logits_last: bool,
+            new_n_past: *mut i32,
+        ) -> i32;
+    }
+}
+
 /// Whether this build has been configured to link the native library.
 #[must_use]
 pub const fn is_available() -> bool {
     cfg!(native_llama_cpp)
+}
+
+/// Whether this build links llama.cpp's multimodal MTMD library.
+#[must_use]
+pub const fn is_mtmd_available() -> bool {
+    cfg!(native_mtmd)
 }
 
 /// Initialize the process-wide llama.cpp backend.
@@ -417,9 +508,81 @@ pub fn system_info() -> Option<String> {
 pub struct NativeModel {
     #[cfg(native_llama_cpp)]
     context: Mutex<Option<PersistentContext>>,
+    #[cfg(native_mtmd)]
+    mtmd: Option<*mut c_void>,
+    #[cfg(native_mtmd)]
+    mtmd_relay: Option<Box<CancellationRelay>>,
     #[cfg_attr(not(native_llama_cpp), allow(dead_code))]
     pointer: *mut c_void,
     memory_bytes: u64,
+}
+
+#[cfg(native_mtmd)]
+struct OwnedMtmdBitmaps(Vec<*mut c_void>);
+
+#[cfg(native_mtmd)]
+impl Drop for OwnedMtmdBitmaps {
+    fn drop(&mut self) {
+        unsafe {
+            for bitmap in self.0.drain(..) {
+                mtmd_ffi::mtmd_bitmap_free(bitmap);
+            }
+        }
+    }
+}
+
+#[cfg(native_mtmd)]
+struct OwnedMtmdChunks(*mut c_void);
+
+#[cfg(native_mtmd)]
+impl Drop for OwnedMtmdChunks {
+    fn drop(&mut self) {
+        unsafe {
+            mtmd_ffi::mtmd_input_chunks_free(self.0);
+        }
+    }
+}
+
+#[cfg(native_mtmd)]
+fn decode_image_inputs(images: &[(String, &[u8])]) -> Result<Vec<(u32, u32, Vec<u8>)>, String> {
+    const MAX_DIMENSION: u32 = 8192;
+    const MAX_TOTAL_PIXELS: u64 = 16 * 1024 * 1024;
+    let mut total_pixels = 0_u64;
+    images
+        .iter()
+        .map(|(media_type, data)| {
+            let format = match media_type.as_str() {
+                "image/png" => image::ImageFormat::Png,
+                "image/jpeg" => image::ImageFormat::Jpeg,
+                "image/bmp" => image::ImageFormat::Bmp,
+                "image/gif" => image::ImageFormat::Gif,
+                _ => return Err(format!("unsupported image media type `{media_type}`")),
+            };
+            let (width, height) = image::ImageReader::with_format(Cursor::new(data), format)
+                .into_dimensions()
+                .map_err(|error| format!("could not read image dimensions: {error}"))?;
+            if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+                return Err(format!(
+                    "image dimensions must be between 1 and {MAX_DIMENSION} pixels"
+                ));
+            }
+            total_pixels = total_pixels
+                .checked_add(u64::from(width) * u64::from(height))
+                .ok_or_else(|| "image pixel count overflowed".to_owned())?;
+            if total_pixels > MAX_TOTAL_PIXELS {
+                return Err(format!(
+                    "images exceed the {MAX_TOTAL_PIXELS}-pixel request limit"
+                ));
+            }
+            let decoded = image::load_from_memory_with_format(data, format)
+                .map_err(|error| format!("could not decode image: {error}"))?
+                .to_rgb8();
+            if decoded.width() != width || decoded.height() != height {
+                return Err("decoded image dimensions changed during validation".to_owned());
+            }
+            Ok((width, height, decoded.into_raw()))
+        })
+        .collect()
 }
 
 /// Native generation measurements.
@@ -862,6 +1025,46 @@ impl NativeModel {
         seed: u32,
         stop_sequences: &[String],
         grammar: Option<&str>,
+        callback: F,
+        cancelled: &AtomicBool,
+    ) -> Result<NativeGenerationStatistics, String>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.generate_stream_with_grammar_and_images(
+            prompt,
+            context_size,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            seed,
+            stop_sequences,
+            grammar,
+            &[],
+            callback,
+            cancelled,
+        )
+    }
+
+    /// Generate text from a prompt and optional encoded image inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when input decoding, multimodal preprocessing, context
+    /// creation, sampling, or native decoding fails.
+    pub fn generate_stream_with_grammar_and_images<F>(
+        &self,
+        prompt: &str,
+        context_size: u32,
+        max_tokens: u32,
+        temperature: f32,
+        top_p: f32,
+        top_k: i32,
+        seed: u32,
+        stop_sequences: &[String],
+        grammar: Option<&str>,
+        images: &[(String, &[u8])],
         mut callback: F,
         cancelled: &AtomicBool,
     ) -> Result<NativeGenerationStatistics, String>
@@ -880,6 +1083,7 @@ impl NativeModel {
                 seed,
                 stop_sequences,
                 grammar,
+                images,
                 callback,
                 cancelled,
             );
@@ -888,12 +1092,101 @@ impl NativeModel {
         #[cfg(native_llama_cpp)]
         {
             let inference_started = Instant::now();
+            #[cfg(native_mtmd)]
+            let _mtmd_cancellation_guard = if images.is_empty() {
+                None
+            } else {
+                let relay = self
+                    .mtmd_relay
+                    .as_ref()
+                    .ok_or_else(|| {
+                        "the loaded model has no configured vision projector".to_owned()
+                    })?
+                    .as_ref();
+                relay
+                    .current
+                    .store(std::ptr::from_ref(cancelled).cast_mut(), Ordering::SeqCst);
+                Some(CancellationGuard(std::ptr::from_ref(relay)))
+            };
+            if cancelled.load(Ordering::SeqCst) {
+                return Err("generation cancelled".to_owned());
+            }
             let formatted_prompt = self.format_prompt(prompt)?;
-            let mut prompt_tokens = self.tokenize(&formatted_prompt)?;
-            let prompt_count = prompt_tokens.len() as u64;
+            let mut prompt_tokens = Vec::new();
+            let prompt_count: usize;
+            #[cfg(native_mtmd)]
+            let mut multimodal_chunks = None;
+            #[cfg(native_mtmd)]
+            let mut multimodal_bitmaps = None;
+            if images.is_empty() {
+                prompt_tokens = self.tokenize(&formatted_prompt)?;
+                prompt_count = prompt_tokens.len();
+            } else {
+                #[cfg(not(native_mtmd))]
+                return Err("this build does not include llama.cpp MTMD support".to_owned());
+                #[cfg(native_mtmd)]
+                {
+                    let mtmd = self.mtmd.ok_or_else(|| {
+                        "the loaded model has no configured vision projector".to_owned()
+                    })?;
+                    let decoded = decode_image_inputs(images)?;
+                    if cancelled.load(Ordering::SeqCst) {
+                        return Err("generation cancelled".to_owned());
+                    }
+                    let mut owned_bitmaps = OwnedMtmdBitmaps(Vec::with_capacity(decoded.len()));
+                    for (width, height, rgb) in &decoded {
+                        let bitmap =
+                            unsafe { mtmd_ffi::mtmd_bitmap_init(*width, *height, rgb.as_ptr()) };
+                        if bitmap.is_null() {
+                            return Err("MTMD could not create an image bitmap".to_owned());
+                        }
+                        owned_bitmaps.0.push(bitmap);
+                    }
+                    let bitmap_pointers = owned_bitmaps
+                        .0
+                        .iter()
+                        .map(|bitmap| bitmap.cast_const())
+                        .collect::<Vec<_>>();
+                    let formatted_prompt_cstr = CString::new(formatted_prompt.as_bytes())
+                        .map_err(|_| "prompt contains NUL".to_owned())?;
+                    let input_text = MtmdInputText {
+                        text: formatted_prompt_cstr.as_ptr(),
+                        text_len: formatted_prompt.len(),
+                        add_special: true,
+                        parse_special: true,
+                    };
+                    let chunks = unsafe { mtmd_ffi::mtmd_input_chunks_init() };
+                    if chunks.is_null() {
+                        return Err("MTMD could not allocate input chunks".to_owned());
+                    }
+                    let chunks = OwnedMtmdChunks(chunks);
+                    let tokenize_result = unsafe {
+                        mtmd_ffi::mtmd_tokenize(
+                            mtmd,
+                            chunks.0,
+                            &input_text,
+                            bitmap_pointers.as_ptr(),
+                            bitmap_pointers.len(),
+                        )
+                    };
+                    if tokenize_result != 0 {
+                        return Err(format!("MTMD could not tokenize images: {tokenize_result}"));
+                    }
+                    if cancelled.load(Ordering::SeqCst) {
+                        return Err("generation cancelled".to_owned());
+                    }
+                    prompt_count = unsafe { mtmd_ffi::mtmd_helper_get_n_tokens(chunks.0) };
+                    if prompt_count == 0 {
+                        return Err("MTMD produced an empty prompt".to_owned());
+                    }
+                    multimodal_chunks = Some(chunks);
+                    multimodal_bitmaps = Some(owned_bitmaps);
+                }
+            }
+            let prompt_count_u64 = prompt_count as u64;
             let max_context =
                 usize::try_from(context_size).map_err(|_| "context too large".to_owned())?;
-            if prompt_tokens.len() >= max_context {
+            if prompt_count >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
             let physical_batch = context_size.min(512);
@@ -903,9 +1196,13 @@ impl NativeModel {
                 .map_err(|_| "native context lock poisoned".to_owned())?;
             let mut cache_hit = false;
             let mut reused_prompt_tokens = 0_u64;
-            let reuse_len = persistent.as_ref().and_then(|cached| {
-                compatible_prompt_reuse_len(cached, &prompt_tokens, context_size)
-            });
+            let reuse_len = if images.is_empty() {
+                persistent.as_ref().and_then(|cached| {
+                    compatible_prompt_reuse_len(cached, &prompt_tokens, context_size)
+                })
+            } else {
+                None
+            };
             let (context, mut prompt_position) = if let Some(reuse_len) = reuse_len {
                 let cached = persistent
                     .as_mut()
@@ -1038,37 +1335,91 @@ impl NativeModel {
                     ffi::llama_sampler_chain_add(sampler, sampler_part);
                 }
             }
-            let remaining_prompt = prompt_tokens
-                .get_mut(prompt_position..)
-                .ok_or_else(|| "cached prompt position exceeds request prompt".to_owned())?;
-            for prompt_batch in remaining_prompt.chunks_mut(
-                usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
-            ) {
-                let decode_result = unsafe {
-                    ffi::llama_decode(context, make_batch(prompt_batch, prompt_position)?.batch)
-                };
-                prompt_position += prompt_batch.len();
-                match classify_decode_result(
-                    decode_result,
-                    cancelled.load(std::sync::atomic::Ordering::SeqCst),
+            let generation_position = if images.is_empty() {
+                let remaining_prompt = prompt_tokens
+                    .get_mut(prompt_position..)
+                    .ok_or_else(|| "cached prompt position exceeds request prompt".to_owned())?;
+                for prompt_batch in remaining_prompt.chunks_mut(
+                    usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
                 ) {
-                    DecodeOutcome::Success => {}
-                    DecodeOutcome::Cancelled => {
-                        unsafe {
-                            ffi::llama_sampler_free(sampler);
+                    let decode_result = unsafe {
+                        ffi::llama_decode(context, make_batch(prompt_batch, prompt_position)?.batch)
+                    };
+                    prompt_position += prompt_batch.len();
+                    match classify_decode_result(
+                        decode_result,
+                        cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                    ) {
+                        DecodeOutcome::Success => {}
+                        DecodeOutcome::Cancelled => {
+                            unsafe {
+                                ffi::llama_sampler_free(sampler);
+                            }
+                            invalidate_context(&mut persistent);
+                            return Err("generation cancelled".to_owned());
                         }
-                        invalidate_context(&mut persistent);
-                        return Err("generation cancelled".to_owned());
-                    }
-                    DecodeOutcome::NativeFailure => {
-                        unsafe {
-                            ffi::llama_sampler_free(sampler);
+                        DecodeOutcome::NativeFailure => {
+                            unsafe {
+                                ffi::llama_sampler_free(sampler);
+                            }
+                            invalidate_context(&mut persistent);
+                            return Err(decode_error("prompt", decode_result));
                         }
-                        invalidate_context(&mut persistent);
-                        return Err(decode_error("prompt", decode_result));
                     }
                 }
-            }
+                prompt_position
+            } else {
+                #[cfg(native_mtmd)]
+                {
+                    let mtmd = self.mtmd.ok_or_else(|| {
+                        "the loaded model has no configured vision projector".to_owned()
+                    })?;
+                    let chunks = multimodal_chunks
+                        .as_ref()
+                        .ok_or_else(|| "MTMD input chunks were not initialized".to_owned())?;
+                    let mut new_n_past = 0_i32;
+                    let decode_result = unsafe {
+                        mtmd_ffi::mtmd_helper_eval_chunks(
+                            mtmd,
+                            context,
+                            chunks.0,
+                            0,
+                            0,
+                            i32::try_from(physical_batch)
+                                .map_err(|_| "invalid batch size".to_owned())?,
+                            true,
+                            &mut new_n_past,
+                        )
+                    };
+                    match classify_decode_result(
+                        decode_result,
+                        cancelled.load(std::sync::atomic::Ordering::SeqCst),
+                    ) {
+                        DecodeOutcome::Success => {}
+                        DecodeOutcome::Cancelled => {
+                            unsafe {
+                                ffi::llama_sampler_free(sampler);
+                            }
+                            invalidate_context(&mut persistent);
+                            return Err("generation cancelled".to_owned());
+                        }
+                        DecodeOutcome::NativeFailure => {
+                            unsafe {
+                                ffi::llama_sampler_free(sampler);
+                            }
+                            invalidate_context(&mut persistent);
+                            return Err(decode_error("multimodal prompt", decode_result));
+                        }
+                    }
+                    drop(multimodal_bitmaps);
+                    usize::try_from(new_n_past)
+                        .map_err(|_| "MTMD returned a negative context position".to_owned())?
+                }
+                #[cfg(not(native_mtmd))]
+                {
+                    unreachable!("images are rejected when MTMD is unavailable")
+                }
+            };
             let prompt_eval_time = inference_started.elapsed();
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
             let mut pending_utf8 = Vec::new();
@@ -1126,7 +1477,7 @@ impl NativeModel {
                     termination = NativeGenerationTermination::Length;
                     break;
                 }
-                if prompt_count + generated >= u64::from(context_size) {
+                if prompt_count_u64 + generated >= u64::from(context_size) {
                     termination = NativeGenerationTermination::ContextLength;
                     break;
                 }
@@ -1136,12 +1487,12 @@ impl NativeModel {
                         context,
                         make_batch(
                             &mut next,
-                            usize::try_from(prompt_count)
-                                .and_then(|value| {
-                                    usize::try_from(generated)
-                                        .map(|generated| value + generated - 1)
-                                })
-                                .map_err(|_| "token position is too large".to_owned())?,
+                            generation_position
+                                .checked_add(
+                                    usize::try_from(generated.saturating_sub(1))
+                                        .map_err(|_| "token position is too large".to_owned())?,
+                                )
+                                .ok_or_else(|| "token position is too large".to_owned())?,
                         )?
                         .batch,
                     )
@@ -1181,12 +1532,16 @@ impl NativeModel {
                 return Err("generation cancelled".to_owned());
             }
             if let Some(cached) = persistent.as_mut() {
-                cached.prompt_tokens = prompt_tokens;
+                cached.prompt_tokens = if images.is_empty() {
+                    prompt_tokens
+                } else {
+                    Vec::new()
+                };
             }
             Ok(NativeGenerationStatistics {
-                prompt_tokens: prompt_count,
+                prompt_tokens: prompt_count_u64,
                 generated_tokens: generated,
-                context_tokens: prompt_count + generated,
+                context_tokens: prompt_count_u64 + generated,
                 prompt_eval_time,
                 generation_time: inference_started.elapsed(),
                 termination,
@@ -1201,6 +1556,8 @@ impl NativeModel {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{cached_prefix_matches, classify_decode_result, decode_error, DecodeOutcome};
+    #[cfg(native_mtmd)]
+    use std::io::Cursor;
 
     #[test]
     fn prompt_cache_reuse_requires_the_native_sequence_to_match_the_prefix() {
@@ -1251,13 +1608,108 @@ mod tests {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
-        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None).expect("test GGUF should load");
         let formatted = model
             .format_prompt("Reply with exactly: MARINA_OK")
             .expect("embedded chat template should format the prompt");
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));
+        drop(model);
+        super::shutdown();
+    }
+
+    #[cfg(native_mtmd)]
+    #[test]
+    #[ignore = "requires SmolVLM GGUF and projector supplied through TALVIK_TEST_VISION_GGUF and TALVIK_TEST_VISION_PROJECTOR"]
+    fn vision_input_uses_image_content_and_recovers_after_cancellation() {
+        let model_path = std::env::var("TALVIK_TEST_VISION_GGUF")
+            .expect("TALVIK_TEST_VISION_GGUF must point to a vision GGUF");
+        let projector_path = std::env::var("TALVIK_TEST_VISION_PROJECTOR")
+            .expect("TALVIK_TEST_VISION_PROJECTOR must point to its matching projector GGUF");
+        let mut fixture = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
+        for y in 16..48 {
+            for x in 16..48 {
+                fixture.put_pixel(x, y, image::Rgb([255, 0, 0]));
+            }
+        }
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(fixture)
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("encode deterministic image fixture");
+        let image_bytes = encoded.into_inner();
+        let images = [("image/png".to_owned(), image_bytes.as_slice())];
+
+        super::initialize().expect("native backend should initialize");
+        let model = super::load_model(&model_path, Some(&projector_path))
+            .expect("vision model and projector should load");
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let mut answer = String::new();
+        model
+            .generate_stream_with_grammar_and_images(
+                "What color is the square? Answer with one color. <__media__>",
+                512,
+                32,
+                0.0,
+                0.9,
+                40,
+                42,
+                &[],
+                None,
+                &images,
+                |piece| {
+                    answer.push_str(piece);
+                    true
+                },
+                &cancelled,
+            )
+            .expect("image-dependent generation should complete");
+        assert!(answer.to_ascii_lowercase().contains("red"), "{answer:?}");
+
+        let cancellation = std::sync::atomic::AtomicBool::new(false);
+        let cancelled_generation = model.generate_stream_with_grammar_and_images(
+            "Describe every object in the image in detail. <__media__>",
+            512,
+            256,
+            0.0,
+            0.9,
+            40,
+            43,
+            &[],
+            None,
+            &images,
+            |_| {
+                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
+                false
+            },
+            &cancellation,
+        );
+        assert!(cancelled_generation.is_err());
+
+        let mut recovered = String::new();
+        model
+            .generate_stream_with_grammar_and_images(
+                "What color is the square? Answer with one color. <__media__>",
+                512,
+                32,
+                0.0,
+                0.9,
+                40,
+                44,
+                &[],
+                None,
+                &images,
+                |piece| {
+                    recovered.push_str(piece);
+                    true
+                },
+                &cancelled,
+            )
+            .expect("image generation should recover after cancellation");
+        assert!(
+            recovered.to_ascii_lowercase().contains("red"),
+            "{recovered:?}"
+        );
         drop(model);
         super::shutdown();
     }
@@ -1269,7 +1721,7 @@ mod tests {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
-        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None).expect("test GGUF should load");
         let prompt = format!("Summarize briefly: {}", "token ".repeat(700));
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let result = model.generate_stream(
@@ -1299,7 +1751,7 @@ mod tests {
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
         let load_started = std::time::Instant::now();
-        let model = super::load_model(&model_path).expect("test GGUF should load");
+        let model = super::load_model(&model_path, None).expect("test GGUF should load");
         let load_time = load_started.elapsed();
         let cancelled = std::sync::atomic::AtomicBool::new(false);
         let prompt = "Reply briefly to the user.";
@@ -1542,6 +1994,12 @@ mod tests {
 
 impl Drop for NativeModel {
     fn drop(&mut self) {
+        #[cfg(native_mtmd)]
+        if let Some(context) = self.mtmd.take() {
+            unsafe {
+                mtmd_ffi::mtmd_free(context);
+            }
+        }
         #[cfg(native_llama_cpp)]
         unsafe {
             if let Ok(mut context) = self.context.lock() {
@@ -1558,7 +2016,7 @@ impl Drop for NativeModel {
 ///
 /// Returns an error when native linking is unavailable, the path contains an
 /// embedded NUL, or llama.cpp rejects the model.
-pub fn load_model(path: &str) -> Result<NativeModel, String> {
+pub fn load_model(path: &str, projector_path: Option<&str>) -> Result<NativeModel, String> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let path = CString::new(path).map_err(|_| "model path contains NUL".to_owned())?;
@@ -1567,16 +2025,54 @@ pub fn load_model(path: &str) -> Result<NativeModel, String> {
         if pointer.is_null() {
             return Err("llama.cpp rejected the model".to_owned());
         }
+        #[cfg(native_mtmd)]
+        let (mtmd, mtmd_relay) = if let Some(projector_path) = projector_path {
+            let projector_path = match CString::new(projector_path) {
+                Ok(path) => path,
+                Err(_) => {
+                    ffi::llama_model_free(pointer);
+                    return Err("projector path contains NUL".to_owned());
+                }
+            };
+            let relay = Box::new(CancellationRelay {
+                current: AtomicPtr::new(std::ptr::null_mut()),
+            });
+            let mut params = mtmd_ffi::mtmd_context_params_default();
+            params.eval_callback = Some(mtmd_eval_callback);
+            params.eval_callback_data = std::ptr::from_ref(&*relay).cast_mut().cast();
+            let context = mtmd_ffi::mtmd_init_from_file(projector_path.as_ptr(), pointer, params);
+            if context.is_null() {
+                ffi::llama_model_free(pointer);
+                return Err("llama.cpp rejected the vision projector".to_owned());
+            }
+            if !mtmd_ffi::mtmd_support_vision(context) {
+                mtmd_ffi::mtmd_free(context);
+                ffi::llama_model_free(pointer);
+                return Err("the configured projector does not support vision".to_owned());
+            }
+            (Some(context), Some(relay))
+        } else {
+            (None, None)
+        };
+        #[cfg(not(native_mtmd))]
+        if projector_path.is_some() {
+            ffi::llama_model_free(pointer);
+            return Err("this build does not include llama.cpp MTMD support".to_owned());
+        }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
         Ok(NativeModel {
             context: Mutex::new(None),
+            #[cfg(native_mtmd)]
+            mtmd,
+            #[cfg(native_mtmd)]
+            mtmd_relay,
             pointer,
             memory_bytes,
         })
     }
     #[cfg(not(native_llama_cpp))]
     {
-        let _ = path;
+        let _ = (path, projector_path);
         Err("native llama.cpp is unavailable".to_owned())
     }
 }

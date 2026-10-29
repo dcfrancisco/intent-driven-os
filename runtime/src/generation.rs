@@ -1,6 +1,6 @@
 //! Backend-neutral generation requests, streams, and metrics.
 
-use oid_model_runner::StructuredOutput;
+pub use oid_model_runner::{ContentPart, ImageInput, StructuredOutput};
 use oid_shared::RuntimeError;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -49,10 +49,46 @@ pub struct GenerationRequest {
     pub model_id: String,
     /// Prompt text.
     pub prompt: String,
+    /// Ordered text and image input. When non-empty, this replaces `prompt`.
+    pub content: Vec<ContentPart>,
     /// Generation options.
     pub options: GenerationOptions,
     /// Optional backend-neutral JSON output constraint.
     pub structured_output: Option<StructuredOutput>,
+}
+
+impl GenerationRequest {
+    pub(crate) fn validate_input(&self) -> Result<(), RuntimeError> {
+        if self.prompt.trim().is_empty() && self.content.is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "generation input is empty".to_owned(),
+            ));
+        }
+        let mut image_count = 0;
+        for part in &self.content {
+            match part {
+                ContentPart::Text(text) if text.trim().is_empty() => {
+                    return Err(RuntimeError::InvalidRequest(
+                        "text content part is empty".to_owned(),
+                    ));
+                }
+                ContentPart::Text(_) => {}
+                ContentPart::Image(image) => {
+                    image_count += 1;
+                    image
+                        .validate()
+                        .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
+                }
+            }
+        }
+        if image_count > ImageInput::MAX_IMAGES_PER_REQUEST {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "at most {} images are supported per request",
+                ImageInput::MAX_IMAGES_PER_REQUEST
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Generation performance measurements.

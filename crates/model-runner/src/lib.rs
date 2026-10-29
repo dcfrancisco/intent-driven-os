@@ -89,6 +89,8 @@ pub struct LoadModelRequest {
     pub model_id: ModelId,
     /// Local GGUF artifact path.
     pub path: ModelPath,
+    /// Optional multimodal projector paired with the text model.
+    pub vision_projector_path: Option<ModelPath>,
 }
 
 /// A successfully loaded model.
@@ -113,6 +115,8 @@ pub struct GenerationRequest {
     pub model_id: ModelId,
     /// Prompt text.
     pub prompt: String,
+    /// Ordered text and image input. When non-empty, this replaces `prompt`.
+    pub content: Vec<ContentPart>,
     /// Maximum number of generated tokens.
     pub max_tokens: u32,
     /// Sampling temperature.
@@ -131,6 +135,55 @@ pub struct GenerationRequest {
     pub structured_output: Option<StructuredOutput>,
 }
 
+/// One ordered input segment for a generation request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContentPart {
+    /// Plain UTF-8 prompt content.
+    Text(String),
+    /// Encoded image content.
+    Image(ImageInput),
+}
+
+/// Request-scoped encoded image data.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageInput {
+    /// Declared MIME type; the backend also verifies the encoded format.
+    pub media_type: String,
+    /// Encoded image bytes; never persisted by the model runner.
+    pub data: Vec<u8>,
+}
+
+impl ImageInput {
+    /// Maximum encoded image size accepted by the portable contract.
+    pub const MAX_ENCODED_BYTES: usize = 10 * 1024 * 1024;
+    /// Maximum number of images in one generation request.
+    pub const MAX_IMAGES_PER_REQUEST: usize = 4;
+
+    /// Validate the declared format and encoded byte bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRequest` when the MIME type or encoded size is unsupported.
+    pub fn validate(&self) -> Result<(), ModelRunnerError> {
+        if !matches!(
+            self.media_type.as_str(),
+            "image/png" | "image/jpeg" | "image/bmp" | "image/gif"
+        ) {
+            return Err(ModelRunnerError::InvalidRequest(format!(
+                "unsupported image media type `{}`",
+                self.media_type
+            )));
+        }
+        if self.data.is_empty() || self.data.len() > Self::MAX_ENCODED_BYTES {
+            return Err(ModelRunnerError::InvalidRequest(format!(
+                "encoded image size must be between 1 and {} bytes",
+                Self::MAX_ENCODED_BYTES
+            )));
+        }
+        Ok(())
+    }
+}
+
 impl GenerationRequest {
     /// Validate generation controls before passing them to a backend.
     ///
@@ -138,10 +191,31 @@ impl GenerationRequest {
     ///
     /// Returns `InvalidRequest` when a control is outside the supported range.
     pub fn validate(&self) -> Result<(), ModelRunnerError> {
-        if self.prompt.trim().is_empty() {
+        if self.prompt.trim().is_empty() && self.content.is_empty() {
             return Err(ModelRunnerError::InvalidRequest(
-                "prompt is empty".to_owned(),
+                "generation input is empty".to_owned(),
             ));
+        }
+        let mut image_count = 0;
+        for part in &self.content {
+            match part {
+                ContentPart::Text(text) if text.trim().is_empty() => {
+                    return Err(ModelRunnerError::InvalidRequest(
+                        "text content part is empty".to_owned(),
+                    ));
+                }
+                ContentPart::Text(_) => {}
+                ContentPart::Image(image) => {
+                    image_count += 1;
+                    image.validate()?;
+                }
+            }
+        }
+        if image_count > ImageInput::MAX_IMAGES_PER_REQUEST {
+            return Err(ModelRunnerError::InvalidRequest(format!(
+                "at most {} images are supported per request",
+                ImageInput::MAX_IMAGES_PER_REQUEST
+            )));
         }
         if self.max_tokens == 0 {
             return Err(ModelRunnerError::InvalidRequest(

@@ -92,6 +92,37 @@ if (response.object !== 'response' || !response.output_text) {
 }
 console.log('PASS non-stream Responses')
 
+const responseStream = await client.responses.create({
+  model,
+  instructions: 'Reply briefly.',
+  input: 'Say hello.',
+  max_output_tokens: 8,
+  context_size: 512,
+  stream: true,
+})
+let responseStreamText = ''
+const responseEventTypes = new Set()
+let responseCompleted = false
+for await (const event of responseStream) {
+  responseEventTypes.add(event.type)
+  if (event.type === 'response.output_text.delta') {
+    responseStreamText += event.delta
+  } else if (event.type === 'response.completed') {
+    responseCompleted = event.response.status === 'completed'
+  } else if (event.type === 'error' || event.type === 'response.failed') {
+    throw new Error(`Responses stream failed: ${JSON.stringify(event)}`)
+  }
+}
+for (const requiredEvent of ['response.created', 'response.output_text.delta', 'response.completed']) {
+  if (!responseEventTypes.has(requiredEvent)) {
+    throw new Error(`Responses stream omitted ${requiredEvent}`)
+  }
+}
+if (!responseStreamText || !responseCompleted) {
+  throw new Error('Responses stream did not produce text and complete')
+}
+console.log('PASS streaming Responses')
+
 if (['1', 'true', 'yes'].includes((process.env.TALVIK_QUALIFY_TOOLS ?? '').toLowerCase())) {
   const tools = [{
     type: 'function',
@@ -107,10 +138,7 @@ if (['1', 'true', 'yes'].includes((process.env.TALVIK_QUALIFY_TOOLS ?? '').toLow
   }]
   const toolRequest = await client.chat.completions.create({
     model,
-    messages: [{
-      role: 'user',
-      content: 'Call get_weather with city Manila. Do not answer with plain text.',
-    }],
+    messages: [{ role: 'user', content: 'What is the weather in Manila?' }],
     tools,
     tool_choice: 'auto',
     parallel_tool_calls: false,

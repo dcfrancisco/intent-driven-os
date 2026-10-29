@@ -7,7 +7,7 @@ use std::io;
 use std::path::PathBuf;
 
 /// Talvik local IPC protocol version.
-pub const PROTOCOL_VERSION: &str = "2";
+pub const PROTOCOL_VERSION: &str = "3";
 
 #[cfg(windows)]
 use std::net::{TcpListener, TcpStream};

@@ -264,6 +264,42 @@ pub fn execute_with_operations_and_signals(
             );
             (output, CommandAction::Continue)
         }
+        _ if command.starts_with("model vision ") => {
+            let arguments = command
+                .trim_start_matches("model vision ")
+                .splitn(2, ' ')
+                .collect::<Vec<_>>();
+            if arguments.len() != 2
+                || arguments[0].trim().is_empty()
+                || arguments[1].trim().is_empty()
+            {
+                (
+                    vec!["Usage: model vision <model-id> <projector.gguf>".to_owned()],
+                    CommandAction::Continue,
+                )
+            } else {
+                (
+                    operation_result_unit(
+                        runtime.model_set_vision_projector(
+                            arguments[0].trim(),
+                            Some(arguments[1].trim()),
+                        ),
+                        &format!("Vision projector paired with model {}", arguments[0].trim()),
+                    ),
+                    CommandAction::Continue,
+                )
+            }
+        }
+        _ if command.starts_with("model vision-clear ") => {
+            let id = command.trim_start_matches("model vision-clear ").trim();
+            (
+                operation_result_unit(
+                    runtime.model_set_vision_projector(id, None),
+                    &format!("Vision projector cleared for model {id}"),
+                ),
+                CommandAction::Continue,
+            )
+        }
         _ if command.starts_with("model load ") => {
             let id = command.trim_start_matches("model load ").trim();
             (
@@ -441,6 +477,7 @@ fn generate_lines_result_with_interrupt(
             std::env::var("OID_MARINA_MODEL").ok(),
         )?,
         prompt: prompt.to_owned(),
+        content: Vec::new(),
         options,
         structured_output: None,
     };

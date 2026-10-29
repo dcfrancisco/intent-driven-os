@@ -86,19 +86,23 @@ $toolsOption = if ($Vulkan) { "ON" } else { "OFF" }
     "-DLLAMA_BUILD_TESTS=OFF" `
     "-DLLAMA_BUILD_EXAMPLES=OFF" `
     "-DLLAMA_BUILD_TOOLS=$toolsOption" `
+    "-DLLAMA_BUILD_MTMD=ON" `
+    "-DMTMD_VIDEO=OFF" `
     "-DLLAMA_CURL=OFF" `
     "-DCMAKE_BUILD_TYPE=Release"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
 
-$buildTargets = if ($Vulkan) { @("llama", "llama-cli") } else { @("llama") }
+$buildTargets = if ($Vulkan) { @("llama", "mtmd", "llama-cli") } else { @("llama", "mtmd") }
 & cmake --build $LlamaBuild --config Release --target $buildTargets --parallel 2
 if ($LASTEXITCODE -ne 0) { throw "llama.cpp build failed." }
 
 New-Item -ItemType Directory -Force -Path $NativeLibDir | Out-Null
 $nativeFiles = Get-ChildItem -Path $LlamaBuild -Recurse -File |
-    Where-Object { $_.Name -in @("llama.lib", "llama.dll") -or $_.Name -like "ggml*.lib" -or $_.Name -like "ggml*.dll" }
+    Where-Object { $_.Name -in @("llama.lib", "llama.dll", "mtmd.lib", "mtmd.dll") -or $_.Name -like "ggml*.lib" -or $_.Name -like "ggml*.dll" }
 if (-not ($nativeFiles | Where-Object Name -eq "llama.lib")) { throw "llama.lib was not produced." }
 if (-not ($nativeFiles | Where-Object Name -eq "llama.dll")) { throw "llama.dll was not produced." }
+if (-not ($nativeFiles | Where-Object Name -eq "mtmd.lib")) { throw "mtmd.lib was not produced." }
+if (-not ($nativeFiles | Where-Object Name -eq "mtmd.dll")) { throw "mtmd.dll was not produced." }
 
 foreach ($nativeFile in $nativeFiles) {
     Copy-Item -LiteralPath $nativeFile.FullName -Destination $NativeLibDir -Force
@@ -111,6 +115,7 @@ if ($Vulkan) {
 Write-Host "Build Talvik with:"
 Write-Host "`$env:LLAMA_CPP_LIB_DIR = '$NativeLibDir'"
 Write-Host "`$env:LLAMA_CPP_REQUIRED = '1'"
+Write-Host "`$env:LLAMA_CPP_MTMD_REQUIRED = '1'"
 Write-Host "cargo build --release -p oid-console --bin talvik --bin talvikd"
 if ($Vulkan) {
     $llamaCli = Get-ChildItem -Path $LlamaBuild -Recurse -File -Filter "llama-cli.exe" |

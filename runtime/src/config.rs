@@ -6,12 +6,15 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-const DEFAULT_MODEL_ID: &str = "qwen2.5-0.5b-instruct-q4_k_m";
-const DEFAULT_MODEL_SOURCE: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+const DEFAULT_MODEL_ID: &str = "gemma-4-e4b-it-q4_0";
+const DEFAULT_MODEL_SOURCE: &str = "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/gemma-4-E4B-it-Q4_0.gguf";
 const DEFAULT_MODEL_SHA256: &str =
-    "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db";
+    "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2";
+const DEFAULT_VISION_PROJECTOR_SOURCE: &str = "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/mmproj-gemma-4-E4B-it-Q8_0.gguf";
+const DEFAULT_VISION_PROJECTOR_SHA256: &str =
+    "197f49a93027f9843772bd24a6a9e0be2a32a788de5a3def330e9c585d86edd1";
 
-/// Default model to acquire and load when Talvik starts.
+/// Default model and optional projector to acquire and load when Talvik starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefaultModelConfig {
     /// Model identifier to load.
@@ -20,6 +23,10 @@ pub struct DefaultModelConfig {
     pub source: Option<String>,
     /// Optional expected SHA-256 for acquisition.
     pub checksum: Option<String>,
+    /// Optional source used to acquire a missing vision projector.
+    pub vision_projector_source: Option<String>,
+    /// Optional expected SHA-256 for the vision projector.
+    pub vision_projector_checksum: Option<String>,
     /// Whether startup should provision this model when it is unavailable.
     pub auto_download: bool,
     /// Whether startup should load this model after it is available.
@@ -121,9 +128,9 @@ pub fn config_file() -> PathBuf {
 
 /// Load the configured default model.
 ///
-/// The built-in Qwen default is acquired from its pinned Hugging Face GGUF
-/// artifact when no local registration exists. Set `default_model` to `none`
-/// to disable automatic loading.
+/// The built-in Gemma 4 default and its pinned vision projector are acquired
+/// from Hugging Face when missing. Set `default_model` to `none` to disable
+/// automatic loading.
 ///
 /// # Errors
 ///
@@ -162,6 +169,26 @@ pub fn default_model() -> Result<Option<DefaultModelConfig>, String> {
         || (id == DEFAULT_MODEL_ID).then(|| DEFAULT_MODEL_SHA256.to_owned()),
         |value| setting_value(&value),
     );
+    let vision_projector_source = configured_value(
+        "TALVIK_DEFAULT_VISION_PROJECTOR_SOURCE",
+        "MARINA_DEFAULT_VISION_PROJECTOR_SOURCE",
+        "default_vision_projector_source",
+        &values,
+    )?
+    .map_or_else(
+        || (id == DEFAULT_MODEL_ID).then(|| DEFAULT_VISION_PROJECTOR_SOURCE.to_owned()),
+        |value| setting_value(&value),
+    );
+    let vision_projector_checksum = configured_value(
+        "TALVIK_DEFAULT_VISION_PROJECTOR_SHA256",
+        "MARINA_DEFAULT_VISION_PROJECTOR_SHA256",
+        "default_vision_projector_sha256",
+        &values,
+    )?
+    .map_or_else(
+        || (id == DEFAULT_MODEL_ID).then(|| DEFAULT_VISION_PROJECTOR_SHA256.to_owned()),
+        |value| setting_value(&value),
+    );
 
     let auto_bootstrap = configured_bool(
         "TALVIK_AUTO_BOOTSTRAP",
@@ -189,6 +216,8 @@ pub fn default_model() -> Result<Option<DefaultModelConfig>, String> {
         id,
         source,
         checksum,
+        vision_projector_source,
+        vision_projector_checksum,
         auto_download,
         auto_load,
     }))
@@ -370,7 +399,11 @@ fn read_config_file(path: &std::path::Path) -> Result<BTreeMap<String, String>, 
 
 #[cfg(test)]
 mod tests {
-    use super::{configured_bool, http_config, read_config_file, setting_value, DEFAULT_MODEL_ID};
+    use super::{
+        configured_bool, http_config, read_config_file, setting_value, DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_SHA256, DEFAULT_MODEL_SOURCE, DEFAULT_VISION_PROJECTOR_SHA256,
+        DEFAULT_VISION_PROJECTOR_SOURCE,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -384,6 +417,25 @@ mod tests {
         assert_eq!(
             setting_value("custom-model"),
             Some("custom-model".to_owned())
+        );
+    }
+
+    #[test]
+    fn default_model_is_pinned_gemma_4_with_a_vision_projector() {
+        assert_eq!(DEFAULT_MODEL_ID, "gemma-4-e4b-it-q4_0");
+        assert!(DEFAULT_MODEL_SOURCE.contains(
+            "/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/gemma-4-E4B-it-Q4_0.gguf"
+        ));
+        assert_eq!(
+            DEFAULT_MODEL_SHA256,
+            "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2"
+        );
+        assert!(DEFAULT_VISION_PROJECTOR_SOURCE.contains(
+            "/resolve/a69f018d7678a2b9f5e705f8903d6fb29b9b25dc/mmproj-gemma-4-E4B-it-Q8_0.gguf"
+        ));
+        assert_eq!(
+            DEFAULT_VISION_PROJECTOR_SHA256,
+            "197f49a93027f9843772bd24a6a9e0be2a32a788de5a3def330e9c585d86edd1"
         );
     }
 

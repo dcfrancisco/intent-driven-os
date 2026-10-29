@@ -72,6 +72,8 @@ pub struct ModelMetadata {
     pub status: ModelStatus,
     /// Optional artifact checksum.
     pub checksum: Option<String>,
+    /// Local GGUF projector paired with the text model for vision input.
+    pub vision_projector_location: Option<String>,
     /// Local or remote artifact location.
     pub location: String,
 }
@@ -172,6 +174,74 @@ impl ModelRegistry {
         Ok(removed)
     }
 
+    /// Pair or unpair a vision projector with an existing model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model is unknown, the registry is unavailable,
+    /// or persistence fails.
+    pub fn set_vision_projector(
+        &self,
+        id: &str,
+        projector_path: Option<String>,
+    ) -> Result<(), RuntimeError> {
+        let mut models = self.lock_models()?;
+        let model = models
+            .get_mut(id)
+            .ok_or_else(|| RuntimeError::ModelNotFound(id.to_owned()))?;
+        let model_size = fs::metadata(&model.location)
+            .map_err(|error| {
+                RuntimeError::InvalidModel(format!(
+                    "could not inspect model artifact {}: {error}",
+                    model.location
+                ))
+            })?
+            .len();
+        let projector_size = projector_path
+            .as_deref()
+            .map(|path| {
+                fs::metadata(path)
+                    .map(|metadata| metadata.len())
+                    .map_err(|error| {
+                        RuntimeError::InvalidModel(format!(
+                            "could not inspect vision projector {path}: {error}"
+                        ))
+                    })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let total_size = model_size.checked_add(projector_size).ok_or_else(|| {
+            RuntimeError::InvalidModel("model and projector size overflowed".to_owned())
+        })?;
+        let previous_projector = model.vision_projector_location.clone();
+        let previous_capabilities = model.capabilities.clone();
+        let previous_memory_requirement = model.memory_requirement_mb;
+        model.vision_projector_location = projector_path.clone();
+        model.memory_requirement_mb = total_size.div_ceil(1_048_576);
+        if projector_path.is_some() {
+            if !model
+                .capabilities
+                .iter()
+                .any(|capability| capability == "vision")
+            {
+                model.capabilities.push("vision".to_owned());
+            }
+        } else {
+            model
+                .capabilities
+                .retain(|capability| capability != "vision");
+        }
+        if let Err(error) = self.persist(&models) {
+            if let Some(model) = models.get_mut(id) {
+                model.vision_projector_location = previous_projector;
+                model.capabilities = previous_capabilities;
+                model.memory_requirement_mb = previous_memory_requirement;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// List metadata in stable identifier order.
     #[must_use]
     pub fn list(&self) -> Vec<ModelMetadata> {
@@ -179,6 +249,16 @@ impl ModelRegistry {
             .lock()
             .map(|models| models.values().cloned().collect())
             .unwrap_or_default()
+    }
+
+    fn is_vision_projector_artifact(&self, path: &Path) -> Result<bool, RuntimeError> {
+        let models = self.lock_models()?;
+        Ok(models.values().any(|model| {
+            model
+                .vision_projector_location
+                .as_deref()
+                .is_some_and(|projector| Path::new(projector) == path)
+        }))
     }
 
     /// Inspect one model by identifier.
@@ -276,6 +356,34 @@ impl ModelCatalog for ModelRegistry {
 pub struct ModelAcquirer;
 
 impl ModelAcquirer {
+    /// Normalize a SHA-256 digest to lowercase hexadecimal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the supplied value is not a 64-character
+    /// hexadecimal SHA-256 digest.
+    pub fn normalize_sha256(checksum: &str) -> Result<String, RuntimeError> {
+        normalize_checksum(checksum)
+    }
+
+    /// Verify a file against an expected SHA-256 digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or its digest does not
+    /// match the expected value.
+    pub fn verify_sha256(path: &Path, expected: &str) -> Result<String, RuntimeError> {
+        let expected = normalize_checksum(expected)?;
+        let actual = sha256_file(path)?;
+        if actual != expected {
+            return Err(RuntimeError::InvalidModel(format!(
+                "SHA-256 checksum mismatch for {}: expected {expected}, got {actual}",
+                path.display()
+            )));
+        }
+        Ok(actual)
+    }
+
     /// Acquire a GGUF artifact and return metadata for the installed file.
     ///
     /// `source` may be a filesystem path, a `file://` URL, or an HTTP(S) URL.
@@ -317,6 +425,29 @@ impl ModelAcquirer {
         let target = destination.join(&source_name);
         let temporary = destination.join(format!(".{source_name}.part"));
 
+        if target.is_file() {
+            if let Some(expected) = checksum {
+                let actual_checksum = Self::verify_sha256(&target, expected)?;
+                let bytes = fs::metadata(&target)
+                    .map_err(|error| RuntimeError::Persistence(error.to_string()))?
+                    .len();
+                return Ok(ModelMetadata {
+                    id,
+                    name: source_name,
+                    family: "unknown".to_owned(),
+                    backend: "llama.cpp".to_owned(),
+                    quantization: "unknown".to_owned(),
+                    context_window: 0,
+                    memory_requirement_mb: bytes.div_ceil(1_048_576),
+                    capabilities: vec!["text".to_owned()],
+                    status: ModelStatus::Registered,
+                    checksum: Some(actual_checksum),
+                    vision_projector_location: None,
+                    location: target.display().to_string(),
+                });
+            }
+        }
+
         let result = (|| {
             acquire_to(source, &temporary)?;
             let actual_checksum = {
@@ -348,6 +479,7 @@ impl ModelAcquirer {
                 capabilities: vec!["text".to_owned()],
                 status: ModelStatus::Registered,
                 checksum: actual_checksum,
+                vision_projector_location: None,
                 location: target.display().to_string(),
             })
         })();
@@ -731,6 +863,14 @@ impl ModelDiscovery {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("gguf"))
             {
+                if registry.is_vision_projector_artifact(&path)?
+                    || path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.to_ascii_lowercase().starts_with("mmproj"))
+                {
+                    continue;
+                }
                 let id = path
                     .file_stem()
                     .and_then(|stem| stem.to_str())
@@ -758,6 +898,7 @@ impl ModelDiscovery {
                     capabilities: vec!["text".to_owned()],
                     status: ModelStatus::Registered,
                     checksum: None,
+                    vision_projector_location: None,
                     location: path.display().to_string(),
                 };
                 registry.register(model.clone())?;
@@ -825,6 +966,7 @@ fn encode_model(model: &ModelMetadata) -> String {
         capabilities.as_str(),
         model.status.as_str(),
         model.checksum.as_deref().unwrap_or(""),
+        model.vision_projector_location.as_deref().unwrap_or(""),
         model.location.as_str(),
     ]
     .iter()
@@ -837,7 +979,7 @@ fn decode_registry(contents: &str) -> Result<BTreeMap<String, ModelMetadata>, Ru
     let mut models = BTreeMap::new();
     for line in contents.lines().filter(|line| !line.is_empty()) {
         let fields = decode_fields(line)?;
-        if fields.len() != 11 {
+        if fields.len() != 11 && fields.len() != 12 {
             return Err(RuntimeError::Persistence("invalid model record".to_owned()));
         }
         let model = ModelMetadata {
@@ -859,7 +1001,12 @@ fn decode_registry(contents: &str) -> Result<BTreeMap<String, ModelMetadata>, Ru
             },
             status: ModelStatus::parse(&fields[8]),
             checksum: (!fields[9].is_empty()).then(|| fields[9].clone()),
-            location: fields[10].clone(),
+            vision_projector_location: fields
+                .get(10)
+                .filter(|_| fields.len() == 12)
+                .filter(|value| !value.is_empty())
+                .cloned(),
+            location: fields[if fields.len() == 12 { 11 } else { 10 }].clone(),
         };
         models.insert(model.id.clone(), model);
     }
@@ -901,6 +1048,7 @@ mod tests {
             capabilities: vec!["text".to_owned()],
             status: ModelStatus::Registered,
             checksum: Some("abc".to_owned()),
+            vision_projector_location: None,
             location: "/models/demo".to_owned(),
         }
     }
@@ -939,6 +1087,73 @@ mod tests {
     }
 
     #[test]
+    fn persists_explicit_projector_pairs_and_reads_legacy_records() {
+        let path = temporary_directory("vision-registry").join("models.db");
+        let model_artifact = path.with_file_name("demo.gguf");
+        let projector_artifact = path.with_file_name("demo-mmproj.gguf");
+        std::fs::create_dir_all(path.parent().expect("registry parent"))
+            .expect("create registry directory");
+        std::fs::write(&model_artifact, b"GGUF model").expect("write model artifact");
+        std::fs::write(&projector_artifact, b"GGUF projector").expect("write projector artifact");
+        std::fs::write(
+            &path,
+            "legacy|Legacy|demo|mock|none|1024|512|text|registered||/models/legacy\n",
+        )
+        .expect("write legacy record");
+        let registry = ModelRegistry::open(&path, EventBus::new()).expect("read legacy registry");
+        assert_eq!(
+            registry
+                .inspect("legacy")
+                .expect("legacy model")
+                .vision_projector_location,
+            None
+        );
+        let mut model = model();
+        model.location = model_artifact.display().to_string();
+        registry
+            .register(model)
+            .expect("register model with no projector");
+        registry
+            .set_vision_projector("demo", Some(projector_artifact.display().to_string()))
+            .expect("pair projector");
+
+        let reopened =
+            ModelRegistry::open(&path, EventBus::new()).expect("reopen projector registry");
+        let configured = reopened.inspect("demo").expect("configured model");
+        assert_eq!(
+            configured.vision_projector_location.as_deref(),
+            Some(projector_artifact.to_string_lossy().as_ref())
+        );
+        assert!(configured
+            .capabilities
+            .iter()
+            .any(|capability| capability == "vision"));
+
+        reopened
+            .set_vision_projector("demo", None)
+            .expect("clear projector");
+        assert_eq!(
+            reopened
+                .inspect("demo")
+                .expect("cleared model")
+                .vision_projector_location,
+            None
+        );
+        assert_eq!(
+            reopened
+                .inspect("demo")
+                .expect("cleared model")
+                .memory_requirement_mb,
+            std::fs::metadata(&model_artifact)
+                .expect("model file size")
+                .len()
+                .div_ceil(1_048_576)
+        );
+        std::fs::remove_dir_all(path.parent().expect("registry parent"))
+            .expect("remove registry directory");
+    }
+
+    #[test]
     fn discovers_only_gguf_files_and_registers_metadata() {
         let directory =
             std::env::temp_dir().join(format!("oid-model-discovery-{}", std::process::id()));
@@ -952,6 +1167,51 @@ mod tests {
             .expect("discover models");
         assert_eq!(discovered.len(), 1);
         assert_eq!(discovered[0].id, "qwen3");
+        assert_eq!(registry.list().len(), 1);
+        std::fs::remove_dir_all(directory).expect("remove discovery directory");
+    }
+
+    #[test]
+    fn discovery_does_not_register_a_paired_vision_projector_as_a_model() {
+        let directory = temporary_directory("vision-projector-discovery");
+        std::fs::create_dir_all(&directory).expect("create discovery directory");
+        let model_path = directory.join("demo.gguf");
+        let projector_path = directory.join("mmproj-demo.gguf");
+        std::fs::write(&model_path, b"GGUF model").expect("write model fixture");
+        std::fs::write(&projector_path, b"GGUF projector").expect("write projector fixture");
+
+        let bus = EventBus::new();
+        let registry = ModelRegistry::in_memory(bus);
+        let mut registered = model();
+        registered.location = model_path.display().to_string();
+        registered.vision_projector_location = Some(projector_path.display().to_string());
+        registered.capabilities.push("vision".to_owned());
+        registry
+            .register(registered)
+            .expect("register paired model");
+
+        let discovered = ModelDiscovery::new(vec![directory.clone()])
+            .discover(&registry, "llama.cpp")
+            .expect("discover model directory");
+        assert!(discovered.is_empty());
+        assert_eq!(registry.list().len(), 1);
+        std::fs::remove_dir_all(directory).expect("remove discovery directory");
+    }
+
+    #[test]
+    fn discovery_skips_unpaired_mmproj_files() {
+        let directory = temporary_directory("unpaired-projector-discovery");
+        std::fs::create_dir_all(&directory).expect("create discovery directory");
+        std::fs::write(directory.join("demo.gguf"), b"GGUF model").expect("write model fixture");
+        std::fs::write(directory.join("mmproj-demo.gguf"), b"GGUF projector")
+            .expect("write projector fixture");
+
+        let registry = ModelRegistry::in_memory(EventBus::new());
+        let discovered = ModelDiscovery::new(vec![directory.clone()])
+            .discover(&registry, "llama.cpp")
+            .expect("discover model directory");
+        assert_eq!(discovered.len(), 1);
+        assert_eq!(discovered[0].id, "demo");
         assert_eq!(registry.list().len(), 1);
         std::fs::remove_dir_all(directory).expect("remove discovery directory");
     }
@@ -984,9 +1244,39 @@ mod tests {
             b"GGUF"
         );
         assert!(!destination.join(".tiny-model.gguf").exists());
+        let reused = ModelAcquirer::acquire(
+            "https://example.invalid/tiny-model.gguf",
+            &destination,
+            None,
+            Some("b83633aa785344791618f2fddf131b010ea04912a60430760b070bad293f65bd"),
+        )
+        .expect("reuse verified artifact already in destination");
+        assert_eq!(reused.location, metadata.location);
 
         std::fs::remove_dir_all(source_directory).expect("remove source directory");
         std::fs::remove_dir_all(destination).expect("remove destination directory");
+    }
+
+    #[test]
+    fn verifies_sha256_of_existing_artifacts() {
+        let directory = temporary_directory("verify-checksum");
+        std::fs::create_dir_all(&directory).expect("create verification directory");
+        let artifact = directory.join("demo.gguf");
+        std::fs::write(&artifact, b"GGUF").expect("write artifact");
+
+        assert_eq!(
+            ModelAcquirer::verify_sha256(
+                &artifact,
+                "sha256:b83633aa785344791618f2fddf131b010ea04912a60430760b070bad293f65bd"
+            )
+            .expect("verify matching checksum"),
+            "b83633aa785344791618f2fddf131b010ea04912a60430760b070bad293f65bd"
+        );
+        assert!(ModelAcquirer::verify_sha256(&artifact, &"0".repeat(64))
+            .expect_err("reject mismatched checksum")
+            .to_string()
+            .contains("checksum mismatch"));
+        std::fs::remove_dir_all(directory).expect("remove verification directory");
     }
 
     #[test]

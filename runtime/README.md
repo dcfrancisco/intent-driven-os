@@ -69,10 +69,11 @@ Set `MARINA_TOKEN_FILE` to use another secret-store integration point.
 Persistent runner settings belong in `$HOME/.marina/config.yaml` on Unix or
 `%USERPROFILE%\.marina\config.yaml` on Windows. Environment variables override
 file values for tests and deployment automation. Talvik loads the configured
-default model on daemon startup; by default it is
-`qwen2.5-0.5b-instruct-q4_k_m`. If missing, Talvik pulls the pinned artifact
-and verifies its SHA-256 before loading. Set `default_model: none` to opt out.
-Failures are logged as warnings and do not prevent the daemon from starting.
+default model on daemon startup; by default it is Gemma 4 E4B-it Q4_0 with its
+vision projector. If missing, Talvik pulls both pinned artifacts (about
+4.8 GiB combined), verifies their SHA-256 checksums, pairs them, and loads the
+model. Set `default_model: none` to opt out, or configure a smaller default
+model. Failures are logged as warnings and do not prevent the daemon from starting.
 Bootstrap runs after the local IPC and HTTP listeners are available. `/healthz`
 remains useful during provisioning or failure, while `/readyz` succeeds only
 after a model has actually loaded. Set `TALVIK_AUTO_BOOTSTRAP=false`,

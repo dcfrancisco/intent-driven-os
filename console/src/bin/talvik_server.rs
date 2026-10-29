@@ -10,10 +10,15 @@ mod http;
 #[path = "../ipc.rs"]
 pub(crate) mod ipc;
 
-use oid_runtime::{config, logging, Runtime, RuntimeService};
-use oid_runtime::{GenerationMessage, GenerationRequest, GenerationResult};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use oid_runtime::{config, logging, ModelAcquirer, Runtime, RuntimeService};
+use oid_runtime::{
+    ContentPart, GenerationMessage, GenerationRequest, GenerationResult, ImageInput,
+    StructuredOutput,
+};
 use oid_shared::RuntimeEvent;
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -132,6 +137,18 @@ fn load_default_model(
         }
     }
 
+    if let Err(error) = verify_default_model_checksum(runtime, &default_model) {
+        report_default_model_failure(runtime, &default_model.id, &error);
+        readiness.set(false, "model_checksum_mismatch");
+        return false;
+    }
+
+    if let Err(error) = ensure_default_projector(runtime, &default_model) {
+        report_default_model_failure(runtime, &default_model.id, &error);
+        readiness.set(false, "projector_download_failed");
+        return false;
+    }
+
     match runtime.model_load(&default_model.id) {
         Ok(()) => eprintln!("Loaded default model: {}", default_model.id),
         Err(error) => {
@@ -141,6 +158,87 @@ fn load_default_model(
         }
     }
     true
+}
+
+fn verify_default_model_checksum(
+    runtime: &dyn RuntimeService,
+    default_model: &config::DefaultModelConfig,
+) -> Result<(), String> {
+    let Some(expected) = default_model.checksum.as_deref() else {
+        return Ok(());
+    };
+    let Some(model) = runtime.model_inspect(&default_model.id) else {
+        return Err(format!(
+            "model {} is not registered after bootstrap",
+            default_model.id
+        ));
+    };
+    let expected = ModelAcquirer::normalize_sha256(expected)
+        .map_err(|error| format!("invalid default model checksum: {error}"))?;
+    if model.checksum.as_deref() == Some(expected.as_str()) {
+        return Ok(());
+    }
+    ModelAcquirer::verify_sha256(Path::new(&model.location), &expected)
+        .map(|_| ())
+        .map_err(|error| format!("could not verify default model artifact: {error}"))
+}
+
+fn ensure_default_projector(
+    runtime: &dyn RuntimeService,
+    default_model: &config::DefaultModelConfig,
+) -> Result<(), String> {
+    let Some(model) = runtime.model_inspect(&default_model.id) else {
+        return Err(format!(
+            "model {} is not registered after bootstrap",
+            default_model.id
+        ));
+    };
+    if model
+        .vision_projector_location
+        .as_deref()
+        .is_some_and(|path| Path::new(path).is_file())
+    {
+        if let (Some(path), Some(expected)) = (
+            model.vision_projector_location.as_deref(),
+            default_model.vision_projector_checksum.as_deref(),
+        ) {
+            ModelAcquirer::verify_sha256(Path::new(path), expected)
+                .map_err(|error| format!("could not verify vision projector: {error}"))?;
+        }
+        return Ok(());
+    }
+    let Some(source) = default_model.vision_projector_source.as_deref() else {
+        if model.vision_projector_location.is_some() {
+            return Err(
+                "configured vision projector is missing and has no acquisition source".to_owned(),
+            );
+        }
+        return Ok(());
+    };
+    if !default_model.auto_download {
+        return Err(
+            "vision projector is not installed and automatic download is disabled".to_owned(),
+        );
+    }
+
+    let model_directory = Path::new(&model.location)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    eprintln!(
+        "Default model {} has no installed vision projector; acquiring it from {}",
+        default_model.id, source
+    );
+    let projector = ModelAcquirer::acquire(
+        source,
+        model_directory,
+        None,
+        default_model.vision_projector_checksum.as_deref(),
+    )
+    .map_err(|error| format!("could not acquire vision projector: {error}"))?;
+    runtime
+        .model_set_vision_projector(&default_model.id, Some(&projector.location))
+        .map_err(|error| format!("could not pair vision projector: {error}"))
 }
 
 fn report_default_model_failure(runtime: &dyn RuntimeService, model_id: &str, reason: &str) {
@@ -202,10 +300,16 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
             for model in runtime.model_list() {
                 writeln!(
                     stream,
-                    "MODEL\t{}\t{}\t{:?}",
+                    "MODEL\t{}\t{}\t{:?}\t{}",
                     ipc::encode_field(&model.id),
                     ipc::encode_field(&model.name),
-                    model.status
+                    model.status,
+                    ipc::encode_field(
+                        model
+                            .vision_projector_location
+                            .as_deref()
+                            .unwrap_or_default()
+                    )
                 )?;
             }
             writeln!(stream, "END")?;
@@ -244,6 +348,17 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
         "model_load" if fields.len() == 2 => {
             respond_result(&mut stream, runtime.model_load(fields[1]))?;
         }
+        "model_vision" if fields.len() == 3 => {
+            let model_id = ipc::decode_field(fields[1]);
+            let projector = ipc::decode_field(fields[2]);
+            respond_result(
+                &mut stream,
+                runtime.model_set_vision_projector(
+                    &model_id,
+                    (!projector.is_empty()).then_some(projector.as_str()),
+                ),
+            )?;
+        }
         "model_unload" if fields.len() == 2 => {
             respond_result(&mut stream, runtime.model_unload(fields[1]))?;
         }
@@ -251,7 +366,7 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
             runtime.cancel_generation_for(&ipc::decode_field(fields[1]));
             writeln!(stream, "OK cancelled")?;
         }
-        "generate" | "generate_v2" => match parse_generation_request(&fields) {
+        "generate" | "generate_v2" | "generate_v3" => match parse_generation_request(&fields) {
             Ok(request) => run_generation(&mut stream, runtime, request)?,
             Err(error) => writeln!(stream, "ERROR\t{}", ipc::encode_field(&error))?,
         },
@@ -279,11 +394,46 @@ fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String
                 ),
                 model_id: ipc::decode_field(fields[1]),
                 prompt: ipc::decode_field(&fields.get(4..).unwrap_or_default().join("\t")),
+                content: Vec::new(),
                 options: oid_runtime::GenerationOptions {
                     max_tokens,
                     ..Default::default()
                 },
                 structured_output: None,
+            })
+        }
+        "generate_v3" if fields.len() >= 13 => {
+            let max_tokens = parse_generation_value(fields[3], "max_tokens")?;
+            let temperature = parse_generation_value(fields[4], "temperature")?;
+            let top_p = parse_generation_value(fields[5], "top_p")?;
+            let top_k = parse_generation_value(fields[6], "top_k")?;
+            let seed = parse_generation_value(fields[7], "seed")?;
+            let context_size = parse_generation_value(fields[8], "context_size")?;
+            let stop_sequences =
+                serde_json::from_str(&ipc::decode_field(fields[9])).map_err(|error| {
+                    format!("invalid stop_sequences in generation request: {error}")
+                })?;
+            let structured_output = parse_structured_output(&ipc::decode_field(fields[10]))?;
+            let content = parse_generation_content(&ipc::decode_field(fields[11]))?;
+            let request_id = ipc::decode_field(fields[2]);
+            if request_id.is_empty() {
+                return Err("generation request_id must not be empty".to_owned());
+            }
+            Ok(GenerationRequest {
+                request_id,
+                model_id: ipc::decode_field(fields[1]),
+                prompt: ipc::decode_field(&fields[12..].join("\t")),
+                content,
+                options: oid_runtime::GenerationOptions {
+                    max_tokens,
+                    temperature,
+                    top_p,
+                    top_k,
+                    seed,
+                    context_size,
+                    stop_sequences,
+                },
+                structured_output,
             })
         }
         "generate_v2" if fields.len() >= 11 => {
@@ -305,6 +455,7 @@ fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String
                 request_id,
                 model_id: ipc::decode_field(fields[1]),
                 prompt: ipc::decode_field(&fields[10..].join("\t")),
+                content: Vec::new(),
                 options: oid_runtime::GenerationOptions {
                     max_tokens,
                     temperature,
@@ -319,6 +470,80 @@ fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String
         }
         _ => Err("invalid generation request".to_owned()),
     }
+}
+
+fn parse_structured_output(value: &str) -> Result<Option<StructuredOutput>, String> {
+    let value: serde_json::Value = serde_json::from_str(value)
+        .map_err(|error| format!("invalid output constraint: {error}"))?;
+    let output = match value.get("type").and_then(serde_json::Value::as_str) {
+        None if value.is_null() => return Ok(None),
+        Some("json_object") => Some(StructuredOutput::JsonObject),
+        Some("json_schema") => Some(StructuredOutput::JsonSchema(
+            value
+                .get("schema")
+                .cloned()
+                .ok_or_else(|| "JSON Schema constraint is missing schema".to_owned())?,
+        )),
+        _ => return Err("unsupported structured output constraint".to_owned()),
+    };
+    if let Some(output) = &output {
+        output
+            .validate()
+            .map_err(|error| format!("invalid structured output constraint: {error}"))?;
+    }
+    Ok(output)
+}
+
+fn parse_generation_content(value: &str) -> Result<Vec<ContentPart>, String> {
+    let value: serde_json::Value = serde_json::from_str(value)
+        .map_err(|error| format!("invalid generation content: {error}"))?;
+    let parts = value
+        .as_array()
+        .ok_or_else(|| "generation content must be an array".to_owned())?;
+    let mut image_count = 0;
+    parts
+        .iter()
+        .map(
+            |part| match part.get("type").and_then(serde_json::Value::as_str) {
+                Some("text") => part
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|text| ContentPart::Text(text.to_owned()))
+                    .ok_or_else(|| "text content parts require string text".to_owned()),
+                Some("image") => {
+                    image_count += 1;
+                    if image_count > ImageInput::MAX_IMAGES_PER_REQUEST {
+                        return Err(format!(
+                            "at most {} images are supported per request",
+                            ImageInput::MAX_IMAGES_PER_REQUEST
+                        ));
+                    }
+                    let media_type = part
+                        .get("media_type")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| "image content parts require media_type".to_owned())?;
+                    let encoded = part
+                        .get("data")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| "image content parts require base64 data".to_owned())?;
+                    if encoded.len() > ImageInput::MAX_ENCODED_BYTES.saturating_mul(4) / 3 + 8 {
+                        return Err("encoded image exceeds the 10 MiB limit".to_owned());
+                    }
+                    let data = STANDARD
+                        .decode(encoded)
+                        .map_err(|error| format!("invalid base64 image data: {error}"))?;
+                    if data.is_empty() || data.len() > ImageInput::MAX_ENCODED_BYTES {
+                        return Err("decoded image must be between 1 byte and 10 MiB".to_owned());
+                    }
+                    Ok(ContentPart::Image(ImageInput {
+                        media_type: media_type.to_owned(),
+                        data,
+                    }))
+                }
+                _ => Err("unsupported generation content part".to_owned()),
+            },
+        )
+        .collect()
 }
 
 fn parse_generation_value<T: std::str::FromStr>(value: &str, name: &str) -> Result<T, String> {
@@ -434,7 +659,7 @@ fn respond_result(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_generation_request;
+    use super::{parse_generation_request, ContentPart, StructuredOutput};
 
     #[test]
     fn parses_ipc_v2_generation_options_and_escaped_prompt() {
@@ -464,6 +689,39 @@ mod tests {
         assert_eq!(request.options.seed, 7);
         assert_eq!(request.options.context_size, 2048);
         assert_eq!(request.options.stop_sequences, ["END"]);
+    }
+
+    #[test]
+    fn parses_ipc_v3_image_content_and_json_object_constraint() {
+        let fields = [
+            "generate_v3",
+            "vision-model",
+            "request-vision",
+            "16",
+            "0.2",
+            "0.9",
+            "40",
+            "7",
+            "1024",
+            "[]",
+            r#"{"type":"json_object"}"#,
+            r#"[{"type":"text","text":"Describe "},{"type":"image","media_type":"image/png","data":"AQID"}]"#,
+            "Describe <__media__>",
+        ];
+        let request = parse_generation_request(&fields).expect("valid v3 request");
+
+        assert_eq!(request.request_id, "request-vision");
+        assert_eq!(request.model_id, "vision-model");
+        assert_eq!(request.content.len(), 2);
+        assert!(matches!(
+            &request.content[1],
+            ContentPart::Image(image)
+                if image.media_type == "image/png" && image.data == [1, 2, 3]
+        ));
+        assert!(matches!(
+            request.structured_output,
+            Some(StructuredOutput::JsonObject)
+        ));
     }
 
     #[test]

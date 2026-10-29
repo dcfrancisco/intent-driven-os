@@ -60,6 +60,8 @@ pub struct GenerationRequest {
     pub model_id: String,
     /// Prompt or input content.
     pub input: String,
+    /// Ordered text and image input. When non-empty, this replaces `input`.
+    pub content: Vec<oid_model_runner::ContentPart>,
     /// Sampling and context options.
     pub options: GenerationOptions,
     /// Optional backend-neutral JSON output constraint.
@@ -776,6 +778,7 @@ mod tests {
             capabilities: vec!["text".to_owned()],
             status: ModelStatus::Registered,
             checksum: None,
+            vision_projector_location: None,
             location: "demo.gguf".to_owned(),
         };
         assert_eq!(
@@ -794,6 +797,7 @@ mod tests {
             request_id: "request".to_owned(),
             model_id: "demo".to_owned(),
             input: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         };
@@ -821,6 +825,7 @@ mod tests {
             request_id: "request".to_owned(),
             model_id: "demo".to_owned(),
             input: "hello".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         };
@@ -878,6 +883,7 @@ mod tests {
             request_id: "cancel-a".to_owned(),
             model_id: "controlled".to_owned(),
             input: "long request".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         };
@@ -905,6 +911,7 @@ mod tests {
             request_id: "request-b".to_owned(),
             model_id: "controlled".to_owned(),
             input: "recovery".to_owned(),
+            content: Vec::new(),
             options: GenerationOptions::default(),
             structured_output: None,
         };
@@ -940,6 +947,7 @@ mod tests {
             capabilities: vec!["text".to_owned()],
             status: ModelStatus::Registered,
             checksum: None,
+            vision_projector_location: None,
             location: "controlled.gguf".to_owned(),
         };
         manager.load_model(&model).expect("load");
