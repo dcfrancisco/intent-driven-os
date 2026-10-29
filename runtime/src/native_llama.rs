@@ -111,6 +111,14 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
     }
 
+    fn reset_context(&self, model_id: &str) -> Result<(), RuntimeError> {
+        let model_id = ModelId::new(model_id.to_owned())
+            .map_err(|error| RuntimeError::InvalidModel(error.to_string()))?;
+        self.runner
+            .reset_context(&model_id)
+            .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
+    }
+
     fn generate_stream(
         &self,
         request: &GenerationRequest,

@@ -407,6 +407,17 @@ pub trait ModelRunner: Send + Sync {
     fn tool_support(&self, _model_id: &ModelId) -> Result<bool, ModelRunnerError> {
         Ok(false)
     }
+    /// Drop any retained conversation-prefix state for one resident model.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotImplemented` when the backend has no reusable context, or a
+    /// lifecycle error when the model cannot be reset safely.
+    fn reset_context(&self, _model_id: &ModelId) -> Result<(), ModelRunnerError> {
+        Err(ModelRunnerError::NotImplemented(
+            "inference context reset".to_owned(),
+        ))
+    }
     /// Tokenize text with the currently loaded model.
     ///
     /// # Errors

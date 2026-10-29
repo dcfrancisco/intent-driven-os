@@ -66,6 +66,13 @@ native sequence KV state with `llama_memory_seq_rm` and re-evaluating the final
 cached token to restore sampler state. It reports cache-hit and reused-token
 counts in generation metrics. A mismatch in model context size, formatted token
 prefix, cancellation, decode failure, unload, or restart drops the context.
+Only one resident model retains an idle context at a time; switching models
+drops other resident contexts so the scheduler's single-context memory
+reservation remains bounded. An authenticated
+`POST /v1/models/{id}/context/reset` operation explicitly drops the selected
+resident model's prompt/KV state without unloading its weights. Context reuse
+does not retain conversation state: only an identical formatted-token prefix
+may be reused, and all generated suffix state is removed before decoding.
 This is persistent in-process context ownership, not crash-isolated process
 workers; the latter remains open because a native assertion can still terminate
 the host process.
@@ -107,7 +114,12 @@ isolation, cancellation recovery, worker crash recovery, unload/reload, memory
 pressure, and before/after TTFT and throughput measurements on each advertised
 platform. The exact-prefix native Qwen test now verifies KV reuse and cache
 invalidation cases; its single-host timing is evidence only, not a performance
-claim. Interactive IDE evidence remains separate from HTTP compatibility.
+claim. A Windows release-profile Qwen run additionally completed ten
+consecutive requests, an extended chat-style follow-up, explicit reset,
+unrelated-prompt invalidation, and post-cancellation recovery; cache hits
+reused 26/27 prompt tokens. Large timing variance and unmeasured peak memory
+leave performance qualification open. Interactive IDE evidence remains
+separate from HTTP compatibility.
 
 ## Consequences
 

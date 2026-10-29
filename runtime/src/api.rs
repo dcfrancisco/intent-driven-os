@@ -99,6 +99,17 @@ pub trait RuntimeService: Send + Sync {
     ///
     /// Returns an error when the model is not loaded or the backend rejects it.
     fn model_unload(&self, id: &str) -> Result<(), oid_shared::RuntimeError>;
+    /// Drop any retained prompt/KV state for a resident model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the model is not resident or cannot be reset
+    /// safely.
+    fn reset_context(&self, _id: &str) -> Result<(), oid_shared::RuntimeError> {
+        Err(oid_shared::RuntimeError::NotImplemented(
+            "inference context reset",
+        ))
+    }
     /// Count tokens using the active backend tokenizer.
     ///
     /// # Errors

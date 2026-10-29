@@ -502,6 +502,27 @@ impl NativeModel {
         self.memory_bytes
     }
 
+    /// Drop the retained inference context and its KV cache for this model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the context state lock is poisoned.
+    pub fn reset_context(&self) -> Result<(), String> {
+        #[cfg(native_llama_cpp)]
+        {
+            let mut context = self
+                .context
+                .lock()
+                .map_err(|_| "native context lock poisoned".to_owned())?;
+            context.take();
+            Ok(())
+        }
+        #[cfg(not(native_llama_cpp))]
+        {
+            Err("native llama.cpp is unavailable".to_owned())
+        }
+    }
+
     /// Tokenize UTF-8 text using the loaded model vocabulary.
     ///
     /// # Errors
@@ -1215,49 +1236,216 @@ mod tests {
     #[cfg(native_llama_cpp)]
     #[test]
     #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
+    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::too_many_lines)]
     fn persistent_context_reuses_a_compatible_prompt_prefix() {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a real GGUF for this test");
         super::initialize().expect("native backend should initialize");
+        let load_started = std::time::Instant::now();
         let model = super::load_model(&model_path).expect("test GGUF should load");
+        let load_time = load_started.elapsed();
         let cancelled = std::sync::atomic::AtomicBool::new(false);
-        let first = model
-            .generate_stream(
-                "Reply briefly to the user.",
-                512,
-                8,
-                0.0,
-                0.95,
-                40,
-                42,
-                &[],
-                |_| true,
-                &cancelled,
-            )
-            .expect("initial generation should succeed");
-        assert!(!first.cache_hit);
-        let second = model
-            .generate_stream(
-                "Reply briefly to the user.",
-                512,
-                8,
-                0.0,
-                0.95,
-                40,
-                42,
-                &[],
-                |_| true,
-                &cancelled,
-            )
-            .expect("extended generation should succeed");
+        let prompt = "Reply briefly to the user.";
         eprintln!(
-            "cache benchmark first_prompt_ms={} second_prompt_ms={} second_reused_tokens={}",
-            first.prompt_eval_time.as_millis(),
-            second.prompt_eval_time.as_millis(),
-            second.reused_prompt_tokens
+            "context benchmark model={} context_size=128 max_tokens=1 threads={} load_ms={}",
+            model_path,
+            super::inference_threads(),
+            load_time.as_millis()
         );
-        assert!(second.cache_hit);
-        assert!(second.reused_prompt_tokens > 0);
+        for request_index in 0..3 {
+            model
+                .reset_context()
+                .expect("baseline reset should succeed");
+            let started = std::time::Instant::now();
+            let first_token = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let first_token_for_callback = first_token.clone();
+            let result = model
+                .generate_stream(
+                    prompt,
+                    128,
+                    1,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |_| {
+                        if let Ok(mut first_token) = first_token_for_callback.lock() {
+                            first_token.get_or_insert_with(std::time::Instant::now);
+                        }
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("baseline generation should succeed");
+            let first_token_ms = first_token
+                .lock()
+                .ok()
+                .and_then(|first_token| *first_token)
+                .map(|first_token| first_token.duration_since(started).as_millis());
+            let prompt_tokens_per_second = (!result.prompt_eval_time.is_zero())
+                .then(|| result.prompt_tokens as f64 / result.prompt_eval_time.as_secs_f64());
+            let generation_tokens_per_second = (!result.generation_time.is_zero())
+                .then(|| result.generated_tokens as f64 / result.generation_time.as_secs_f64());
+            eprintln!(
+                "context benchmark baseline_request={} elapsed_ms={} prompt_tokens={} generated_tokens={} prompt_eval_ms={} first_token_ms={:?} generation_ms={} prompt_tokens_per_second={:?} generation_tokens_per_second={:?} cache_hit={}",
+                request_index + 1,
+                started.elapsed().as_millis(),
+                result.prompt_tokens,
+                result.generated_tokens,
+                result.prompt_eval_time.as_millis(),
+                first_token_ms,
+                result.generation_time.as_millis(),
+                prompt_tokens_per_second,
+                generation_tokens_per_second,
+                result.cache_hit
+            );
+            assert!(!result.cache_hit);
+        }
+        model
+            .reset_context()
+            .expect("warm benchmark should start cold");
+        for request_index in 0..10 {
+            let started = std::time::Instant::now();
+            let first_token = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let first_token_for_callback = first_token.clone();
+            let result = model
+                .generate_stream(
+                    prompt,
+                    128,
+                    1,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |_| {
+                        if let Ok(mut first_token) = first_token_for_callback.lock() {
+                            first_token.get_or_insert_with(std::time::Instant::now);
+                        }
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("repeated generation should succeed");
+            let first_token_ms = first_token
+                .lock()
+                .ok()
+                .and_then(|first_token| *first_token)
+                .map(|first_token| first_token.duration_since(started).as_millis());
+            let prompt_tokens_per_second = (!result.prompt_eval_time.is_zero())
+                .then(|| result.prompt_tokens as f64 / result.prompt_eval_time.as_secs_f64());
+            let generation_tokens_per_second = (!result.generation_time.is_zero())
+                .then(|| result.generated_tokens as f64 / result.generation_time.as_secs_f64());
+            eprintln!(
+                "context benchmark request={} elapsed_ms={} prompt_tokens={} generated_tokens={} prompt_eval_ms={} first_token_ms={:?} generation_ms={} prompt_tokens_per_second={:?} generation_tokens_per_second={:?} cache_hit={} reused_prompt_tokens={}",
+                request_index + 1,
+                started.elapsed().as_millis(),
+                result.prompt_tokens,
+                result.generated_tokens,
+                result.prompt_eval_time.as_millis(),
+                first_token_ms,
+                result.generation_time.as_millis(),
+                prompt_tokens_per_second,
+                generation_tokens_per_second,
+                result.cache_hit,
+                result.reused_prompt_tokens
+            );
+            assert_eq!(result.cache_hit, request_index > 0);
+            assert_eq!(result.reused_prompt_tokens > 0, request_index > 0);
+        }
+
+        model
+            .reset_context()
+            .expect("IDE-style benchmark should start cold");
+        let first_turn = "\u{001e}user\nReview this code briefly.";
+        let first_turn_result = model
+            .generate_stream(
+                first_turn,
+                128,
+                1,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("initial IDE-style request should succeed");
+        assert!(!first_turn_result.cache_hit);
+        let continued_turn =
+            "\u{001e}user\nReview this code briefly.\u{001e}assistant\nI found one issue.\u{001e}user\nSuggest a minimal fix.";
+        let continued_turn_result = model
+            .generate_stream(
+                continued_turn,
+                128,
+                1,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("extended IDE-style request should succeed");
+        eprintln!(
+            "context benchmark ide_followup prompt_eval_ms={} cache_hit={} reused_prompt_tokens={}",
+            continued_turn_result.prompt_eval_time.as_millis(),
+            continued_turn_result.cache_hit,
+            continued_turn_result.reused_prompt_tokens
+        );
+        assert!(continued_turn_result.cache_hit);
+        assert!(continued_turn_result.reused_prompt_tokens > 0);
+
+        let unrelated = model
+            .generate_stream(
+                "This is a separate conversation. Reply briefly.",
+                128,
+                1,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("independent conversation should succeed");
+        assert!(!unrelated.cache_hit);
+        let after_unrelated = model
+            .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
+            .expect("original conversation should remain isolated");
+        assert!(!after_unrelated.cache_hit);
+
+        model
+            .reset_context()
+            .expect("explicit reset should succeed");
+        let after_reset = model
+            .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
+            .expect("generation after explicit reset should succeed");
+        assert!(!after_reset.cache_hit);
+
+        let cancel_prompt = "Cancel this request safely.";
+        let cancellation = model.generate_stream(
+            cancel_prompt,
+            128,
+            8,
+            0.0,
+            0.95,
+            40,
+            42,
+            &[],
+            |_| false,
+            &cancelled,
+        );
+        assert!(cancellation.is_err());
+        let after_cancellation = model
+            .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
+            .expect("inference should recover after cancellation");
+        assert!(!after_cancellation.cache_hit);
         drop(model);
         super::shutdown();
     }

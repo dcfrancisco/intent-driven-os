@@ -147,6 +147,25 @@ impl ModelRunner for LlamaCppModelRunner {
             self.generating.store(false, Ordering::SeqCst);
             return Err(error);
         }
+        {
+            let resident_models = match models.lock() {
+                Ok(models) => models,
+                Err(_) => {
+                    self.generating.store(false, Ordering::SeqCst);
+                    return Err(ModelRunnerError::BackendFailure(
+                        "model lock poisoned".to_owned(),
+                    ));
+                }
+            };
+            for (resident_id, loaded) in resident_models.iter() {
+                if resident_id != &model_id {
+                    if let Err(error) = loaded.model.reset_context() {
+                        self.generating.store(false, Ordering::SeqCst);
+                        return Err(ModelRunnerError::BackendFailure(error));
+                    }
+                }
+            }
+        }
         if let Ok(mut state) = self.state.lock() {
             *state = ModelState::Generating;
         }
@@ -316,6 +335,25 @@ impl ModelRunner for LlamaCppModelRunner {
         Ok(models
             .get(model_id)
             .is_some_and(|loaded| loaded.model.supports_tools()))
+    }
+
+    fn reset_context(&self, model_id: &ModelId) -> Result<(), ModelRunnerError> {
+        if self.generating.load(Ordering::SeqCst) {
+            return Err(ModelRunnerError::ModelBusy(
+                "cannot reset context while generation is active".to_owned(),
+            ));
+        }
+        let models = self
+            .models
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?;
+        let loaded = models
+            .get(model_id)
+            .ok_or(ModelRunnerError::ModelNotLoaded)?;
+        loaded
+            .model
+            .reset_context()
+            .map_err(ModelRunnerError::BackendFailure)
     }
 
     fn unload(&self) -> Result<(), ModelRunnerError> {

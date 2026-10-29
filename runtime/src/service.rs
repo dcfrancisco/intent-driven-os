@@ -733,6 +733,36 @@ impl RuntimeService for MarinaRuntime {
         Ok(())
     }
 
+    fn reset_context(&self, id: &str) -> Result<(), RuntimeError> {
+        let _residency_guard = self
+            .residency_lock
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
+        if self
+            .active_generation
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))?
+            .is_some()
+        {
+            return Err(RuntimeError::ModelLifecycle(
+                "cannot reset context while generation is active".to_owned(),
+            ));
+        }
+        if !self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .contains_key(id)
+        {
+            return Err(RuntimeError::ModelLifecycle(format!(
+                "model {id} is not resident"
+            )));
+        }
+        self.backends.reset_context(id)?;
+        self.touch_model(id);
+        Ok(())
+    }
+
     fn tokenize(&self, text: &str) -> Result<usize, RuntimeError> {
         let count = self.backends.tokenize(text)?;
         self.bus
@@ -1182,6 +1212,68 @@ mod tests {
         };
         assert!(super::admit_memory_with_resident(Some(10_000), 1_000, 0, 0, &policy).is_ok());
         assert!(super::admit_memory_with_resident(Some(10_000), 1_900, 1, 0, &policy).is_err());
+    }
+
+    #[test]
+    fn context_reset_requires_a_resident_idle_model() {
+        let root = std::env::temp_dir().join(format!(
+            "oid-runtime-context-reset-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create root");
+        let runtime = MarinaRuntime::start_with_backend_and_hardware(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+            HardwareService::from_snapshot(HardwareSnapshot {
+                available_ram_bytes: Some(2 * 1_073_741_824),
+                ..HardwareSnapshot::default()
+            }),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "alpha".to_owned(),
+                name: "alpha.gguf".to_owned(),
+                family: "test".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "test".to_owned(),
+                context_window: 4096,
+                memory_requirement_mb: 1,
+                capabilities: vec!["chat".to_owned()],
+                status: ModelStatus::Registered,
+                checksum: None,
+                location: root.join("alpha.gguf").display().to_string(),
+            })
+            .expect("register model");
+
+        assert!(runtime.reset_context("alpha").is_err());
+        runtime.model_load("alpha").expect("load model");
+        runtime
+            .reset_context("alpha")
+            .expect("resident idle context should reset");
+        assert!(runtime.reset_context("missing").is_err());
+
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "active".to_owned(),
+            "generation-1".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        assert!(runtime.reset_context("alpha").is_err());
+        *runtime.active_generation.lock().expect("active lock") = None;
+        assert!(runtime
+            .snapshot()
+            .loaded_models
+            .contains(&"alpha".to_owned()));
+        std::fs::remove_dir_all(root).expect("remove test data");
     }
 
     #[test]

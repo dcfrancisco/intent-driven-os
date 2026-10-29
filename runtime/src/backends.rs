@@ -139,6 +139,14 @@ pub trait Backend: Send + Sync {
     ///
     /// Returns an error when the backend cannot unload the requested model.
     fn unload_model(&self, model_id: &str) -> Result<(), RuntimeError>;
+    /// Drop retained native context state for a resident model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the backend cannot reset the context safely.
+    fn reset_context(&self, _model_id: &str) -> Result<(), RuntimeError> {
+        Err(RuntimeError::NotImplemented("context reset"))
+    }
     /// Generate backend-neutral streaming chunks.
     ///
     /// # Errors
@@ -406,6 +414,24 @@ impl BackendManager {
             .unload_model(model_id)
     }
 
+    /// Reset retained inference context through the active backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active backend exists or reset fails.
+    pub fn reset_context(&self, model_id: &str) -> Result<(), RuntimeError> {
+        let state = self.lock_state()?;
+        let id = state
+            .active
+            .as_deref()
+            .ok_or_else(|| RuntimeError::BackendNotEnabled("<active>".to_owned()))?;
+        state
+            .backends
+            .get(id)
+            .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
+            .reset_context(model_id)
+    }
+
     /// Tokenize text through the active backend.
     ///
     /// # Errors
@@ -541,6 +567,10 @@ impl Backend for MockBackend {
     }
 
     fn unload_model(&self, _model_id: &str) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn reset_context(&self, _model_id: &str) -> Result<(), RuntimeError> {
         Ok(())
     }
 

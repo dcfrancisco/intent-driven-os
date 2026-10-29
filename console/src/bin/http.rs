@@ -316,6 +316,18 @@ fn handle(
                 Err(error) => respond_error(&mut stream, 409, error.to_string()),
             }
         }
+        ("POST", path) if path.starts_with("/v1/models/") && path.ends_with("/context/reset") => {
+            if !scope_allowed(&identity, auth::MODELS_ADMIN) {
+                return respond_scope_error(&mut stream, auth::MODELS_ADMIN);
+            }
+            let model = path
+                .trim_start_matches("/v1/models/")
+                .trim_end_matches("/context/reset");
+            match runtime.reset_context(model) {
+                Ok(()) => respond_json(&mut stream, 200, json!({"id": model, "context": "reset"})),
+                Err(error) => respond_error(&mut stream, 409, error.to_string()),
+            }
+        }
         ("POST", path) if path.starts_with("/v1/generations/") && path.ends_with("/cancel") => {
             if !identity.allows("inference:cancel:self")
                 && !identity.allows(auth::INFERENCE_CANCEL_ANY)
