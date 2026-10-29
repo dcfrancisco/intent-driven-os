@@ -1,6 +1,6 @@
 # Talvik OpenAI API Compatibility: Current Surface
 
-Date: 2026-10-28
+Date: 2026-10-29
 
 Reference baseline: [OpenAI Chat Completions API][openai-chat-reference].
 
@@ -31,7 +31,7 @@ platform-administration APIs.
 | Endpoint | Current status | Behavior and limitations |
 |---|---|---|
 | `GET /v1/models` | Partial | Returns an OpenAI-shaped `list` with model `id` and `object`, plus Talvik fields `default`, `resident`, and `estimated_memory_mib`. It does not provide the full OpenAI model metadata surface, including `created`. `GET /v1/models/{model}` is not implemented. |
-| `POST /v1/chat/completions` | Partial text and local-image subset | Supports one completion per request, non-streaming and SSE streaming. User messages may contain ordered text and bounded base64 data-URL images when a local projector is paired. Remote image URLs are rejected. Request and response differences are listed below. |
+| `POST /v1/chat/completions` | Partial text and local-image subset | Supports one completion per request, non-streaming and SSE streaming, and `response_format` JSON-object or bounded JSON Schema modes. User messages may contain ordered text and bounded base64 data-URL images when a local projector is paired. Remote image URLs are rejected. Request and response differences are listed below. |
 | `POST /v1/completions` | Partial | String `prompt` requests now use the legacy `text_completion` response and SSE chunk shapes. Prompt arrays, tools, logprobs, and other unsupported options are rejected; this is not full legacy Completions conformance. |
 | `POST /v1/embeddings` | Conditional subset | Accepts a string or an array of strings and returns an OpenAI-shaped embedding list. Availability depends on backend/model support. The current response reports zero prompt/total usage rather than measured token usage, and supports neither multimodal input nor all OpenAI embedding options. |
 | `POST /v1/responses` | Partial, text-only | Accepts string `input` and optional string `instructions`; supports standard non-streaming response objects and typed SSE events for streamed text. Input arrays/content parts, tools, continuation, and other Responses features are not implemented. |
@@ -86,11 +86,14 @@ by Talvik.
 Tool output is model/template dependent. The Windows Qwen evidence below
 qualifies only the tested model and tool prompts; cross-platform qualification
 remains open.
-The API currently does not implement `response_format`,
-`stream_options` (including `include_usage`), `logprobs`, `top_logprobs`,
-`presence_penalty`, `frequency_penalty`, or `logit_bias`; requests using these
-recognized options are rejected with a structured unsupported-feature error.
-Only `n: 1` is supported. Unknown fields can still be silently ignored.
+`response_format` supports `json_object` and a bounded strict `json_schema`
+subset (nested objects and arrays, scalar types, enums, and required
+properties). Unsupported schema keywords and combining structured output
+with tools are rejected. The API does not implement `stream_options`
+(including `include_usage`), `logprobs`, `top_logprobs`, `presence_penalty`,
+`frequency_penalty`, or `logit_bias`; requests using these recognized options
+are rejected with a structured unsupported-feature error. Only `n: 1` is
+supported. Unknown fields can still be silently ignored.
 Assistant tool-call IDs are checked against tool-result messages, and the IDs
 are preserved in the translated prompt. Tool calls are still parsed from
 template-formatted model output rather than emitted by a backend-neutral
@@ -107,6 +110,18 @@ Invalid values for validated fields such as `temperature`, `top_p`, token
 limits, `stream`, and `stop` are rejected with a structured client error.
 Talvik-specific extension fields are not all validated yet; clients should not
 assume an undocumented extension was honored.
+
+## Pending compatibility gaps
+
+| Priority | Gap | Remaining work |
+|---|---|---|
+| P0 | Current-source platform qualification | Re-run the native client workflow on Linux x86_64, macOS arm64, and Windows x86_64 for the current implementation; macOS Intel is also unqualified. The latest Windows OpenAI SDK smoke run did not enable tool probes. |
+| P0 | Responses API breadth | Responses currently accepts string input/instructions and returns text. Input arrays/content parts, tools, continuation (`previous_response_id`), response retrieval/deletion, and multimodal input remain unsupported. |
+| P0 | Parameter and stream fidelity | `n > 1`, final usage streaming, `stream_options`, log probabilities, penalties, and `logit_bias` remain unsupported. Some unknown fields may be ignored rather than rejected. |
+| P0 | Tool-call interoperability | Incremental parsing, validation, and error events have local tests, but tool generation remains model/template/prompt dependent. Re-run both SDK tool-choice/result probes against the current parser; there is no Talvik tool-execution loop or qualified IDE Agent Mode session. |
+| P1 | Model and embedding metadata | `/v1/models/{model}` is absent and model metadata is incomplete. Embeddings are text-only; usage is reported as zero, and dimensions and broader embedding options are unsupported. |
+| P1 | Media and client workflows | Image input is bounded, local-only, and requires a paired projector; native vision has only been qualified on Windows. Audio/video, image generation, third-party vision-client workflows, and IDE integration remain unqualified. |
+| P1 | HTTP transport | The server handles one request per connection and expects `Content-Length`; chunked request bodies and general HTTP keep-alive are outside the current contract. |
 
 ## Chat Completions responses
 
@@ -129,11 +144,11 @@ and `metrics` are Talvik extensions, not OpenAI schema fields.
 Streaming uses Server-Sent Events with `chat.completion.chunk` objects,
 `created` metadata, content deltas, a final finish-reason chunk, and
 `data: [DONE]`. `stream_options` and the final usage chunk are not implemented.
-When tools are supplied, generation text is buffered and normalized tool calls
-are returned after generation; this is not incremental OpenAI tool-call
-streaming. If a tool-enabled streaming request produces ordinary assistant
-text instead of a parsed tool call, that text is currently not emitted in the
-SSE response.
+When tools are supplied, Talvik incrementally parses generated tool markup and
+emits a call only after that call's bounded arguments have been completed and
+validated. This is not token-by-token argument streaming. If a tool-enabled
+request produces ordinary assistant text instead of a parsed tool call, that
+text is currently not emitted in the SSE response.
 
 ## Errors and HTTP behavior
 
@@ -201,35 +216,25 @@ conformance claim is made.
 
 ### Windows x86_64 live SDK qualification — 2026-10-29
 
-The release daemon served the local Qwen 2.5 0.5B Q4_K_M model
+The latest isolated Windows run served the local Qwen 2.5 0.5B Q4_K_M model
 (`qwen2.5-0.5b-instruct-q4_k_m`) on loopback. The official OpenAI Python SDK
 3.41.0 and JavaScript SDK 7.45.1 qualification scripts both passed with
-`TALVIK_QUALIFY_TOOLS=true`:
+`TALVIK_QUALIFY_TOOLS=false`:
 
 - Model discovery, non-streaming and SSE Chat Completions, non-streaming and
   SSE legacy Completions, and non-streaming and SSE text Responses.
-- `tool_choice` none, required, function-specific selection, and a
-  tool-call/result-message round trip.
-- A separate automatic-tool SSE probe emitted a `get_weather` tool call.
-- `/v1/embeddings` returned 896-dimensional vectors through both official SDKs.
-- A planning-style prompt returned through Chat Completions; Plan is not a
-  distinct Talvik endpoint or protocol mode.
+- The streamed Responses lifecycle and text-delta events were accepted by both
+  official SDKs.
 
-Responses SSE emitted the typed create, progress, output-item/content-part,
-text-delta, and completion events accepted by both official SDKs. An
-over-constrained automatic-tool prompt produced HTTP 502 when the model emitted
-an incomplete tool call, while the natural-language tool request passed.
-Earlier streaming `required` probes also returned 502 when this model did not
-emit a call. These failures now identify model-output error codes and do not
-emit a success terminal event. Tool generation remains model/template and
-prompt dependent; complete tool calls are validated before their deltas are
-sent, so individual call arguments are buffered until the call is complete.
-
-These are API-level tests only: Talvik transported tool calls and results but
-did not execute tools or run an autonomous agent loop. Continue 2.0.0 was
-installed but no interactive Continue session was run; Cline was not
-installed. The qualification daemon was loopback-only with HTTP authentication
-disabled, so this run does not qualify authentication or IDE integration.
+This run did not enable tool probes, test embeddings, or qualify HTTP
+authentication. Earlier Windows Qwen probes exercised required and
+function-specific tool choices and one automatic-tool SSE response, but those
+probes do not requalify the current incremental tool parser. Model-output
+failures remain explicit (including HTTP 502 when a required call is absent
+or malformed); they are not converted into fabricated successful calls.
+Talvik transports tool calls and results but does not execute tools or run an
+autonomous agent loop. No interactive Continue/Cline session has been
+qualified.
 
 ## Compatibility claim
 

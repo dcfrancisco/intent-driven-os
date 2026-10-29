@@ -1,6 +1,6 @@
 # Talvik Ollama API Compatibility
 
-Date: 2026-10-28
+Date: 2026-10-29
 
 Reference baseline: [Ollama API documentation](https://docs.ollama.com/api/introduction)
 and the linked endpoint references. ADR-0032 and WP-0109 define Talvik's
@@ -22,8 +22,8 @@ by whether a route exists.
 | `GET /api/tags` | Partial; Python client qualified | Lists registered GGUF models. Local artifact size and modification time are reported when the filesystem provides them; remote or missing files remain unknown. Talvik diagnostics add fields. |
 | `GET /api/ps` | Partial; Python client qualified | Lists actual resident models and memory snapshots. Expiration timestamps and VRAM use are not implemented. |
 | `POST /api/show` | Partial; Python client qualified | Reports known GGUF family, quantization, and registry-declared capabilities. Includes `model_info: {}` when raw metadata is unavailable. Modelfile, template, license, parameters, and raw GGUF metadata are not available. |
-| `POST /api/chat` | Partial; text client qualified, image parser/native path tested | One generation; NDJSON stream by default. User messages may provide bounded base64 images in `images` when a local projector is paired. Some Ollama options, keep-alive controls, prompt templates, thinking, and complete tool semantics are unsupported. |
-| `POST /api/generate` | Partial; text client qualified, image parser/native path tested | String prompt, system, and supported generation options; NDJSON stream by default. Bounded base64 `images` are supported when a local projector is paired. Raw mode, context reuse payloads, custom templates, suffix completion, and some standard options are unsupported. |
+| `POST /api/chat` | Partial; text client qualified, image parser/native path tested | One generation; NDJSON stream by default. User messages may provide bounded base64 images in `images` when a local projector is paired. `format: "json"` and a bounded JSON Schema subset are supported. Keep-alive controls, prompt templates, thinking, and complete tool semantics remain unsupported or unqualified. |
+| `POST /api/generate` | Partial; text client qualified, image parser/native path tested | String prompt, system, and supported generation options; NDJSON stream by default. Bounded base64 `images` and `format: "json"`/bounded JSON Schema are supported. Raw mode, context reuse payloads, custom templates, suffix completion, and some standard options are unsupported. |
 | `POST /api/embed` | Partial | String or batch text input and embeddings for models/backends that support them. Dimensions, options, truncation policy, per-call keep-alive, and measured prompt token count are not implemented. |
 | `POST /api/embeddings` | Partial legacy | Supports the legacy string `prompt` request and single-vector `embedding` response when embeddings are available. |
 | `POST /api/create` | Unsupported | No Ollama Modelfile/template build pipeline. |
@@ -55,9 +55,10 @@ returning fabricated results.
 - `options` maps `num_ctx`, `num_predict`, `temperature`, `top_p`, `top_k`,
   `seed`, and `stop` to backend-neutral generation options. Unsupported option
   names are rejected with an Ollama-shaped error.
-- `/api/chat` and `/api/generate` currently reject `keep_alive`, structured
-  `format`, custom templates, thinking controls, and raw/context modes that
-  Talvik cannot honor.
+- `/api/chat` and `/api/generate` support `format: "json"` and a bounded JSON
+  Schema subset. Unsupported schema keywords and unsupported combinations
+  fail explicitly. They still reject `keep_alive`, custom templates, thinking
+  controls, and raw/context modes that Talvik cannot honor.
 - `tools` are conditional on runtime tool support; this does not qualify every
   tool-call prompt/result round trip or Ollama tool stream behavior.
 - `total_duration`, `load_duration`, and available token counts/durations are
@@ -79,6 +80,18 @@ Registry pull/push, Modelfile create, model copy/delete, blob distribution,
 per-request `keep_alive`, exact `expires_at`, and alias/deduplication behavior
 need explicit contracts, artifact integrity, authorization, and recovery tests
 before implementation.
+
+## Pending compatibility gaps
+
+| Priority | Gap | Remaining work |
+|---|---|---|
+| P0 | Current-source client qualification | The latest native Ollama Python/JavaScript evidence is the baseline matrix run; the current local tool-stream and structured-output changes have not been re-run with those SDKs. Re-run the workflow on Linux x86_64, macOS arm64, and Windows x86_64; macOS Intel is also unqualified. |
+| P0 | Inference and streaming fidelity | Validate current NDJSON success, error, disconnect, cancellation, and terminal-record behavior with live clients. The incremental tool-call chunk path has unit coverage but no current live Ollama tool-stream qualification. |
+| P0 | Vision portability | Inline images require a paired local projector and are bounded/request-scoped. Native image inference is qualified only on Windows; Linux/macOS and third-party vision-client flows remain open. Audio and video are unsupported. |
+| P1 | Request semantics | Per-request `keep_alive`, `expires_at`, raw/context reuse, custom templates, suffix completion, thinking controls, and some Ollama options are not implemented. JSON/JSON Schema output is only a bounded subset. |
+| P1 | Model metadata and residency | `/api/show` lacks raw GGUF metadata, Modelfile, template, license, and parameters. `/api/ps` does not report Ollama expiry timestamps or VRAM use. |
+| P1 | Model lifecycle APIs | Ollama registry pull/push, Modelfile create, copy/delete, and blob endpoints are unsupported; Talvik's own raw model acquisition API is not an Ollama `/api/pull` implementation. |
+| P1 | Embeddings | Embeddings depend on backend/model support. Dimensions, truncation and broader options are unavailable; OpenAI embedding usage is not measured. |
 
 ## Qualification
 
@@ -119,10 +132,11 @@ qualifiers. Run
 [40777131756](https://github.com/dcfrancisco/intent-driven-os/actions/runs/40777131756)
 passed on Linux x86_64, macOS arm64, and Windows x86_64 at commit
 `072b06477529bfcb2ca47a6b80ca0ff1c03a7150`. The current local changes have not
-been rerun on that matrix, and the run did not include the new tool-call probe
-or macOS Intel job. The updated workflow includes both. Do not treat the
-baseline run as qualification evidence for the current uncommitted changes or
-as complete Ollama API compatibility.
+been rerun with the Ollama SDKs on that matrix, and the run did not include the
+current tool-call implementation or macOS Intel. The latest Windows OpenAI
+SDK smoke run exercised Responses streaming, not Ollama routes, and does not
+replace those Ollama checks. Do not treat the baseline run as qualification
+evidence for the current Ollama changes or as complete API compatibility.
 
 The accurate current claim is:
 

@@ -25,16 +25,17 @@ cross-platform client qualification of these local changes is still pending.
 ### Qualification update (2026-10-29)
 
 The baseline matrix run completed successfully, but it does not qualify the
-current local changes:
+current Ollama API changes. The latest Windows OpenAI SDK smoke run does not
+qualify Ollama routes. Pending work:
 
-1. Commit and push the current tool-call, per-model capability, and Windows
-   path fixes with the updated workflow.
-2. Re-run `.github/workflows/talvik-api-client-qualification.yml`; inspect the
-   job results and uploaded logs, including the tool probes.
-3. Qualify the newly added macOS Intel job in addition to the existing
-   Linux/macOS arm64/Windows matrix.
-4. Only after those gates pass, proceed to verified pull, then safe copy/delete
-   with integrity, ownership, active-use, pinning, and recovery tests.
+1. Re-run `.github/workflows/talvik-api-client-qualification.yml` on the
+   current source; inspect the Ollama Python/JavaScript results and uploaded
+   logs, including live tool-stream and failure probes.
+2. Qualify Linux x86_64, macOS arm64, Windows x86_64, and the newly added
+   macOS Intel job for the current source.
+3. Only after those gates pass, proceed to verified pull, then safe
+   copy/delete with integrity, ownership, active-use, pinning, and recovery
+   tests.
 
 The workflow installs client SDKs, creates an ephemeral test token, and
 downloads/verifies its pinned Qwen GGUF. The Windows SDK installation and
