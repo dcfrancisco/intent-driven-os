@@ -773,7 +773,7 @@ fn parse_runtime_snapshot(
         .collect::<Vec<_>>();
     let resident_models = models
         .iter()
-        .filter(|model| model.status == ModelStatus::Loaded)
+        .filter(|model| loaded_models.iter().any(|id| id == &model.id))
         .map(|model| ResidentModelSnapshot {
             id: model.id.clone(),
             memory_bytes: None,
@@ -935,6 +935,35 @@ mod tests {
         assert_eq!(snapshot.current_tokens_per_second, Some(12.5));
         assert_eq!(snapshot.loaded_context, Some(2048));
         assert_eq!(snapshot.inference_threads, Some(6));
+    }
+
+    #[test]
+    fn snapshot_parser_does_not_promote_registry_loaded_status_to_residency() {
+        let fields = parse_status_response(
+            "OK status\tHealthy\tllama.cpp\t\t\t0.1\tsha\tfalse\ttarget\trelease\tfalse\t512 MB\t0\t0\t8\ttrue\t300\t100\tllama.cpp 1.0\t\tfalse\t\t2048\t4",
+        )
+        .expect("valid status response");
+        let snapshot = super::parse_runtime_snapshot(
+            &fields,
+            &[oid_runtime::ModelMetadata {
+                id: "qwen".to_owned(),
+                name: "qwen.gguf".to_owned(),
+                family: "qwen".to_owned(),
+                backend: "talvikd".to_owned(),
+                quantization: "q4".to_owned(),
+                context_window: 4096,
+                memory_requirement_mb: 1,
+                capabilities: Vec::new(),
+                status: oid_runtime::ModelStatus::Loaded,
+                checksum: None,
+                vision_projector_location: None,
+                location: "qwen.gguf".to_owned(),
+            }],
+        )
+        .expect("parse remote snapshot");
+
+        assert!(snapshot.loaded_models.is_empty());
+        assert!(snapshot.resident_models.is_empty());
     }
 
     #[test]

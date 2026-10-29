@@ -323,6 +323,7 @@ fn handle(
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_scope_error(&mut stream, auth::MODELS_READ);
             }
+            let resident_ids = runtime.snapshot().loaded_models;
             let data = runtime
                 .model_list()
                 .into_iter()
@@ -332,7 +333,7 @@ fn handle(
                         "object": "model",
                         "owned_by": "marina",
                         "default": default_model_id.is_some_and(|id| id == model.id),
-                        "resident": matches!(model.status, oid_runtime::ModelStatus::Loaded),
+                        "resident": resident_ids.iter().any(|id| id == &model.id),
                         "estimated_memory_mib": model.memory_requirement_mb
                     })
                 })
