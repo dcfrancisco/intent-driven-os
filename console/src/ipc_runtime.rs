@@ -799,6 +799,10 @@ fn parse_runtime_snapshot(
         generating: parse_bool(&fields[20])?,
         current_tokens_per_second: parse_optional(&fields[21], "current throughput")?,
         loaded_context: parse_optional(&fields[22], "loaded context")?,
+        inference_threads: match fields.get(23) {
+            Some(value) => parse_optional(value, "inference threads")?,
+            None => None,
+        },
     })
 }
 
@@ -822,6 +826,7 @@ fn unavailable_snapshot() -> RuntimeSnapshot {
         generating: false,
         current_tokens_per_second: None,
         loaded_context: None,
+        inference_threads: None,
     }
 }
 
@@ -885,7 +890,7 @@ mod tests {
     #[test]
     fn snapshot_parser_uses_remote_runtime_metrics() {
         let fields = parse_status_response(
-            "OK status\tHealthy\tllama.cpp\tqwen\tqwen\t0.1\tsha\tfalse\ttarget\trelease\tfalse\t512 MB\t1\t1\t8\ttrue\t300\t100\tllama.cpp 1.0\t4000000\ttrue\t12.5\t2048",
+            "OK status\tHealthy\tllama.cpp\tqwen\tqwen\t0.1\tsha\tfalse\ttarget\trelease\tfalse\t512 MB\t1\t1\t8\ttrue\t300\t100\tllama.cpp 1.0\t4000000\ttrue\t12.5\t2048\t6",
         )
         .expect("valid Talvik status response");
         let snapshot = super::parse_runtime_snapshot(
@@ -919,6 +924,7 @@ mod tests {
         assert!(snapshot.generating);
         assert_eq!(snapshot.current_tokens_per_second, Some(12.5));
         assert_eq!(snapshot.loaded_context, Some(2048));
+        assert_eq!(snapshot.inference_threads, Some(6));
     }
 
     #[test]

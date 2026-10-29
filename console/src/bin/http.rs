@@ -612,7 +612,8 @@ fn compatibility_ps(runtime: &dyn RuntimeService) -> Value {
         "pending_requests": snapshot.pending_requests,
         "queue_capacity": snapshot.queue_capacity,
         "automatic_eviction": snapshot.automatic_eviction,
-        "idle_retention_seconds": snapshot.idle_retention_seconds
+        "idle_retention_seconds": snapshot.idle_retention_seconds,
+        "inference_threads": snapshot.inference_threads
     })
 }
 
@@ -2468,7 +2469,6 @@ fn validate_generation_request(
     endpoint: OpenAiGenerationEndpoint,
 ) -> Result<(), (u16, String)> {
     for field in [
-        "stream_options",
         "logprobs",
         "top_logprobs",
         "presence_penalty",
@@ -2489,6 +2489,26 @@ fn validate_generation_request(
                 ));
             }
             parse_openai_response_format(body.get("response_format"))?;
+        }
+    }
+    if let Some(options) = body.get("stream_options").filter(|value| !value.is_null()) {
+        let Some(options) = options.as_object() else {
+            return Err((400, "`stream_options` must be an object".to_owned()));
+        };
+        if let Some(field) = options.keys().find(|key| key.as_str() != "include_usage") {
+            return Err((
+                501,
+                format!("`stream_options.{field}` is not supported yet"),
+            ));
+        }
+        if options.get("include_usage").is_some_and(|value| !value.is_boolean()) {
+            return Err((400, "`stream_options.include_usage` must be a boolean".to_owned()));
+        }
+        if !body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
+            return Err((
+                400,
+                "`stream_options` is only valid when `stream` is true".to_owned(),
+            ));
         }
     }
     if let Some(value) = body.get("n") {
@@ -3290,6 +3310,30 @@ fn generate(
                         } else {
                             event
                         };
+                        write!(stream, "data: {event}\n\n")?;
+                    }
+                    let include_usage = body
+                        .pointer("/stream_options/include_usage")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if include_usage {
+                        let object = if endpoint == OpenAiGenerationEndpoint::Completions {
+                            "text_completion"
+                        } else {
+                            "chat.completion.chunk"
+                        };
+                        let event = json!({
+                            "id": result.request_id,
+                            "object": object,
+                            "created": created,
+                            "model": model,
+                            "choices": [],
+                            "usage": {
+                                "prompt_tokens": result.statistics.prompt_tokens,
+                                "completion_tokens": result.statistics.generated_tokens,
+                                "total_tokens": result.statistics.context_tokens
+                            }
+                        });
                         write!(stream, "data: {event}\n\n")?;
                     }
                     write!(stream, "data: [DONE]\n\n")?;
@@ -4381,6 +4425,27 @@ mod tests {
             .map_err(|(status, _)| status),
             Err(501)
         );
+    }
+
+    #[test]
+    fn accepts_stream_options_include_usage_only_for_streams() {
+        let chat = OpenAiGenerationEndpoint::ChatCompletions;
+        assert!(validate_generation_request(
+            &json!({"stream":true,"stream_options":{"include_usage":true}}),
+            chat
+        )
+        .is_ok());
+        for (body, status) in [
+            (json!({"stream_options":{"include_usage":true}}), 400),
+            (json!({"stream":true,"stream_options":{"include_usage":"yes"}}), 400),
+            (json!({"stream":true,"stream_options":"x"}), 400),
+            (json!({"stream":true,"stream_options":{"other":1}}), 501),
+        ] {
+            assert_eq!(
+                validate_generation_request(&body, chat).map_err(|(code, _)| code),
+                Err(status)
+            );
+        }
     }
 
     #[test]

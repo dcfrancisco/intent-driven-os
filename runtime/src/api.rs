@@ -48,6 +48,8 @@ pub struct RuntimeSnapshot {
     pub current_tokens_per_second: Option<f64>,
     /// Current context usage.
     pub loaded_context: Option<u64>,
+    /// CPU threads used for inference, when known.
+    pub inference_threads: Option<u32>,
 }
 
 /// Truthful scheduler-owned information about one resident model.

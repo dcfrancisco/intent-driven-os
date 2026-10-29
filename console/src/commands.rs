@@ -422,6 +422,12 @@ fn backend_info_lines(runtime: &dyn RuntimeService) -> Vec<String> {
             snapshot.backend_version.as_deref().unwrap_or("Unavailable")
         ),
         format!("Health  : {}", snapshot.health),
+        format!(
+            "Threads : {}",
+            snapshot
+                .inference_threads
+                .map_or_else(|| "Unavailable".to_owned(), |threads| threads.to_string())
+        ),
     ]
 }
 

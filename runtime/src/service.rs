@@ -567,6 +567,7 @@ impl RuntimeService for MarinaRuntime {
                 .is_ok_and(|active| active.is_some()),
             current_tokens_per_second: None,
             loaded_context: None,
+            inference_threads: Some(crate::config::inference_threads()),
         }
     }
 

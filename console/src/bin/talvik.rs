@@ -406,7 +406,7 @@ fn request_formatted(
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            json!({"object":"status","health":fields.get(1).copied().unwrap_or("unknown"),"backend":fields.get(2).copied().unwrap_or("unknown"),"loaded_model":fields.get(3).copied().unwrap_or(""),"loaded_models":loaded_models,"daemon_version":fields.get(5).copied().unwrap_or("unknown"),"daemon_git_sha":fields.get(6).copied().unwrap_or("unknown"),"daemon_dirty":fields.get(7).copied().unwrap_or("unknown"),"daemon_target":fields.get(8).copied().unwrap_or("unknown"),"daemon_profile":fields.get(9).copied().unwrap_or("unknown"),"version_mismatch":fields.get(10).copied().unwrap_or("unknown")})
+            json!({"object":"status","health":fields.get(1).copied().unwrap_or("unknown"),"backend":fields.get(2).copied().unwrap_or("unknown"),"loaded_model":fields.get(3).copied().unwrap_or(""),"loaded_models":loaded_models,"daemon_version":fields.get(5).copied().unwrap_or("unknown"),"daemon_git_sha":fields.get(6).copied().unwrap_or("unknown"),"daemon_dirty":fields.get(7).copied().unwrap_or("unknown"),"daemon_target":fields.get(8).copied().unwrap_or("unknown"),"daemon_profile":fields.get(9).copied().unwrap_or("unknown"),"version_mismatch":fields.get(10).copied().unwrap_or("unknown"),"inference_threads":fields.get(23).copied().unwrap_or("")})
         }
         "models" => {
             json!({"object":"list","data":values.iter().filter_map(|line| { let fields = line.split('\t').collect::<Vec<_>>(); (fields.len() >= 4).then(|| json!({"id":ipc::decode_field(fields[1]),"name":ipc::decode_field(fields[2]),"status":fields[3]})) }).collect::<Vec<_>>() })

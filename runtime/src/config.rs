@@ -110,6 +110,24 @@ pub fn talvik_home_directory() -> Option<std::path::PathBuf> {
         )
 }
 
+/// Return the number of CPU threads Talvik uses for inference.
+///
+/// `TALVIK_THREADS` overrides the default of all logical CPUs. This must stay
+/// in step with the llama.cpp adapter's thread selection.
+#[must_use]
+pub fn inference_threads() -> u32 {
+    std::env::var("TALVIK_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            std::thread::available_parallelism()
+                .ok()
+                .and_then(|count| u32::try_from(count.get()).ok())
+        })
+        .unwrap_or(0)
+}
+
 /// Return the user-scoped YAML configuration path.
 #[must_use]
 pub fn config_file() -> PathBuf {

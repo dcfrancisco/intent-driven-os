@@ -57,6 +57,10 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let listener = ipc::bind_listener()?;
     eprintln!("Model runtime listening on {}", ipc::endpoint());
+    eprintln!(
+        "Inference threads: {} (set TALVIK_THREADS to override)",
+        config::inference_threads()
+    );
     let bootstrap_runtime = Arc::clone(&runtime);
     let bootstrap_readiness = Arc::clone(&readiness);
     thread::spawn(move || {
@@ -262,7 +266,7 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
             let identity = build_info::current();
             writeln!(
                 stream,
-                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "OK status\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 snapshot.health,
                 snapshot.backend,
                 snapshot.loaded_model.clone().unwrap_or_default(),
@@ -284,7 +288,8 @@ fn handle(mut stream: ipc::TalvikStream, runtime: &dyn RuntimeService) -> std::i
                 snapshot.model_memory_bytes.map_or_else(String::new, |value| value.to_string()),
                 snapshot.generating,
                 snapshot.current_tokens_per_second.map_or_else(String::new, |value| value.to_string()),
-                snapshot.loaded_context.map_or_else(String::new, |value| value.to_string())
+                snapshot.loaded_context.map_or_else(String::new, |value| value.to_string()),
+                snapshot.inference_threads.map_or_else(String::new, |value| value.to_string())
             )?;
         }
         "tokenize" if fields.len() >= 2 => {
