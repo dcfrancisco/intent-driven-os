@@ -13,6 +13,10 @@ matrix passed Linux x86_64, macOS arm64, and Windows x86_64 at baseline commit
 The current local changes and tool-call probe have not been requalified.
 Phase 2 remains gated on a passing run for those changes and the newly added
 macOS Intel matrix job. Talvik is not yet a complete Ollama-compatible runner.
+The local HTTP implementation now incrementally parses bounded tool-call
+markup and emits Ollama-shaped NDJSON tool-call chunks; unit tests cover
+fragmented arguments, multiple calls, and the chunk schema. A live Ollama
+streaming probe for this implementation remains outstanding.
 
 ### Qualification update (2026-10-29)
 
@@ -37,7 +41,7 @@ for the handoff.
 
 | Area | Talvik today | Ollama-compatible target | Priority |
 |---|---|---|---|
-| Inference | Native `/api/chat` and `/api/generate` text subset implemented; Ollama Python client passed on Windows | Full supported option, stream, cancellation, error, and cross-platform semantics | P0 |
+| Inference | Native `/api/chat` and `/api/generate` text subset implemented; Ollama Python client passed on Windows; local incremental tool-call NDJSON path tested | Full supported option, stream, cancellation, error, live tool-stream, and cross-platform semantics | P0 |
 | Embeddings | Conditional `/api/embed`, legacy `/api/embeddings`, and `/v1/embeddings` implemented | Real-model qualification; dimensions, truncation/options, and measured OpenAI usage remain gaps | P0 |
 | Discovery/inspection | `/api/tags`, `/api/ps`, `/api/show`, `/api/version`; Python client passed on Windows | Exact metadata fields and cross-platform client qualification | P0 |
 | Residency | Load/unload and global idle-retention policy; no per-request keep-alive | Safe keep-alive/expiry contract and truthful `expires_at` | P1 |

@@ -732,11 +732,66 @@ fn generate_ollama(
         )?;
         stream.flush()?;
     }
+    let stream_tool_calls =
+        streaming && endpoint == OllamaGenerationEndpoint::Chat && tool_definitions.is_some();
+    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut streamed_tool_calls = Vec::new();
     let mut output = String::new();
     loop {
         match generation.recv() {
             Ok(GenerationMessage::Token(token)) => {
-                output.push_str(&token);
+                if let Some(parser) = tool_parser.as_mut() {
+                    let parts = match parser.push(&token) {
+                        Ok(parts) => parts,
+                        Err(message) => {
+                            generation.cancel();
+                            if !drain_cancelled_generation(&generation) {
+                                eprintln!(
+                                    "Talvik HTTP generation cleanup timed out request_id={}",
+                                    request_id
+                                );
+                            }
+                            finish_owner(owners, &request_id);
+                            return write_ndjson_line(stream, &json!({"error": message}));
+                        }
+                    };
+                    for part in parts {
+                        if let ToolStreamPart::Call { call, .. } = &part {
+                            if !tool_definitions.is_some_and(|definitions| {
+                                generated_tool_call_is_declared(call, definitions)
+                            }) {
+                                generation.cancel();
+                                if !drain_cancelled_generation(&generation) {
+                                    eprintln!(
+                                        "Talvik HTTP generation cleanup timed out request_id={}",
+                                        request_id
+                                    );
+                                }
+                                finish_owner(owners, &request_id);
+                                return write_ndjson_line(
+                                    stream,
+                                    &json!({"error": "model returned an undeclared tool name"}),
+                                );
+                            }
+                            streamed_tool_calls.push(call.clone());
+                        }
+                        if let Err(error) =
+                            write_ollama_tool_stream_part(stream, model, &created_at, part)
+                        {
+                            generation.cancel();
+                            if !drain_cancelled_generation(&generation) {
+                                eprintln!(
+                                    "Talvik HTTP generation cleanup timed out request_id={}",
+                                    request_id
+                                );
+                            }
+                            finish_owner(owners, &request_id);
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    output.push_str(&token);
+                }
                 if streaming && !tools {
                     let chunk = match endpoint {
                         OllamaGenerationEndpoint::Chat => json!({
@@ -762,8 +817,62 @@ fn generate_ollama(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
-                let tool_calls = parse_tool_calls(&output, &unique_request_id())
-                    .map(|calls| calls.iter().map(ollama_tool_call).collect::<Vec<_>>());
+                let tool_calls = if let Some(parser) = tool_parser.as_mut() {
+                    let parts = match parser.finish() {
+                        Ok(parts) => parts,
+                        Err(message) => {
+                            return write_ndjson_line(stream, &json!({"error": message}));
+                        }
+                    };
+                    for part in parts {
+                        if let ToolStreamPart::Call { call, .. } = &part {
+                            if !tool_definitions.is_some_and(|definitions| {
+                                generated_tool_call_is_declared(call, definitions)
+                            }) {
+                                return write_ndjson_line(
+                                    stream,
+                                    &json!({"error": "model returned an undeclared tool name"}),
+                                );
+                            }
+                            streamed_tool_calls.push(call.clone());
+                        }
+                        write_ollama_tool_stream_part(stream, model, &created_at, part)?;
+                    }
+                    (!streamed_tool_calls.is_empty()).then(|| {
+                        streamed_tool_calls
+                            .iter()
+                            .map(ollama_tool_call)
+                            .collect::<Vec<_>>()
+                    })
+                } else {
+                    match parse_tool_calls(&output, &unique_request_id()) {
+                        Ok(calls) => calls
+                            .map(|calls| calls.iter().map(ollama_tool_call).collect::<Vec<_>>()),
+                        Err(message) if streaming => {
+                            return write_ndjson_line(stream, &json!({"error": message}));
+                        }
+                        Err(message) => return respond_ollama_error(stream, 502, message),
+                    }
+                };
+                if tool_calls.as_ref().is_some_and(|calls| {
+                    !tool_definitions.is_some_and(|definitions| {
+                        calls
+                            .iter()
+                            .all(|call| generated_tool_call_is_declared(call, definitions))
+                    })
+                }) {
+                    if streaming {
+                        return write_ndjson_line(
+                            stream,
+                            &json!({"error": "model returned an undeclared tool name"}),
+                        );
+                    }
+                    return respond_ollama_error(
+                        stream,
+                        502,
+                        "model returned an undeclared tool name",
+                    );
+                }
                 let mut terminal = match endpoint {
                     OllamaGenerationEndpoint::Chat => json!({
                         "model": model,
@@ -783,7 +892,7 @@ fn generate_ollama(
                         "done_reason": completion_finish_reason(result.statistics.termination)
                     }),
                 };
-                if let Some(tool_calls) = tool_calls {
+                if let Some(tool_calls) = tool_calls.filter(|_| !streaming) {
                     if endpoint == OllamaGenerationEndpoint::Chat {
                         terminal["message"]["tool_calls"] = json!(tool_calls);
                     }
@@ -1067,6 +1176,120 @@ fn write_ndjson_line(stream: &mut TcpStream, value: &Value) -> std::io::Result<(
     stream.flush()
 }
 
+fn write_openai_tool_stream_part(
+    stream: &mut TcpStream,
+    request_id: &str,
+    created: u64,
+    model: &str,
+    part: ToolStreamPart,
+    headers_sent: &mut bool,
+) -> std::io::Result<()> {
+    let Some(delta) = openai_tool_stream_delta(&part, !*headers_sent) else {
+        return Ok(());
+    };
+    if !*headers_sent {
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+        )?;
+        *headers_sent = true;
+    }
+    let event = json!({
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": Value::Null}]
+    });
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
+fn openai_tool_stream_delta(part: &ToolStreamPart, include_role: bool) -> Option<Value> {
+    let mut delta = match part {
+        ToolStreamPart::Content(content) if content.is_empty() => None,
+        ToolStreamPart::Content(content) => Some(json!({"content": content})),
+        ToolStreamPart::Call { index, call } => Some(json!({
+            "tool_calls": [{
+                "index": index,
+                "id": call["id"],
+                "type": "function",
+                "function": {
+                    "name": call["function"]["name"],
+                    "arguments": call["function"]["arguments"]
+                }
+            }]
+        })),
+    }?;
+    if include_role {
+        delta["role"] = json!("assistant");
+    }
+    Some(delta)
+}
+
+fn write_openai_stream_error(
+    stream: &mut TcpStream,
+    headers_sent: bool,
+    message: &str,
+) -> std::io::Result<()> {
+    if !headers_sent {
+        return respond_error(stream, 502, message.to_owned());
+    }
+    let event = json!({"error": {"type": "server_error", "message": message}});
+    write!(stream, "data: {event}\n\ndata: [DONE]\n\n")?;
+    stream.flush()
+}
+
+fn write_ollama_tool_stream_part(
+    stream: &mut TcpStream,
+    model: &str,
+    created_at: &str,
+    part: ToolStreamPart,
+) -> std::io::Result<()> {
+    let Some(chunk) = ollama_tool_stream_chunk(model, created_at, &part) else {
+        return Ok(());
+    };
+    write_ndjson_line(stream, &chunk)
+}
+
+fn ollama_tool_stream_chunk(model: &str, created_at: &str, part: &ToolStreamPart) -> Option<Value> {
+    let message = match part {
+        ToolStreamPart::Content(content) if content.is_empty() => return None,
+        ToolStreamPart::Content(content) => json!({"role": "assistant", "content": content}),
+        ToolStreamPart::Call { call, .. } => json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [ollama_tool_call(call)]
+        }),
+    };
+    Some(json!({
+        "model": model,
+        "created_at": created_at,
+        "message": message,
+        "done": false
+    }))
+}
+
+fn generated_tool_call_is_declared(call: &Value, definitions: &[Value]) -> bool {
+    let Some(name) = call.pointer("/function/name").and_then(Value::as_str) else {
+        return false;
+    };
+    definitions.iter().any(|definition| {
+        definition.pointer("/function/name").and_then(Value::as_str) == Some(name)
+    })
+}
+
+fn validate_streamed_tool_call(
+    call: &Value,
+    previous_calls: &[Value],
+    choice: &OpenAiToolChoice,
+    parallel_tool_calls: bool,
+) -> Result<(), String> {
+    let mut calls = previous_calls.to_vec();
+    calls.push(call.clone());
+    validate_generated_tool_calls(choice, Some(&calls), parallel_tool_calls)
+}
+
 fn add_ollama_statistics(
     response: &mut Value,
     statistics: &oid_runtime::GenerationStatistics,
@@ -1149,24 +1372,175 @@ fn respond_ollama_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::R
     respond_ollama_error(stream, 403, format!("required scope: {scope}"))
 }
 
-fn parse_tool_calls(output: &str, id_prefix: &str) -> Option<Vec<Value>> {
+const TOOL_CALL_START: &str = "<tool_call>";
+const TOOL_CALL_END: &str = "</tool_call>";
+const MAX_TOOL_CALL_BYTES: usize = 64 * 1024;
+
+enum ToolStreamPart {
+    Content(String),
+    Call { index: usize, call: Value },
+}
+
+struct ToolCallStreamParser {
+    buffer: String,
+    inside_call: bool,
+    close_search_from: usize,
+    id_prefix: String,
+    next_index: usize,
+}
+
+impl ToolCallStreamParser {
+    fn new(id_prefix: String) -> Self {
+        Self {
+            buffer: String::new(),
+            inside_call: false,
+            close_search_from: 0,
+            id_prefix,
+            next_index: 0,
+        }
+    }
+
+    fn push(&mut self, chunk: &str) -> Result<Vec<ToolStreamPart>, String> {
+        self.buffer.push_str(chunk);
+        self.process_buffer()
+    }
+
+    fn finish(&mut self) -> Result<Vec<ToolStreamPart>, String> {
+        let mut parts = self.process_buffer()?;
+        if self.inside_call {
+            return Err("model ended with an incomplete tool call".to_owned());
+        }
+        if self.buffer.is_empty() {
+            return Ok(parts);
+        }
+        if TOOL_CALL_START
+            .as_bytes()
+            .starts_with(self.buffer.as_bytes())
+        {
+            return Err("model ended with an incomplete tool-call marker".to_owned());
+        }
+        let remaining = std::mem::take(&mut self.buffer);
+        if let Ok(value) = serde_json::from_str::<Value>(remaining.trim()) {
+            if value.get("name").is_some() || value.get("arguments").is_some() {
+                parts.push(self.parse_call(&value)?);
+                return Ok(parts);
+            }
+        }
+        parts.push(ToolStreamPart::Content(remaining));
+        Ok(parts)
+    }
+
+    fn process_buffer(&mut self) -> Result<Vec<ToolStreamPart>, String> {
+        let mut parts = Vec::new();
+        loop {
+            if self.inside_call {
+                let bytes = self.buffer.as_bytes();
+                if let Some(relative) = find_byte_sequence(
+                    &bytes[self.close_search_from.min(bytes.len())..],
+                    TOOL_CALL_END.as_bytes(),
+                ) {
+                    let end = self.close_search_from + relative;
+                    let value = serde_json::from_str::<Value>(&self.buffer[..end].trim())
+                        .map_err(|error| format!("malformed model tool call: {error}"))?;
+                    parts.push(self.parse_call(&value)?);
+                    self.buffer.drain(..end + TOOL_CALL_END.len());
+                    self.inside_call = false;
+                    self.close_search_from = 0;
+                    continue;
+                }
+                if self.buffer.len() > MAX_TOOL_CALL_BYTES {
+                    return Err("model tool call exceeded the 64 KiB limit".to_owned());
+                }
+                self.close_search_from = self
+                    .buffer
+                    .len()
+                    .saturating_sub(TOOL_CALL_END.len().saturating_sub(1));
+                break;
+            }
+
+            if let Some(start) = self.buffer.find(TOOL_CALL_START) {
+                if start > 0 {
+                    parts.push(ToolStreamPart::Content(self.buffer[..start].to_owned()));
+                }
+                self.buffer.drain(..start + TOOL_CALL_START.len());
+                self.inside_call = true;
+                self.close_search_from = 0;
+                continue;
+            }
+
+            let possible_marker_bytes =
+                suffix_prefix_overlap(self.buffer.as_bytes(), TOOL_CALL_START.as_bytes());
+            let safe_length = self.buffer.len().saturating_sub(possible_marker_bytes);
+            if safe_length > 0 {
+                parts.push(ToolStreamPart::Content(
+                    self.buffer.drain(..safe_length).collect(),
+                ));
+            }
+            break;
+        }
+        Ok(parts)
+    }
+
+    fn parse_call(&mut self, value: &Value) -> Result<ToolStreamPart, String> {
+        let Some(name) = value.get("name").and_then(Value::as_str) else {
+            return Err("model tool call is missing a function name".to_owned());
+        };
+        if name.is_empty()
+            || name.len() > 64
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err("model tool call has an invalid function name".to_owned());
+        }
+        let Some(arguments) = value.get("arguments") else {
+            return Err("model tool call is missing arguments".to_owned());
+        };
+        let arguments = match arguments {
+            Value::String(arguments) => serde_json::from_str::<Value>(arguments)
+                .map_err(|error| format!("model tool call arguments are invalid JSON: {error}"))?,
+            arguments => arguments.clone(),
+        };
+        if !arguments.is_object() {
+            return Err("model tool call arguments must be a JSON object".to_owned());
+        }
+        let normalized = normalize_tool_call(
+            &json!({"name": name, "arguments": arguments}),
+            &self.id_prefix,
+            self.next_index,
+        );
+        let index = self.next_index;
+        self.next_index += 1;
+        Ok(ToolStreamPart::Call {
+            index,
+            call: normalized,
+        })
+    }
+}
+
+fn find_byte_sequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn suffix_prefix_overlap(value: &[u8], marker: &[u8]) -> usize {
+    let maximum = value.len().min(marker.len().saturating_sub(1));
+    (1..=maximum)
+        .rev()
+        .find(|length| value[value.len() - length..] == marker[..*length])
+        .unwrap_or(0)
+}
+
+fn parse_tool_calls(output: &str, id_prefix: &str) -> Result<Option<Vec<Value>>, String> {
+    let mut parser = ToolCallStreamParser::new(id_prefix.to_owned());
     let mut calls = Vec::new();
-    let mut remainder = output;
-    while let Some(start) = remainder.find("<tool_call>") {
-        let after_start = &remainder[start + "<tool_call>".len()..];
-        let end = after_start.find("</tool_call>")?;
-        let value: Value = serde_json::from_str(after_start[..end].trim()).ok()?;
-        calls.push(normalize_tool_call(&value, id_prefix, calls.len()));
-        remainder = &after_start[end + "</tool_call>".len()..];
+    for part in parser.push(output)?.into_iter().chain(parser.finish()?) {
+        if let ToolStreamPart::Call { call, .. } = part {
+            calls.push(call);
+        }
     }
-    if !calls.is_empty() {
-        return Some(calls);
-    }
-    let value: Value = serde_json::from_str(output.trim()).ok()?;
-    if value.get("name").is_some() && value.get("arguments").is_some() {
-        return Some(vec![normalize_tool_call(&value, id_prefix, 0)]);
-    }
-    None
+    Ok((!calls.is_empty()).then_some(calls))
 }
 
 fn normalize_tool_call(value: &Value, id_prefix: &str, index: usize) -> Value {
@@ -1827,6 +2201,11 @@ fn generate(
     }
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let defer_stream_headers = streaming && tool_definitions.is_some();
+    let stream_tool_calls = streaming
+        && endpoint == OpenAiGenerationEndpoint::ChatCompletions
+        && tool_definitions.is_some();
+    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut streamed_tool_calls = Vec::new();
     let mut stream_headers_sent = false;
     if streaming && !defer_stream_headers {
         write!(
@@ -1856,7 +2235,79 @@ fn generate(
         );
         match message {
             Ok(GenerationMessage::Token(token)) => {
-                output.push_str(&token);
+                if let Some(parser) = tool_parser.as_mut() {
+                    let parts = match parser.push(&token) {
+                        Ok(parts) => parts,
+                        Err(message) => {
+                            generation.cancel();
+                            if !drain_cancelled_generation(&generation) {
+                                eprintln!(
+                                    "Talvik HTTP generation cleanup timed out request_id={}",
+                                    request_id
+                                );
+                            }
+                            finish_owner(owners, &request_id);
+                            return write_openai_stream_error(
+                                stream,
+                                stream_headers_sent,
+                                &message,
+                            );
+                        }
+                    };
+                    for part in parts {
+                        if let ToolStreamPart::Call { call, .. } = &part {
+                            let validation = tool_definitions
+                                .filter(|definitions| {
+                                    generated_tool_call_is_declared(call, definitions)
+                                })
+                                .ok_or_else(|| "model returned an undeclared tool name".to_owned())
+                                .and_then(|_| {
+                                    validate_streamed_tool_call(
+                                        call,
+                                        &streamed_tool_calls,
+                                        &tool_choice,
+                                        parallel_tool_calls,
+                                    )
+                                });
+                            if let Err(message) = validation {
+                                generation.cancel();
+                                if !drain_cancelled_generation(&generation) {
+                                    eprintln!(
+                                        "Talvik HTTP generation cleanup timed out request_id={}",
+                                        request_id
+                                    );
+                                }
+                                finish_owner(owners, &request_id);
+                                return write_openai_stream_error(
+                                    stream,
+                                    stream_headers_sent,
+                                    &message,
+                                );
+                            }
+                            streamed_tool_calls.push(call.clone());
+                        }
+                        if let Err(error) = write_openai_tool_stream_part(
+                            stream,
+                            &request_id,
+                            created,
+                            model,
+                            part,
+                            &mut stream_headers_sent,
+                        ) {
+                            generation.cancel();
+                            if !drain_cancelled_generation(&generation) {
+                                eprintln!(
+                                    "Talvik HTTP generation cleanup timed out request_id={}",
+                                    request_id
+                                );
+                            }
+                            finish_owner(owners, &request_id);
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    output.push_str(&token);
+                }
                 if streaming && tool_definitions.is_none() {
                     let event = match endpoint {
                         OpenAiGenerationEndpoint::ChatCompletions => json!({
@@ -1896,16 +2347,88 @@ fn generate(
                 let tool_calls = if endpoint == OpenAiGenerationEndpoint::ChatCompletions
                     && tool_definitions.is_some()
                 {
-                    parse_tool_calls(&output, &unique_request_id())
+                    if let Some(parser) = tool_parser.as_mut() {
+                        let parts = match parser.finish() {
+                            Ok(parts) => parts,
+                            Err(message) => {
+                                return write_openai_stream_error(
+                                    stream,
+                                    stream_headers_sent,
+                                    &message,
+                                );
+                            }
+                        };
+                        for part in parts {
+                            if let ToolStreamPart::Call { call, .. } = &part {
+                                let validation = tool_definitions
+                                    .filter(|definitions| {
+                                        generated_tool_call_is_declared(call, definitions)
+                                    })
+                                    .ok_or_else(|| {
+                                        "model returned an undeclared tool name".to_owned()
+                                    })
+                                    .and_then(|_| {
+                                        validate_streamed_tool_call(
+                                            call,
+                                            &streamed_tool_calls,
+                                            &tool_choice,
+                                            parallel_tool_calls,
+                                        )
+                                    });
+                                if let Err(message) = validation {
+                                    return write_openai_stream_error(
+                                        stream,
+                                        stream_headers_sent,
+                                        &message,
+                                    );
+                                }
+                                streamed_tool_calls.push(call.clone());
+                            }
+                            if let Err(error) = write_openai_tool_stream_part(
+                                stream,
+                                &request_id,
+                                created,
+                                model,
+                                part,
+                                &mut stream_headers_sent,
+                            ) {
+                                return Err(error);
+                            }
+                        }
+                        (!streamed_tool_calls.is_empty()).then(|| streamed_tool_calls.clone())
+                    } else {
+                        match parse_tool_calls(&output, &unique_request_id()) {
+                            Ok(calls) => calls,
+                            Err(message) => return respond_error(stream, 502, message),
+                        }
+                    }
                 } else {
                     None
                 };
+                if tool_calls.as_ref().is_some_and(|calls| {
+                    !tool_definitions.is_some_and(|definitions| {
+                        calls
+                            .iter()
+                            .all(|call| generated_tool_call_is_declared(call, definitions))
+                    })
+                }) {
+                    let message = "model returned an undeclared tool name";
+                    return if streaming {
+                        write_openai_stream_error(stream, stream_headers_sent, message)
+                    } else {
+                        respond_error(stream, 502, message.to_owned())
+                    };
+                }
                 if let Err(message) = validate_generated_tool_calls(
                     &tool_choice,
                     tool_calls.as_deref(),
                     parallel_tool_calls,
                 ) {
-                    return respond_error(stream, 502, message);
+                    return if streaming {
+                        write_openai_stream_error(stream, stream_headers_sent, &message)
+                    } else {
+                        respond_error(stream, 502, message)
+                    };
                 }
                 if endpoint == OpenAiGenerationEndpoint::Responses {
                     let usage = result.statistics.metrics_known.then(|| {
@@ -1964,7 +2487,8 @@ fn generate(
                         )?;
                         stream.flush()?;
                     }
-                    if let Some(tool_calls) = tool_calls.as_ref() {
+                    if let Some(tool_calls) = tool_calls.as_ref().filter(|_| tool_parser.is_none())
+                    {
                         let event = json!({
                             "id": result.request_id,
                             "object": "chat.completion.chunk",
@@ -1988,7 +2512,11 @@ fn generate(
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": if tool_calls.is_some() {"tool_calls"} else {finish_reason}
+                            }],
                             "termination_reason": termination_reason
                         });
                         let event = if tool_definitions.is_some() && !output.is_empty() {
@@ -2387,11 +2915,13 @@ mod tests {
     use super::{
         add_ollama_statistics, build_chat_prompt, build_completion_prompt, build_response_prompt,
         completion_finish_reason, completion_termination_reason, generation_options, iso8601_now,
-        ollama_generation_options, ollama_prompt, ollama_tool_call, parse_tool_calls,
-        request_body_size_is_allowed, validate_generated_tool_calls, validate_generation_request,
-        validate_ollama_generation_request, validate_openai_tool_history, GenerationTermination,
-        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, MAX_CONTEXT_TOKENS,
-        MAX_REQUEST_BODY_BYTES,
+        ollama_generation_options, ollama_prompt, ollama_tool_call, ollama_tool_stream_chunk,
+        openai_tool_stream_delta, parse_tool_calls, request_body_size_is_allowed,
+        validate_generated_tool_calls, validate_generation_request,
+        validate_ollama_generation_request, validate_openai_tool_history,
+        validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
+        OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
+        MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
     use serde_json::json;
 
@@ -2412,6 +2942,7 @@ mod tests {
             r#"<tool_call>{"name":"get_weather","arguments":{"city":"Manila"}}</tool_call>"#,
             "request-1",
         )
+        .expect("valid tool output")
         .expect("tool call");
         assert_eq!(calls[0]["id"], "call_request-1_0");
         assert_eq!(calls[0]["type"], "function");
@@ -2428,9 +2959,177 @@ mod tests {
             ),
             "request-2",
         )
+        .expect("valid tool output")
         .expect("tool calls");
         assert_eq!(calls[0]["id"], "call_request-2_0");
         assert_eq!(calls[1]["id"], "call_request-2_1");
+    }
+
+    #[test]
+    fn streams_split_tool_markers_without_leaking_them() {
+        let mut parser = ToolCallStreamParser::new("stream-1".to_owned());
+        let mut parts = parser.push("before λ<tool_").expect("first chunk");
+        parts.extend(
+            parser
+                .push("call>{\"name\":\"weather\",\"arguments\":{\"city\":\"Manila\"}}</tool_")
+                .expect("second chunk"),
+        );
+        parts.extend(parser.push("call>after").expect("third chunk"));
+        parts.extend(parser.finish().expect("finished stream"));
+
+        assert!(matches!(&parts[0], ToolStreamPart::Content(text) if text == "before λ"));
+        let ToolStreamPart::Call { index, call } = &parts[1] else {
+            panic!("expected parsed tool call");
+        };
+        assert_eq!(*index, 0);
+        assert_eq!(call["id"], "call_stream-1_0");
+        assert_eq!(call["function"]["name"], "weather");
+        assert_eq!(call["function"]["arguments"], r#"{"city":"Manila"}"#);
+        assert!(matches!(&parts[2], ToolStreamPart::Content(text) if text == "after"));
+    }
+
+    #[test]
+    fn parses_fragmented_arguments_and_multiple_tool_calls() {
+        let mut parser = ToolCallStreamParser::new("fragments".to_owned());
+        let mut parts = Vec::new();
+        for fragment in [
+            "<tool_call>{\"name\":\"search\",",
+            "\"arguments\":{\"query\":\"a\\\"b 世界\"}}</tool_call><tool_call>",
+            "{\"name\":\"clock\",\"arguments\":",
+            "{\"timezone\":\"UTC\"}}</tool_call>",
+        ] {
+            parts.extend(parser.push(fragment).expect("fragment"));
+        }
+        parts.extend(parser.finish().expect("finished fragments"));
+        let calls = parts
+            .into_iter()
+            .filter_map(|part| match part {
+                ToolStreamPart::Call { index, call } => Some((index, call)),
+                ToolStreamPart::Content(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, 0);
+        assert_eq!(calls[0].1["id"], "call_fragments_0");
+        assert_eq!(
+            calls[0].1["function"]["arguments"],
+            r#"{"query":"a\"b 世界"}"#
+        );
+        assert_eq!(calls[1].0, 1);
+        assert_eq!(calls[1].1["id"], "call_fragments_1");
+        assert_eq!(calls[1].1["function"]["name"], "clock");
+    }
+
+    #[test]
+    fn serializes_openai_tool_call_stream_deltas() {
+        let call = json!({
+            "id": "call_stream_0",
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"Manila\"}"
+            }
+        });
+        assert_eq!(
+            openai_tool_stream_delta(&ToolStreamPart::Call { index: 0, call }, true),
+            Some(json!({"tool_calls":[{
+                "index":0,
+                "id":"call_stream_0",
+                "type":"function",
+                "function":{"name":"weather","arguments":"{\"city\":\"Manila\"}"}
+            }],"role":"assistant"}))
+        );
+    }
+
+    #[test]
+    fn validates_streamed_calls_before_emitting_them() {
+        let first = json!({"function":{"name":"first","arguments":"{}"}});
+        let second = json!({"function":{"name":"second","arguments":"{}"}});
+        assert_eq!(
+            validate_streamed_tool_call(
+                &first,
+                &[],
+                &OpenAiToolChoice::Function("first".to_owned()),
+                true
+            ),
+            Ok(())
+        );
+        assert!(validate_streamed_tool_call(
+            &second,
+            &[],
+            &OpenAiToolChoice::Function("first".to_owned()),
+            true
+        )
+        .is_err());
+        assert!(
+            validate_streamed_tool_call(&second, &[first], &OpenAiToolChoice::Auto, false).is_err()
+        );
+    }
+
+    #[test]
+    fn serializes_ollama_tool_stream_chunks_natively() {
+        let call = json!({
+            "id": "call_stream_0",
+            "type": "function",
+            "function": {
+                "name": "weather",
+                "arguments": "{\"city\":\"Manila\"}"
+            }
+        });
+        assert_eq!(
+            ollama_tool_stream_chunk(
+                "qwen",
+                "2026-10-29T00:00:00Z",
+                &ToolStreamPart::Call { index: 0, call }
+            ),
+            Some(json!({
+                "model":"qwen",
+                "created_at":"2026-10-29T00:00:00Z",
+                "message":{
+                    "role":"assistant",
+                    "content":"",
+                    "tool_calls":[{"function":{"name":"weather","arguments":{"city":"Manila"}}}]
+                },
+                "done":false
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_and_incomplete_streamed_tool_calls() {
+        let mut malformed = ToolCallStreamParser::new("malformed".to_owned());
+        assert!(malformed.push("<tool_call>{not-json}</tool_call>").is_err());
+
+        let mut incomplete_call = ToolCallStreamParser::new("incomplete".to_owned());
+        assert!(incomplete_call
+            .push("<tool_call>{\"name\":\"weather\"}")
+            .is_ok());
+        assert!(incomplete_call.finish().is_err());
+
+        let mut incomplete_marker = ToolCallStreamParser::new("marker".to_owned());
+        assert!(incomplete_marker.push("text<tool_").is_ok());
+        assert!(incomplete_marker.finish().is_err());
+    }
+
+    #[test]
+    fn bounds_streamed_tool_call_size() {
+        let mut parser = ToolCallStreamParser::new("oversized".to_owned());
+        let oversized = format!("<tool_call>{}", "x".repeat(MAX_TOOL_CALL_BYTES + 1));
+        assert!(parser.push(&oversized).is_err());
+    }
+
+    #[test]
+    fn preserves_ordinary_unicode_output_when_no_tool_call_is_present() {
+        let output = "Hello, 世界 🌍";
+        assert_eq!(
+            parse_tool_calls(output, "plain").expect("valid output"),
+            None
+        );
+
+        let mut parser = ToolCallStreamParser::new("plain".to_owned());
+        let mut parts = parser.push(output).expect("content");
+        parts.extend(parser.finish().expect("finish"));
+        assert!(matches!(&parts[..], [ToolStreamPart::Content(text)] if text == output));
     }
 
     #[test]

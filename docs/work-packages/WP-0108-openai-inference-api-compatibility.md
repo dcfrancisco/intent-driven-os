@@ -16,9 +16,13 @@ a non-streaming text-only `/v1/responses` path. Chat Completions now accepts
 assistant/tool-result prompt translation, and rejects unmatched or
 name-mismatched tool results. Required and function-specific choices are
 prompted and validated against model output; `parallel_tool_calls: false`
-enforces a single-call limit. Incremental tool-call streaming, Responses
-streaming/continuation, and multimodal inputs remain unimplemented. Forced
-tool behavior is model dependent and awaits live qualification.
+enforces a single-call limit. Chat Completions now incrementally parses
+bounded tool-call markup across generation chunks, validates each completed
+call before emitting it, and streams OpenAI-shaped tool-call deltas. Local
+tests cover fragmented markers and arguments, escaped Unicode, multiple calls,
+invalid/incomplete/oversized calls, and SSE delta shape. Responses
+streaming/continuation and multimodal inputs remain unimplemented. Forced tool
+behavior and the new streaming path await live model and SDK qualification.
 
 The Python and JavaScript qualifiers exercise automatic, required, and
 function-specific tool choices, single-call behavior, and the tool-call/result
@@ -41,10 +45,12 @@ A native Windows release build succeeded with the installed llama.cpp DLLs.
 Raw HTTP requests to local Qwen 2.5 0.5B passed non-streaming required and
 function-specific choice with `parallel_tool_calls: false`, each returning
 one `get_weather` call. One streaming `auto` request returned a tool-call
-chunk and `[DONE]`; calls are still buffered, not incremental. Two streaming
-required-choice attempts returned a structured 502 because the model emitted
-no tool call. The API correctly avoided a success-shaped text fallback;
-forced-stream reliability and official SDK qualification remain open.
+chunk and `[DONE]`; that probe predates the incremental parser. The current
+local implementation emits validated completed calls during generation, but
+has not yet been live-probed. Two streaming required-choice attempts returned
+a structured 502 because the model emitted no tool call. The API correctly
+avoided a success-shaped text fallback; forced-stream reliability and official
+SDK qualification remain open.
 
 ## Purpose
 
