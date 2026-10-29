@@ -7,6 +7,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod structured_output;
+
+pub use structured_output::StructuredOutput;
+
 use std::fmt;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -123,6 +127,8 @@ pub struct GenerationRequest {
     pub seed: Option<u32>,
     /// Explicit strings that terminate generation without being emitted.
     pub stop_sequences: Vec<String>,
+    /// Optional backend-neutral JSON output constraint.
+    pub structured_output: Option<StructuredOutput>,
 }
 
 impl GenerationRequest {
@@ -161,6 +167,11 @@ impl GenerationRequest {
             return Err(ModelRunnerError::InvalidRequest(
                 "context size must be greater than zero".to_owned(),
             ));
+        }
+        if let Some(structured_output) = &self.structured_output {
+            structured_output
+                .validate()
+                .map_err(ModelRunnerError::InvalidRequest)?;
         }
         Ok(())
     }

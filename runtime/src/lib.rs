@@ -34,5 +34,6 @@ pub use generation::{
 pub use hardware::{HardwareService, HardwareSnapshot};
 pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
+pub use oid_model_runner::StructuredOutput;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
 pub use service::{MarinaRuntime, ResourcePolicy};

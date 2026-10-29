@@ -16,7 +16,11 @@ macOS Intel matrix job. Talvik is not yet a complete Ollama-compatible runner.
 The local HTTP implementation now incrementally parses bounded tool-call
 markup and emits Ollama-shaped NDJSON tool-call chunks; unit tests cover
 fragmented arguments, multiple calls, and the chunk schema. A live Ollama
-streaming probe for this implementation remains outstanding.
+streaming probe for this implementation remains outstanding. The HTTP API also
+supports `format: "json"` and the supported JSON Schema subset through the
+backend-neutral structured-output contract. Windows native Qwen qualification
+passed JSON-object and nested-schema generation, cancellation, and recovery;
+cross-platform client qualification of these local changes is still pending.
 
 ### Qualification update (2026-10-29)
 
@@ -47,7 +51,7 @@ for the handoff.
 | Residency | Load/unload and global idle-retention policy; no per-request keep-alive | Safe keep-alive/expiry contract and truthful `expires_at` | P1 |
 | Artifact acquisition | Internal raw local/URL GGUF import with checksum | Ollama registry pull/progress and manifest semantics | P1 |
 | Model definition/replication | No Modelfile, copy, push, or blob API | Create/copy/push/delete/blob flows, persistent manifest and artifact integrity | P1 |
-| Model capability | CPU-first GGUF text generation; conditional embeddings/tools | Capability-aware options and modality-specific endpoints; no false capability claims | P1 |
+| Model capability | CPU-first GGUF text generation; conditional embeddings/tools; constrained JSON object/schema generation through the llama.cpp adapter | Capability-aware options and modality-specific endpoints; schema subset and cross-platform qualification remain limited; no false capability claims | P1 |
 | Transport/errors | Native HTTP; request-per-connection; partial error mapping | NDJSON framing, Ollama error body, streaming failures, request limits and cancellation behavior | P0 |
 | Qualification | Baseline native run passed Ollama Python/JavaScript inference and OpenAI/Ollama embedding checks on Linux x86_64, macOS arm64, and Windows x86_64 | Current-change and macOS Intel evidence, plus raw endpoint/stream fixtures | P0 |
 
@@ -120,8 +124,11 @@ for the handoff.
 
 ### Separate future slice: capability expansion
 
-- Add image/audio/tool/structured-output/thinking support only through
-  backend-neutral capability contracts and qualified native backends.
+- Structured JSON output is implemented for the current text-generation path;
+  its JSON Schema subset and native qualification are documented above. Broader
+  schema coverage and cross-platform client qualification remain open.
+- Add image/audio/thinking support only through backend-neutral capability
+  contracts and qualified native backends.
 - Return explicit unsupported-capability errors for models that lack support.
 
 ## Non-goals

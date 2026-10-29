@@ -206,6 +206,7 @@ fn chat(
                 context_size: 4096,
                 ..GenerationOptions::default()
             },
+            structured_output: None,
         })
         .map_err(|error| ModelClientError::Unavailable(error.to_string()))?;
     loop {

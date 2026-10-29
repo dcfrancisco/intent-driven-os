@@ -119,6 +119,10 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))
     }
 
+    fn supports_structured_output(&self) -> bool {
+        LlamaCppModelRunner::native_available()
+    }
+
     fn generate_stream(
         &self,
         request: &GenerationRequest,
@@ -164,6 +168,7 @@ impl Backend for LlamaCppAdapter {
             context_size: request.options.context_size,
             seed: Some(request.options.seed),
             stop_sequences: request.options.stop_sequences.clone(),
+            structured_output: request.structured_output.clone(),
         };
         let stream = self
             .runner

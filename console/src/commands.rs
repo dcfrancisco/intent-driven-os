@@ -442,6 +442,7 @@ fn generate_lines_result_with_interrupt(
         )?,
         prompt: prompt.to_owned(),
         options,
+        structured_output: None,
     };
     let stream = runtime.generate(request)?;
     let mut lines = vec!["Generating...".to_owned()];

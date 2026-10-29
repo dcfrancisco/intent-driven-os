@@ -29,6 +29,16 @@ function-specific tool choices, single-call behavior, and the tool-call/result
 round trip. The updated code and workflow still require a successful run
 before this behavior is considered qualified.
 
+Chat Completions now supports `response_format` JSON-object mode and strict
+`json_schema` mode. The shared schema subset covers nested objects and arrays,
+scalar types and enums, and required properties, with explicit complexity
+bounds; unsupported schema keywords and combining structured output with
+tools are rejected. The llama.cpp adapter compiles these constraints to a
+per-request grammar and validates completed output. A Windows native Qwen
+qualification passed JSON-object and nested-schema output, cancellation, and a
+successful recovery request. Official SDK and cross-platform qualification of
+these changes remains outstanding; this does not complete the OpenAI profile.
+
 ### Qualification update (2026-10-29)
 
 The native matrix passed Linux x86_64, macOS arm64, and Windows x86_64 at

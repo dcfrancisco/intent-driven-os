@@ -62,6 +62,8 @@ pub struct GenerationRequest {
     pub input: String,
     /// Sampling and context options.
     pub options: GenerationOptions,
+    /// Optional backend-neutral JSON output constraint.
+    pub structured_output: Option<oid_model_runner::StructuredOutput>,
 }
 
 /// One backend-neutral streamed output item.
@@ -147,6 +149,11 @@ pub trait Backend: Send + Sync {
     fn reset_context(&self, _model_id: &str) -> Result<(), RuntimeError> {
         Err(RuntimeError::NotImplemented("context reset"))
     }
+    /// Report whether the backend enforces constrained JSON output.
+    #[must_use]
+    fn supports_structured_output(&self) -> bool {
+        false
+    }
     /// Generate backend-neutral streaming chunks.
     ///
     /// # Errors
@@ -167,6 +174,9 @@ pub trait Backend: Send + Sync {
         callback: &mut dyn FnMut(&str) -> bool,
         cancellation: &AtomicBool,
     ) -> Result<GenerationStatistics, RuntimeError> {
+        if request.structured_output.is_some() {
+            return Err(RuntimeError::NotImplemented("structured output"));
+        }
         let chunks = self.generate_stream(request)?;
         let mut generated_tokens = 0_u64;
         for chunk in chunks {
@@ -474,6 +484,9 @@ impl BackendManager {
                     .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?,
             )
         };
+        if request.structured_output.is_some() && !backend.supports_structured_output() {
+            return Err(RuntimeError::NotImplemented("structured output"));
+        }
         backend.generate_streaming(request, callback, cancellation)
     }
 
@@ -782,6 +795,7 @@ mod tests {
             model_id: "demo".to_owned(),
             input: "hello".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let mut output = String::new();
         let statistics = manager
@@ -808,6 +822,7 @@ mod tests {
             model_id: "demo".to_owned(),
             input: "hello".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let started = Arc::new(std::sync::Barrier::new(2));
         let resume = Arc::new(std::sync::Barrier::new(2));
@@ -864,6 +879,7 @@ mod tests {
             model_id: "controlled".to_owned(),
             input: "long request".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let cancellation = Arc::new(AtomicBool::new(false));
         let worker_manager = manager.clone();
@@ -890,6 +906,7 @@ mod tests {
             model_id: "controlled".to_owned(),
             input: "recovery".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let mut tokens = 0;
         manager

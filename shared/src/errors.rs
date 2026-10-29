@@ -5,6 +5,8 @@ use std::fmt;
 /// Errors that can cross the initial runtime boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
+    /// A runtime operation received an invalid request.
+    InvalidRequest(String),
     /// Configuration failed validation.
     InvalidConfiguration(String),
     /// A lifecycle transition is not valid.
@@ -52,6 +54,7 @@ pub enum RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidRequest(message) => write!(formatter, "invalid request: {message}"),
             Self::InvalidConfiguration(message) => {
                 write!(formatter, "invalid configuration: {message}")
             }

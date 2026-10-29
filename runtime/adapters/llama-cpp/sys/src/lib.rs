@@ -236,6 +236,11 @@ mod ffi {
         pub fn llama_sampler_chain_default_params() -> SamplerChainParams;
         pub fn llama_sampler_chain_init(params: SamplerChainParams) -> *mut c_void;
         pub fn llama_sampler_chain_add(chain: *mut c_void, sampler: *mut c_void);
+        pub fn llama_sampler_init_grammar(
+            vocab: *const c_void,
+            grammar_str: *const c_char,
+            grammar_root: *const c_char,
+        ) -> *mut c_void;
         pub fn llama_sampler_init_top_k(k: i32) -> *mut c_void;
         pub fn llama_sampler_init_top_p(p: f32, min_keep: usize) -> *mut c_void;
         pub fn llama_sampler_init_temp(t: f32) -> *mut c_void;
@@ -247,7 +252,6 @@ mod ffi {
         ) -> *mut c_void;
         pub fn llama_sampler_init_dist(seed: u32) -> *mut c_void;
         pub fn llama_sampler_sample(sampler: *mut c_void, ctx: *mut c_void, idx: i32) -> i32;
-        pub fn llama_sampler_accept(sampler: *mut c_void, token: i32);
         pub fn llama_sampler_free(sampler: *mut c_void);
         pub fn llama_vocab_is_eog(vocab: *const c_void, token: i32) -> bool;
         pub fn llama_token_to_piece(
@@ -820,6 +824,44 @@ impl NativeModel {
         top_k: i32,
         seed: u32,
         stop_sequences: &[String],
+        callback: F,
+        cancelled: &AtomicBool,
+    ) -> Result<NativeGenerationStatistics, String>
+    where
+        F: FnMut(&str) -> bool,
+    {
+        self.generate_stream_with_grammar(
+            prompt,
+            context_size,
+            max_tokens,
+            temperature,
+            top_p,
+            top_k,
+            seed,
+            stop_sequences,
+            None,
+            callback,
+            cancelled,
+        )
+    }
+
+    /// Generate tokens under an optional native GBNF decoding constraint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when context creation, decoding, sampling, or native
+    /// linking fails.
+    pub fn generate_stream_with_grammar<F>(
+        &self,
+        prompt: &str,
+        context_size: u32,
+        max_tokens: u32,
+        temperature: f32,
+        top_p: f32,
+        top_k: i32,
+        seed: u32,
+        stop_sequences: &[String],
+        grammar: Option<&str>,
         mut callback: F,
         cancelled: &AtomicBool,
     ) -> Result<NativeGenerationStatistics, String>
@@ -837,6 +879,7 @@ impl NativeModel {
                 top_k,
                 seed,
                 stop_sequences,
+                grammar,
                 callback,
                 cancelled,
             );
@@ -943,13 +986,29 @@ impl NativeModel {
                 .relay
                 .as_ref();
             let _cancellation_guard = CancellationGuard(std::ptr::from_ref(relay));
+            let grammar_source = grammar
+                .map(CString::new)
+                .transpose()
+                .map_err(|_| "structured-output grammar contains NUL".to_owned())?;
+            let grammar_root = CString::new("root").expect("static grammar root has no NUL");
             let sampler_params = unsafe { ffi::llama_sampler_chain_default_params() };
             let sampler = unsafe { ffi::llama_sampler_chain_init(sampler_params) };
             if sampler.is_null() {
                 invalidate_context(&mut persistent);
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
-            let samplers = unsafe {
+            let mut samplers = Vec::with_capacity(6);
+            if let Some(grammar_source) = grammar_source.as_ref() {
+                let vocabulary = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
+                samplers.push(unsafe {
+                    ffi::llama_sampler_init_grammar(
+                        vocabulary,
+                        grammar_source.as_ptr(),
+                        grammar_root.as_ptr(),
+                    )
+                });
+            }
+            samplers.extend(unsafe {
                 [
                     ffi::llama_sampler_init_top_k(top_k),
                     ffi::llama_sampler_init_top_p(top_p, 1),
@@ -961,7 +1020,7 @@ impl NativeModel {
                     ffi::llama_sampler_init_temp(temperature),
                     ffi::llama_sampler_init_dist(seed),
                 ]
-            };
+            });
             if samplers.iter().any(|sampler| sampler.is_null()) {
                 unsafe {
                     for sampler in samplers {
@@ -1062,9 +1121,6 @@ impl NativeModel {
                 generated += 1;
                 if terminal {
                     break;
-                }
-                unsafe {
-                    ffi::llama_sampler_accept(sampler, token);
                 }
                 if generated >= u64::from(max_tokens) {
                     termination = NativeGenerationTermination::Length;

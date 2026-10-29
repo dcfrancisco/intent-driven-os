@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 oid-model-runner = { path = "../../../crates/model-runner" }
 oid-llama-cpp-sys = { path = "sys" }
+serde_json = "1"
 
 [lints]
 workspace = true

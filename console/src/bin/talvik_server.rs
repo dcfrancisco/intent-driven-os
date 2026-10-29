@@ -283,6 +283,7 @@ fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String
                     max_tokens,
                     ..Default::default()
                 },
+                structured_output: None,
             })
         }
         "generate_v2" if fields.len() >= 11 => {
@@ -313,6 +314,7 @@ fn parse_generation_request(fields: &[&str]) -> Result<GenerationRequest, String
                     context_size,
                     stop_sequences,
                 },
+                structured_output: None,
             })
         }
         _ => Err("invalid generation request".to_owned()),

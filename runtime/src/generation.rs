@@ -1,5 +1,6 @@
 //! Backend-neutral generation requests, streams, and metrics.
 
+use oid_model_runner::StructuredOutput;
 use oid_shared::RuntimeError;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -50,6 +51,8 @@ pub struct GenerationRequest {
     pub prompt: String,
     /// Generation options.
     pub options: GenerationOptions,
+    /// Optional backend-neutral JSON output constraint.
+    pub structured_output: Option<StructuredOutput>,
 }
 
 /// Generation performance measurements.

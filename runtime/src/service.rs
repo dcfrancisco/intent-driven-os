@@ -781,6 +781,11 @@ impl RuntimeService for MarinaRuntime {
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, RuntimeError> {
+        if let Some(structured_output) = &request.structured_output {
+            structured_output
+                .validate()
+                .map_err(RuntimeError::InvalidRequest)?;
+        }
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
         if self
@@ -841,6 +846,7 @@ impl RuntimeService for MarinaRuntime {
                 model_id: request.model_id.clone(),
                 input: request.prompt.clone(),
                 options: request.options.clone(),
+                structured_output: request.structured_output.clone(),
             };
             let mut generated = String::new();
             let mut generated_tokens = 0_u64;
@@ -1364,6 +1370,7 @@ mod tests {
             model_id: "model".to_owned(),
             prompt: "prompt".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         };
         let queued = runtime
             .generate(request("queued"))
@@ -1507,6 +1514,7 @@ mod tests {
             model_id: "beta".to_owned(),
             prompt: "hello".to_owned(),
             options: GenerationOptions::default(),
+            structured_output: None,
         });
         assert!(matches!(
             pinned_error,
@@ -1523,6 +1531,7 @@ mod tests {
                 model_id: "alpha".to_owned(),
                 prompt: "hello".to_owned(),
                 options: GenerationOptions::default(),
+                structured_output: None,
             })
             .expect("active generation");
         let queued = runtime
@@ -1531,6 +1540,7 @@ mod tests {
                 model_id: "alpha".to_owned(),
                 prompt: "queued".to_owned(),
                 options: GenerationOptions::default(),
+                structured_output: None,
             })
             .expect("queued generation");
         runtime.cancel_generation_for("queued");
@@ -1567,6 +1577,7 @@ mod tests {
                 max_tokens: 1,
                 ..GenerationOptions::default()
             },
+            structured_output: None,
         };
         let stream = runtime.generate(request("beta")).expect("beta recovers");
         stream.cancel();

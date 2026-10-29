@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+mod structured_output;
+
 #[derive(Debug)]
 struct Loaded {
     model: native::NativeModel,
@@ -198,7 +200,8 @@ impl ModelRunner for LlamaCppModelRunner {
                         .send(GenerationEvent::Token(token.to_owned()))
                         .is_ok()
                 };
-                let native_stats = loaded.model.generate_stream(
+                let grammar = structured_output::compile(request.structured_output.as_ref())?;
+                let native_stats = loaded.model.generate_stream_with_grammar(
                     &request.prompt,
                     request.context_size,
                     request.max_tokens,
@@ -207,6 +210,7 @@ impl ModelRunner for LlamaCppModelRunner {
                     request.top_k,
                     request.seed.unwrap_or(0),
                     &request.stop_sequences,
+                    grammar.as_deref(),
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;

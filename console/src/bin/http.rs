@@ -2,7 +2,7 @@
 
 use oid_runtime::{
     auth, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
-    GenerationTermination, MarinaRuntime, RuntimeService,
+    GenerationTermination, MarinaRuntime, RuntimeService, StructuredOutput,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -659,6 +659,10 @@ fn generate_ollama(
     if let Err((status, message)) = validate_ollama_generation_request(body, endpoint) {
         return respond_ollama_error(stream, status, message);
     }
+    let structured_output = match parse_ollama_format(body.get("format")) {
+        Ok(output) => output,
+        Err((status, message)) => return respond_ollama_error(stream, status, message),
+    };
     let prompt = match ollama_prompt(body, endpoint) {
         Ok(prompt) => prompt,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
@@ -671,6 +675,13 @@ fn generate_ollama(
         .get("tools")
         .and_then(Value::as_array)
         .filter(|tools| !tools.is_empty());
+    if structured_output.is_some() && tool_definitions.is_some() {
+        return respond_ollama_error(
+            stream,
+            400,
+            "structured output cannot be combined with tools",
+        );
+    }
     let (prompt, tools) = if let Some(tools) = tool_definitions {
         (
             format!(
@@ -717,6 +728,7 @@ fn generate_ollama(
         model_id: model.to_owned(),
         prompt,
         options,
+        structured_output: structured_output.clone(),
     }) {
         Ok(generation) => generation,
         Err(error) => return respond_ollama_error(stream, 429, error.to_string()),
@@ -817,6 +829,14 @@ fn generate_ollama(
             }
             Ok(GenerationMessage::Completed(result)) => {
                 finish_owner(owners, &request_id);
+                if let Some(structured_output) = structured_output.as_ref() {
+                    if let Err(message) = structured_output.validate_output(&output) {
+                        if streaming {
+                            return write_ndjson_line(stream, &json!({"error": message}));
+                        }
+                        return respond_ollama_error(stream, 502, message);
+                    }
+                }
                 let tool_calls = if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.finish() {
                         Ok(parts) => parts,
@@ -963,11 +983,12 @@ fn validate_ollama_generation_request(
     body: &Value,
     endpoint: OllamaGenerationEndpoint,
 ) -> Result<(), (u16, String)> {
-    for field in ["keep_alive", "format", "think", "template", "context"] {
+    for field in ["keep_alive", "think", "template", "context"] {
         if body.get(field).is_some_and(|value| !value.is_null()) {
             return Err((501, format!("request field `{field}` is not supported yet")));
         }
     }
+    parse_ollama_format(body.get("format"))?;
     if body.get("raw").and_then(Value::as_bool) == Some(true) {
         return Err((501, "raw prompt mode is not supported yet".to_owned()));
     }
@@ -1850,12 +1871,142 @@ fn validate_generated_tool_calls(
     }
 }
 
+fn parse_openai_response_format(
+    value: Option<&Value>,
+) -> Result<Option<StructuredOutput>, (u16, String)> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(format) = value.as_object() else {
+        return Err((400, "`response_format` must be an object".to_owned()));
+    };
+    let Some(kind) = format.get("type").and_then(Value::as_str) else {
+        return Err((400, "`response_format.type` must be a string".to_owned()));
+    };
+    let output = match kind {
+        "json_object" => {
+            if format
+                .keys()
+                .any(|key| !matches!(key.as_str(), "type" | "description"))
+            {
+                return Err((
+                    400,
+                    "`json_object` contains an unsupported field".to_owned(),
+                ));
+            }
+            if format
+                .get("description")
+                .is_some_and(|description| !description.is_string())
+            {
+                return Err((
+                    400,
+                    "`response_format.description` must be a string".to_owned(),
+                ));
+            }
+            StructuredOutput::JsonObject
+        }
+        "json_schema" => {
+            if format
+                .keys()
+                .any(|key| !matches!(key.as_str(), "type" | "json_schema"))
+            {
+                return Err((
+                    400,
+                    "`json_schema` response_format contains an unsupported field".to_owned(),
+                ));
+            }
+            let Some(spec) = format.get("json_schema").and_then(Value::as_object) else {
+                return Err((
+                    400,
+                    "`response_format.json_schema` must be an object".to_owned(),
+                ));
+            };
+            if spec
+                .keys()
+                .any(|key| !matches!(key.as_str(), "name" | "description" | "strict" | "schema"))
+            {
+                return Err((
+                    400,
+                    "`response_format.json_schema` contains an unsupported field".to_owned(),
+                ));
+            }
+            if !spec
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.trim().is_empty())
+            {
+                return Err((
+                    400,
+                    "`response_format.json_schema.name` must be a non-empty string".to_owned(),
+                ));
+            }
+            if spec
+                .get("description")
+                .is_some_and(|description| !description.is_string())
+            {
+                return Err((
+                    400,
+                    "`response_format.json_schema.description` must be a string".to_owned(),
+                ));
+            }
+            if spec.get("strict").and_then(Value::as_bool) != Some(true) {
+                return Err((
+                    501,
+                    "only strict JSON Schema response formats are supported".to_owned(),
+                ));
+            }
+            let Some(schema) = spec.get("schema") else {
+                return Err((
+                    400,
+                    "`response_format.json_schema.schema` is required".to_owned(),
+                ));
+            };
+            StructuredOutput::JsonSchema(schema.clone())
+        }
+        other => {
+            return Err((501, format!("response format `{other}` is not supported")));
+        }
+    };
+    output.validate().map_err(|error| {
+        (
+            400,
+            format!("unsupported structured output schema: {error}"),
+        )
+    })?;
+    Ok(Some(output))
+}
+
+fn parse_ollama_format(value: Option<&Value>) -> Result<Option<StructuredOutput>, (u16, String)> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let output = match value {
+        Value::String(format) if format == "json" => StructuredOutput::JsonObject,
+        Value::String(format) => {
+            return Err((400, format!("Ollama format `{format}` is not supported")));
+        }
+        Value::Object(_) => StructuredOutput::JsonSchema(value.clone()),
+        _ => {
+            return Err((
+                400,
+                "`format` must be `json` or a JSON Schema object".to_owned(),
+            ));
+        }
+    };
+    output.validate().map_err(|error| {
+        (
+            400,
+            format!("unsupported structured output schema: {error}"),
+        )
+    })?;
+    Ok(Some(output))
+}
+
 fn validate_generation_request(
     body: &Value,
     endpoint: OpenAiGenerationEndpoint,
 ) -> Result<(), (u16, String)> {
     for field in [
-        "response_format",
         "stream_options",
         "logprobs",
         "top_logprobs",
@@ -1868,6 +2019,15 @@ fn validate_generation_request(
                 501,
                 format!("request parameter `{field}` is not supported yet"),
             ));
+        }
+        if body.get("response_format").is_some() {
+            if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+                return Err((
+                    501,
+                    "`response_format` is only supported for Chat Completions".to_owned(),
+                ));
+            }
+            parse_openai_response_format(body.get("response_format"))?;
         }
     }
     if let Some(value) = body.get("n") {
@@ -2072,6 +2232,22 @@ fn generate(
     if let Err((status, message)) = validate_generation_request(body, endpoint) {
         return respond_error(stream, status, message);
     }
+    let structured_output = match parse_openai_response_format(body.get("response_format")) {
+        Ok(output) => output,
+        Err((status, message)) => return respond_error(stream, status, message),
+    };
+    if structured_output.is_some()
+        && body
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| !tools.is_empty())
+    {
+        return respond_error(
+            stream,
+            400,
+            "structured output cannot be combined with tools".to_owned(),
+        );
+    }
     if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
         if let Err(message) = validate_openai_tool_history(body) {
             return respond_error(stream, 400, message);
@@ -2192,6 +2368,7 @@ fn generate(
         model_id: model.to_owned(),
         prompt,
         options,
+        structured_output: structured_output.clone(),
     }) {
         Ok(stream_result) => stream_result,
         Err(error) => return respond_error(stream, 429, error.to_string()),
@@ -2341,6 +2518,18 @@ fn generate(
                     result.statistics.termination,
                     result.statistics.generated_tokens
                 );
+                if let Some(structured_output) = structured_output.as_ref() {
+                    if let Err(message) = structured_output.validate_output(&output) {
+                        if streaming {
+                            return write_openai_stream_error(
+                                stream,
+                                stream_headers_sent,
+                                &message,
+                            );
+                        }
+                        return respond_error(stream, 502, message);
+                    }
+                }
                 let finish_reason = completion_finish_reason(result.statistics.termination);
                 let termination_reason =
                     completion_termination_reason(result.statistics.termination);
@@ -2916,12 +3105,12 @@ mod tests {
         add_ollama_statistics, build_chat_prompt, build_completion_prompt, build_response_prompt,
         completion_finish_reason, completion_termination_reason, generation_options, iso8601_now,
         ollama_generation_options, ollama_prompt, ollama_tool_call, ollama_tool_stream_chunk,
-        openai_tool_stream_delta, parse_tool_calls, request_body_size_is_allowed,
-        validate_generated_tool_calls, validate_generation_request,
-        validate_ollama_generation_request, validate_openai_tool_history,
-        validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
-        OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
-        MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
+        openai_tool_stream_delta, parse_ollama_format, parse_openai_response_format,
+        parse_tool_calls, request_body_size_is_allowed, validate_generated_tool_calls,
+        validate_generation_request, validate_ollama_generation_request,
+        validate_openai_tool_history, validate_streamed_tool_call, GenerationTermination,
+        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser,
+        ToolStreamPart, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
     use serde_json::json;
 
@@ -3368,11 +3557,17 @@ mod tests {
             validate_generation_request(
                 &json!({"response_format":{"type":"json_object"}}),
                 OpenAiGenerationEndpoint::ChatCompletions
-            ),
-            Err((
-                501,
-                "request parameter `response_format` is not supported yet".to_owned()
-            ))
+            )
+            .map_err(|(status, _)| status),
+            Ok(())
+        );
+        assert_eq!(
+            validate_generation_request(
+                &json!({"response_format":{"type":"json_object"}}),
+                OpenAiGenerationEndpoint::Completions
+            )
+            .map_err(|(status, _)| status),
+            Err(501)
         );
         assert_eq!(
             validate_generation_request(
@@ -3389,6 +3584,75 @@ mod tests {
             )
             .map_err(|(status, _)| status),
             Err(501)
+        );
+    }
+
+    #[test]
+    fn validates_openai_json_object_and_strict_schema_formats() {
+        assert_eq!(
+            parse_openai_response_format(Some(&json!({"type":"json_object"}))),
+            Ok(Some(oid_runtime::StructuredOutput::JsonObject))
+        );
+        let schema = json!({
+            "type":"object",
+            "properties":{"mode":{"type":"string","enum":["fast","safe"]}},
+            "required":["mode"],
+            "additionalProperties":false
+        });
+        assert_eq!(
+            parse_openai_response_format(Some(&json!({
+                "type":"json_schema",
+                "json_schema":{
+                    "name":"settings",
+                    "strict":true,
+                    "schema":schema
+                }
+            }))),
+            Ok(Some(oid_runtime::StructuredOutput::JsonSchema(schema)))
+        );
+        assert_eq!(
+            parse_openai_response_format(Some(&json!({
+                "type":"json_schema",
+                "json_schema":{"name":"bad","strict":true,"schema":{"type":"string","pattern":"x"}}
+            })))
+            .map_err(|(status, _)| status),
+            Err(400)
+        );
+        assert_eq!(
+            parse_openai_response_format(Some(&json!({
+                "type":"json_schema",
+                "json_schema":{"name":"not-strict","schema":{"type":"object"}}
+            })))
+            .map_err(|(status, _)| status),
+            Err(501)
+        );
+    }
+
+    #[test]
+    fn accepts_ollama_json_and_schema_formats() {
+        assert_eq!(
+            parse_ollama_format(Some(&json!("json"))),
+            Ok(Some(oid_runtime::StructuredOutput::JsonObject))
+        );
+        let schema = json!({
+            "type":"array",
+            "items":{"type":"integer"}
+        });
+        assert_eq!(
+            parse_ollama_format(Some(&schema)),
+            Ok(Some(oid_runtime::StructuredOutput::JsonSchema(schema)))
+        );
+        assert_eq!(
+            parse_ollama_format(Some(&json!("jsonl"))).map_err(|(status, _)| status),
+            Err(400)
+        );
+        assert_eq!(
+            validate_ollama_generation_request(
+                &json!({"model":"m","prompt":"hello","format":{"type":"object","pattern":"x"}}),
+                OllamaGenerationEndpoint::Generate
+            )
+            .map_err(|(status, _)| status),
+            Err(400)
         );
     }
 
