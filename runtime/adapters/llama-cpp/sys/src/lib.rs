@@ -623,6 +623,56 @@ pub enum NativeGenerationTermination {
     ContextLength,
 }
 
+const END_MARKERS: [&str; 6] = [
+    "<|im_end|>",
+    "</|im_end|}",
+    "|im_end|",
+    "<|endoftext|>",
+    "|endoftext|",
+    "</s>",
+];
+
+/// Removes end-of-turn markers that a model emits as several separate tokens.
+#[cfg_attr(not(native_llama_cpp), allow(dead_code))]
+#[derive(Default)]
+struct EndMarkerFilter {
+    held: String,
+}
+
+#[cfg_attr(not(native_llama_cpp), allow(dead_code))]
+impl EndMarkerFilter {
+    /// Returns text that is safe to emit and whether an end marker was seen.
+    fn push(&mut self, text: &str) -> (String, bool) {
+        self.held.push_str(text);
+        let earliest = END_MARKERS
+            .iter()
+            .filter_map(|marker| self.held.find(marker))
+            .min();
+        if let Some(index) = earliest {
+            let emit = self.held[..index].to_owned();
+            self.held.clear();
+            return (emit, true);
+        }
+        let keep = (1..=self.held.len())
+            .rev()
+            .filter(|length| self.held.is_char_boundary(self.held.len() - length))
+            .find(|length| {
+                let suffix = &self.held[self.held.len() - length..];
+                END_MARKERS.iter().any(|marker| marker.starts_with(suffix))
+            })
+            .unwrap_or(0);
+        let split = self.held.len() - keep;
+        let emit = self.held[..split].to_owned();
+        self.held.drain(..split);
+        (emit, false)
+    }
+
+    /// Returns text held back as a possible marker prefix once generation ends.
+    fn finish(&mut self) -> String {
+        std::mem::take(&mut self.held)
+    }
+}
+
 #[cfg(native_llama_cpp)]
 fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
     match std::str::from_utf8(buffer) {
@@ -1428,6 +1478,7 @@ impl NativeModel {
             let prompt_eval_time = inference_started.elapsed();
             let vocab = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
             let mut pending_utf8 = Vec::new();
+            let mut marker_filter = EndMarkerFilter::default();
             let mut generated = 0_u64;
             let mut cancelled_result = false;
             let mut termination = NativeGenerationTermination::Stop;
@@ -1443,9 +1494,10 @@ impl NativeModel {
                     break;
                 }
                 let text = unsafe { Self::token_piece(vocab, token) }?;
-                let (text, terminal) = Self::terminal_piece_prefix(&text);
+                let (text, mut terminal) = Self::terminal_piece_prefix(&text);
                 pending_utf8.extend_from_slice(text);
-                let delta = take_complete_utf8(&mut pending_utf8);
+                let (delta, marker_seen) = marker_filter.push(&take_complete_utf8(&mut pending_utf8));
+                terminal |= marker_seen;
                 if !delta.is_empty() {
                     if delta == previous_piece {
                         repeated_piece_count = repeated_piece_count.saturating_add(1);
@@ -1524,8 +1576,15 @@ impl NativeModel {
                 }
             }
             if !cancelled_result && !pending_utf8.is_empty() {
-                let final_text = String::from_utf8_lossy(&pending_utf8).into_owned();
+                let (final_text, _) =
+                    marker_filter.push(&String::from_utf8_lossy(&pending_utf8));
                 if !final_text.is_empty() && !callback(&final_text) {
+                    cancelled_result = true;
+                }
+            }
+            if !cancelled_result {
+                let held = marker_filter.finish();
+                if !held.is_empty() && !callback(&held) {
                     cancelled_result = true;
                 }
             }
@@ -1980,6 +2039,33 @@ mod tests {
     #[test]
     fn successful_decode_remains_success() {
         assert_eq!(classify_decode_result(0, false), DecodeOutcome::Success);
+    }
+
+    #[test]
+    fn end_markers_split_across_tokens_are_removed() {
+        let mut filter = super::EndMarkerFilter::default();
+        let mut output = String::new();
+        let mut terminal = false;
+        for piece in ["11,664", " ", "|", "im", "_end", "|"] {
+            let (text, seen) = filter.push(piece);
+            output.push_str(&text);
+            terminal |= seen;
+        }
+        assert_eq!(output, "11,664 ");
+        assert!(terminal);
+        assert!(filter.finish().is_empty());
+    }
+
+    #[test]
+    fn partial_marker_prefix_is_flushed_when_generation_ends() {
+        let mut filter = super::EndMarkerFilter::default();
+        let (text, seen) = filter.push("a <|im");
+        assert_eq!(text, "a ");
+        assert!(!seen);
+        assert_eq!(filter.finish(), "<|im");
+        let (text, seen) = filter.push("plain | text");
+        assert_eq!(text, "plain | text");
+        assert!(!seen);
     }
 
     #[cfg(native_llama_cpp)]

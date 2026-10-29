@@ -837,12 +837,37 @@ impl ModelDiscovery {
         backend: &str,
     ) -> Result<Vec<ModelMetadata>, RuntimeError> {
         let mut discovered = Vec::new();
+        Self::prune_duplicate_artifacts(registry)?;
         for directory in &self.directories {
             if directory.is_dir() {
                 Self::visit(directory, registry, backend, &mut discovered)?;
             }
         }
         Ok(discovered)
+    }
+
+    fn same_artifact(left: &str, right: &str) -> bool {
+        left.replace('\\', "/")
+            .eq_ignore_ascii_case(&right.replace('\\', "/"))
+    }
+
+    /// Drop registry entries that point at the same artifact as a better entry
+    /// (one with a paired projector, else the first by ID).
+    fn prune_duplicate_artifacts(registry: &ModelRegistry) -> Result<(), RuntimeError> {
+        let models = registry.list();
+        for model in &models {
+            let duplicate_of_better = models.iter().any(|other| {
+                other.id != model.id
+                    && Self::same_artifact(&other.location, &model.location)
+                    && model.status == ModelStatus::Registered
+                    && other.vision_projector_location.is_some()
+                    && model.vision_projector_location.is_none()
+            });
+            if duplicate_of_better {
+                registry.remove(&model.id)?;
+            }
+        }
+        Ok(())
     }
 
     fn visit(
@@ -876,7 +901,13 @@ impl ModelDiscovery {
                     .and_then(|stem| stem.to_str())
                     .ok_or_else(|| RuntimeError::InvalidModel(path.display().to_string()))?
                     .to_owned();
-                if registry.inspect(&id).is_some() {
+                let location = path.display().to_string();
+                if registry.inspect(&id).is_some()
+                    || registry
+                        .list()
+                        .iter()
+                        .any(|model| Self::same_artifact(&model.location, &location))
+                {
                     continue;
                 }
                 let bytes = path
@@ -1195,6 +1226,40 @@ mod tests {
             .expect("discover model directory");
         assert!(discovered.is_empty());
         assert_eq!(registry.list().len(), 1);
+        std::fs::remove_dir_all(directory).expect("remove discovery directory");
+    }
+
+    #[test]
+    fn discovery_skips_artifacts_registered_under_another_id_and_prunes_stubs() {
+        let directory = temporary_directory("alias-discovery");
+        std::fs::create_dir_all(&directory).expect("create discovery directory");
+        let model_path = directory.join("Demo-Q4.gguf");
+        std::fs::write(&model_path, b"GGUF model").expect("write model fixture");
+        let location = model_path.display().to_string();
+
+        let registry = ModelRegistry::in_memory(EventBus::new());
+        let mut alias = model();
+        alias.id = "demo-q4".to_owned();
+        alias.location = location.clone();
+        registry.register(alias).expect("register alias");
+        let discovery = ModelDiscovery::new(vec![directory.clone()]);
+        assert!(discovery
+            .discover(&registry, "llama.cpp")
+            .expect("discover")
+            .is_empty());
+        assert_eq!(registry.list().len(), 1);
+
+        let mut stub = model();
+        stub.id = "Demo-Q4".to_owned();
+        stub.location = location;
+        registry.register(stub).expect("register stub");
+        let mut paired = registry.inspect("demo-q4").expect("alias");
+        paired.vision_projector_location = Some("mmproj-demo.gguf".to_owned());
+        registry.remove("demo-q4").expect("remove");
+        registry.register(paired).expect("register paired");
+        discovery.discover(&registry, "llama.cpp").expect("discover");
+        let ids: Vec<_> = registry.list().into_iter().map(|model| model.id).collect();
+        assert_eq!(ids, ["demo-q4"]);
         std::fs::remove_dir_all(directory).expect("remove discovery directory");
     }
 

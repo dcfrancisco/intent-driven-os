@@ -605,6 +605,17 @@ impl RuntimeService for MarinaRuntime {
                 )
             });
         let model = ModelAcquirer::acquire(source, &directory, model_id, checksum)?;
+        for stale in self.models.list() {
+            if stale.id != model.id
+                && stale.status == ModelStatus::Registered
+                && stale
+                    .location
+                    .replace('\\', "/")
+                    .eq_ignore_ascii_case(&model.location.replace('\\', "/"))
+            {
+                self.models.remove(&stale.id)?;
+            }
+        }
         self.models.register(model.clone())?;
         Ok(model)
     }

@@ -76,14 +76,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let total_started = Instant::now();
     let client = ipc_runtime::IpcRuntimeService::new(EventBus::new());
     ipc_runtime::IpcRuntimeService::probe()?;
+    let default_model_id = oid_runtime::config::default_model()
+        .ok()
+        .flatten()
+        .map(|model| model.id);
     let models = client
         .model_list()
         .into_iter()
         .map(|model| ModelDescriptor {
-            id: model.id,
-            is_default: None,
+            is_default: Some(
+                default_model_id
+                    .as_deref()
+                    .is_some_and(|default| default.eq_ignore_ascii_case(&model.id)),
+            ),
             resident: Some(model.status == oid_runtime::ModelStatus::Loaded),
-            estimated_memory_mib: None,
+            estimated_memory_mib: Some(model.memory_requirement_mb),
+            id: model.id,
         })
         .collect::<Vec<_>>();
     let model = selected_model(&models)?;
@@ -91,7 +99,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match arguments.mode {
         Mode::Plain | Mode::Timing => {
-            let response = chat(&client, &model, &arguments.prompt, 0, &backend)?;
+            let response = match chat(&client, &model, &arguments.prompt, 0, &backend) {
+                Ok(response) => response,
+                Err(error) => {
+                    let Some(fallback) = fallback_model(&models, &model) else {
+                        return Err(error.into());
+                    };
+                    eprintln!("Model {model} failed ({error}); falling back to {fallback}");
+                    chat(&client, &fallback, &arguments.prompt, 0, &backend)?
+                }
+            };
             println!("{}", response.text);
             if arguments.mode == Mode::Timing {
                 print_timing(&response, total_started.elapsed());
@@ -157,6 +174,18 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, &'static str> {
 
 fn selected_model(models: &[ModelDescriptor]) -> Result<String, &'static str> {
     select_model(models, std::env::var("OID_MARINA_MODEL").ok().as_deref())
+}
+
+fn fallback_model(models: &[ModelDescriptor], failed: &str) -> Option<String> {
+    if std::env::var("OID_MARINA_MODEL").is_ok_and(|value| !value.trim().is_empty()) {
+        return None;
+    }
+    models
+        .iter()
+        .filter(|model| !model.id.eq_ignore_ascii_case(failed))
+        .filter(|model| model.estimated_memory_mib.is_some_and(|estimate| estimate > 0))
+        .min_by_key(|model| model.estimated_memory_mib)
+        .map(|model| model.id.clone())
 }
 
 fn select_model(
