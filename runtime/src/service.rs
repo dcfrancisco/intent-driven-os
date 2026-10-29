@@ -738,7 +738,27 @@ impl RuntimeService for MarinaRuntime {
     }
 
     fn model_list(&self) -> Vec<ModelMetadata> {
-        self.models.list()
+        let resident = self
+            .loaded
+            .lock()
+            .map(|loaded| loaded.keys().cloned().collect::<BTreeSet<_>>())
+            .unwrap_or_default();
+        self.models
+            .list()
+            .into_iter()
+            .map(|mut model| {
+                // Registry status is durable metadata; the resident map is
+                // authoritative for whether a native model handle exists.
+                // Repair stale Loaded snapshots in read projections without
+                // hiding an in-flight Loading/Unloading transition.
+                if model.status == ModelStatus::Loaded && !resident.contains(&model.id) {
+                    model.status = ModelStatus::Registered;
+                } else if model.status == ModelStatus::Registered && resident.contains(&model.id) {
+                    model.status = ModelStatus::Loaded;
+                }
+                model
+            })
+            .collect()
     }
 
     fn model_inspect(&self, id: &str) -> Option<ModelMetadata> {
@@ -940,14 +960,41 @@ impl RuntimeService for MarinaRuntime {
             .residency_lock
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("residency unavailable".to_owned()))?;
-        if self
+        let model = self
+            .models
+            .inspect(id)
+            .ok_or_else(|| RuntimeError::ModelNotFound(id.to_owned()))?;
+        let resident = self
+            .loaded
+            .lock()
+            .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
+            .contains_key(id);
+        if !resident {
+            // A persisted Loaded status is only a registry snapshot; it is not
+            // proof that a native handle is resident after a daemon restart or
+            // a partial cleanup. Repair the snapshot and refuse to claim that
+            // an unload succeeded.
+            if model.status == ModelStatus::Loaded {
+                let _ = self.models.set_status(id, &ModelStatus::Registered);
+            }
+            return Err(RuntimeError::ModelLifecycle(format!(
+                "model {id} is not resident; unload did not run"
+            )));
+        }
+        if self.resource_policy.pinned_models.contains(id) {
+            return Err(RuntimeError::ModelLifecycle(format!(
+                "model {id} is pinned and cannot be unloaded"
+            )));
+        }
+        let active_model = self
             .active_generation
             .lock()
-            .is_ok_and(|active| active.is_some())
-        {
-            return Err(RuntimeError::ModelLifecycle(
-                "cannot unload a model while generation is active".to_owned(),
-            ));
+            .ok()
+            .and_then(|active| active.as_ref().map(|(model_id, _, _)| model_id.clone()));
+        if active_model.as_deref() == Some(id) {
+            return Err(RuntimeError::ModelLifecycle(format!(
+                "cannot unload model {id} while its generation is active"
+            )));
         }
         self.bus
             .publish(&RuntimeEvent::ModelUnloading(id.to_owned()));
@@ -956,7 +1003,6 @@ impl RuntimeService for MarinaRuntime {
             let _ = self.models.set_status(id, &ModelStatus::Loaded);
             return Err(error);
         }
-        self.models.set_status(id, &ModelStatus::Registered)?;
         self.loaded
             .lock()
             .map_err(|_| RuntimeError::ModelLifecycle("loader unavailable".to_owned()))?
@@ -964,7 +1010,7 @@ impl RuntimeService for MarinaRuntime {
         if let Ok(mut last_used) = self.last_used.lock() {
             last_used.remove(id);
         }
-        Ok(())
+        self.models.set_status(id, &ModelStatus::Registered)
     }
 
     fn reset_context(&self, id: &str) -> Result<(), RuntimeError> {
@@ -2012,6 +2058,115 @@ mod tests {
             ModelStatus::Registered
         );
 
+        std::fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn unload_rejects_nonresident_model_and_repairs_stale_loaded_status() {
+        let root = temporary_root("unload-stale-status");
+        std::fs::create_dir_all(&root).expect("create test root");
+        let runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "qwen2.5-0.5b-instruct-q4_k_m".to_owned(),
+                name: "qwen2.5-0.5b-instruct-q4_k_m.gguf".to_owned(),
+                family: "qwen".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "q4".to_owned(),
+                context_window: 4096,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Loaded,
+                checksum: None,
+                vision_projector_location: None,
+                location: root.join("qwen.gguf").display().to_string(),
+            })
+            .expect("register stale model");
+
+        let error = runtime
+            .model_unload("qwen2.5-0.5b-instruct-q4_k_m")
+            .expect_err("stale status must not report a successful unload");
+        assert!(error.to_string().contains("is not resident"));
+        assert_eq!(
+            runtime
+                .model_inspect("qwen2.5-0.5b-instruct-q4_k_m")
+                .expect("model remains registered")
+                .status,
+            ModelStatus::Registered
+        );
+        assert_eq!(runtime.model_list()[0].status, ModelStatus::Registered);
+        assert!(runtime.snapshot().loaded_models.is_empty());
+        std::fs::remove_dir_all(root).expect("remove test data");
+    }
+
+    #[test]
+    fn unload_reports_pinned_and_active_lifecycle_blocks_explicitly() {
+        let root = temporary_root("unload-blocked");
+        std::fs::create_dir_all(&root).expect("create test root");
+        let mut runtime = MarinaRuntime::start_with_backend(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "qwen".to_owned(),
+                name: "qwen.gguf".to_owned(),
+                family: "qwen".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "q4".to_owned(),
+                context_window: 4096,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Registered,
+                checksum: None,
+                vision_projector_location: None,
+                location: root.join("qwen.gguf").display().to_string(),
+            })
+            .expect("register model");
+        runtime.model_load("qwen").expect("load model");
+
+        runtime
+            .resource_policy
+            .pinned_models
+            .insert("qwen".to_owned());
+        let pinned = runtime
+            .model_unload("qwen")
+            .expect_err("pinned model must not unload");
+        assert!(pinned.to_string().contains("pinned"));
+        assert!(runtime
+            .snapshot()
+            .loaded_models
+            .contains(&"qwen".to_owned()));
+
+        runtime.resource_policy.pinned_models.clear();
+        *runtime.active_generation.lock().expect("active lock") = Some((
+            "qwen".to_owned(),
+            "generation-1".to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
+        let active = runtime
+            .model_unload("qwen")
+            .expect_err("active model must not unload");
+        assert!(active.to_string().contains("generation is active"));
+        assert!(runtime
+            .snapshot()
+            .loaded_models
+            .contains(&"qwen".to_owned()));
         std::fs::remove_dir_all(root).expect("remove test data");
     }
 

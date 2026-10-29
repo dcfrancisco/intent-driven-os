@@ -114,6 +114,64 @@ Restart with a deliberately small `$env:TALVIK_GPU_MEMORY_BUDGET_BYTES`,
 record the rejected load and unchanged residents, then raise the budget and
 retry.
 
+## Model unload lifecycle qualification
+
+### Current development-host investigation
+
+The available local registry contained this persisted entry before the
+investigation:
+
+```text
+qwen2.5-0.5b-instruct-q4_k_m|...|loaded|...|/Users/dannyfrancisco/.marina/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+```
+
+The checked-in release CLI could not be used against the local daemon from the
+restricted Intel macOS environment. The exact responses were:
+
+```text
+./target/release/talvik models
+talvik: Operation not permitted (os error 1)
+
+./target/release/talvik models   # with local socket access
+talvik: Connection refused (os error 61)
+
+talvikd (isolated CPU-only startup)
+talvikd: Operation not permitted (os error 1)
+```
+
+Therefore no claim is made that the Windows Qwen sequence was reproduced here,
+and no GPU execution was attempted. The persisted `Loaded` value is registry
+state only; the lifecycle fix and deterministic regression cases require the
+resident map and native backend to agree before reporting success.
+
+Unload is a residency operation, not merely a registry transition. The daemon
+must resolve the requested ID in its authoritative resident map before calling
+the backend. A successful unload must remove the ID from both the resident
+snapshot and the native runner; a stale persisted `Loaded` status is repaired
+to `Registered` and returns an explicit non-resident error. Pinned models and
+models currently generating must return explicit blocking errors.
+
+On a supported Windows or Linux host, capture the daemon log and resident
+memory before and after this exact sequence:
+
+```text
+talvik models
+talvik unload qwen2.5-0.5b-instruct-q4_k_m
+talvik models
+talvik load qwen2.5-0.5b-instruct-q4_k_m
+talvik models
+talvik unload qwen2.5-0.5b-instruct-q4_k_m
+talvik models
+```
+
+Repeat for every registered model, after a completed generation, after
+cancellation, after a failed load, and after daemon restart. Record `/api/ps`
+or `talvik --json status`, process RSS, backend/native unload logs, and GPU
+memory observations where available. A later reload is valid only when a
+generation request or an explicitly documented recovery policy is the cause;
+it must be visible as a separate load event. This procedure remains pending
+and must not be marked PASS from CPU-only source checks.
+
 ## Required observations
 
 Record driver, device, dedicated versus shared memory, llama.cpp commit,
