@@ -16,6 +16,17 @@ Install (no administrator rights):
 
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-model-runner.ps1 -ArchivePath C:\path\to\talvik-windows-x86_64-preview.zip
 
+Two ZIPs are published:
+
+   talvik-windows-x86_64-preview.zip         CPU only
+   talvik-windows-x86_64-vulkan-preview.zip  CPU + Vulkan GPU backend
+
+The Vulkan ZIP needs a Vulkan-capable GPU driver (Intel, AMD, or NVIDIA). It
+installs a config.yaml selecting the Vulkan backend with automatic CPU
+fallback, only when no config.yaml exists. Installing either ZIP replaces the
+previously installed DLLs, so you can switch between them. Expect the first
+request after each daemon start to be slow while GPU shaders compile.
+
 The installer puts Talvik in %USERPROFILE%\.marina. It does not change PATH,
 install a Windows service, or download a model. To use these commands in the
 current PowerShell window:

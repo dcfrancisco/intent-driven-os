@@ -48,8 +48,26 @@ try {
     }
 
     New-Item -ItemType Directory -Force -Path $prefixPath | Out-Null
+    # Remove previously installed native DLLs so switching between the CPU and
+    # Vulkan packages cannot leave a stale backend (for example ggml-vulkan.dll).
+    foreach ($directory in @($binPath, $libPath)) {
+        if (Test-Path -LiteralPath $directory) {
+            Get-ChildItem -LiteralPath $directory -Filter "*.dll" -File | Remove-Item -Force
+        }
+    }
     Copy-Item -LiteralPath (Join-Path $packageRoot "bin") -Destination $prefixPath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $packageRoot "lib") -Destination $prefixPath -Recurse -Force
+
+    # The Vulkan package ships a placement template; never overwrite user settings.
+    $configTemplate = Join-Path $packageRoot "config.vulkan.yaml"
+    $configPath = Join-Path $prefixPath "config.yaml"
+    $vulkanInstalled = Test-Path -LiteralPath (Join-Path $libPath "ggml-vulkan.dll")
+    if ((Test-Path -LiteralPath $configTemplate) -and -not (Test-Path -LiteralPath $configPath)) {
+        Copy-Item -LiteralPath $configTemplate -Destination $configPath
+        Write-Host "Wrote $configPath with Vulkan GPU placement (falls back to CPU if no usable GPU)."
+    } elseif ($vulkanInstalled -and (Test-Path -LiteralPath $configPath)) {
+        Write-Host "Kept existing $configPath. For GPU use set execution_backend: vulkan and placement_policy: gpu_preferred."
+    }
 
     # Windows searches beside the executable by default. Keep the canonical
     # payload in lib and mirror DLLs into bin so talvikd.exe can start without

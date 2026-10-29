@@ -1,0 +1,3 @@
+placement_policy: gpu_preferred
+execution_backend: vulkan
+gpu_layers: 999
