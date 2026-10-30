@@ -95,10 +95,21 @@ impl Drop for MockTalvik {
 
 #[cfg(unix)]
 fn bind_listener(endpoint: &std::path::Path) -> (PathBuf, Listener) {
+    // macOS limits Unix socket paths to SUN_LEN (typically 104 bytes). Cargo's
+    // sandbox temp directory can exceed that limit, so keep the test socket in
+    // /tmp when the requested state-root path is too long.
+    let endpoint = if endpoint.to_string_lossy().len() >= 100 {
+        let name = endpoint
+            .file_name()
+            .expect("mock endpoint should have a file name");
+        std::path::PathBuf::from("/tmp").join(name)
+    } else {
+        endpoint.to_owned()
+    };
     if let Some(parent) = endpoint.parent() {
         std::fs::create_dir_all(parent).expect("mock socket parent");
     }
-    let listener = UnixListener::bind(endpoint).expect("mock Talvik socket");
+    let listener = UnixListener::bind(&endpoint).expect("mock Talvik socket");
     listener
         .set_nonblocking(true)
         .expect("mock socket nonblocking");
