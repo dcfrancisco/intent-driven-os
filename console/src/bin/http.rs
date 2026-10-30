@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const MAX_REQUEST_BODY_BYTES: usize = 56 * 1_048_576;
 const MAX_CONTEXT_TOKENS: u64 = 32_768;
 const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+const SSE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const IMAGE_MARKER: &str = "<__media__>";
 
 fn decode_data_image(value: &str) -> Result<ImageInput, String> {
@@ -873,6 +874,7 @@ fn generate_ollama(
         Ok(generation) => generation,
         Err(error) => return respond_ollama_error(stream, 429, error.to_string()),
     };
+    let generation_started_at = Instant::now();
     if let Ok(mut owners) = owners.lock() {
         owners.insert(request_id.clone(), identity.principal.clone());
     }
@@ -889,9 +891,19 @@ fn generate_ollama(
     let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
     let mut streamed_tool_calls = Vec::new();
     let mut output = String::new();
+    let mut first_token_logged = false;
     loop {
         match generation.recv() {
             Ok(GenerationMessage::Token(token)) => {
+                if !first_token_logged {
+                    first_token_logged = true;
+                    eprintln!(
+                        "Talvik HTTP first token request_id={} model={} elapsed_ms={}",
+                        request_id,
+                        model,
+                        generation_started_at.elapsed().as_millis()
+                    );
+                }
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
                         Ok(parts) => parts,
@@ -1516,6 +1528,27 @@ fn write_responses_sse_event(
     *sequence_number = sequence_number.saturating_add(1);
     stream.write_all(frame.as_bytes())?;
     stream.flush()
+}
+
+fn write_openai_chat_stream_start(
+    stream: &mut TcpStream,
+    request_id: &str,
+    created: u64,
+    model: &str,
+) -> std::io::Result<()> {
+    let event = openai_chat_stream_start_event(request_id, created, model);
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
+fn openai_chat_stream_start_event(request_id: &str, created: u64, model: &str) -> Value {
+    json!({
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": Value::Null}]
+    })
 }
 
 fn responses_output_message(request_id: &str, status: &str, text: &str) -> Value {
@@ -2524,8 +2557,14 @@ fn validate_generation_request(
                 format!("`stream_options.{field}` is not supported yet"),
             ));
         }
-        if options.get("include_usage").is_some_and(|value| !value.is_boolean()) {
-            return Err((400, "`stream_options.include_usage` must be a boolean".to_owned()));
+        if options
+            .get("include_usage")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err((
+                400,
+                "`stream_options.include_usage` must be a boolean".to_owned(),
+            ));
         }
         if !body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
             return Err((
@@ -2910,7 +2949,15 @@ fn generate(
         )?;
         stream.flush()?;
         stream_headers_sent = true;
-        if endpoint == OpenAiGenerationEndpoint::Responses {
+        if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
+            if let Err(error) = write_openai_chat_stream_start(stream, &request_id, created, model)
+            {
+                generation.cancel();
+                let _ = drain_cancelled_generation(&generation);
+                finish_owner(owners, &request_id);
+                return Err(error);
+            }
+        } else if endpoint == OpenAiGenerationEndpoint::Responses {
             if let Err(error) = write_responses_stream_start(
                 stream,
                 &mut response_sequence_number,
@@ -2936,21 +2983,34 @@ fn generate(
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
     loop {
-        let message = deadline.map_or_else(
-            || {
-                generation
-                    .recv()
-                    .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
-            },
-            |deadline| {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                } else {
-                    generation.recv_timeout(remaining)
-                }
-            },
-        );
+        let message = if streaming {
+            let wait = deadline.map_or(SSE_HEARTBEAT_INTERVAL, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(SSE_HEARTBEAT_INTERVAL)
+            });
+            if wait.is_zero() {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            } else {
+                generation.recv_timeout(wait)
+            }
+        } else {
+            deadline.map_or_else(
+                || {
+                    generation
+                        .recv()
+                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+                },
+                |deadline| {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    } else {
+                        generation.recv_timeout(remaining)
+                    }
+                },
+            )
+        };
         match message {
             Ok(GenerationMessage::Token(token)) => {
                 if let Some(parser) = tool_parser.as_mut() {
@@ -3560,6 +3620,14 @@ fn generate(
                 }
                 return respond_error(stream, 500, error.to_string());
             }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                if streaming && deadline.is_none_or(|deadline| Instant::now() < deadline) =>
+            {
+                // A comment is valid SSE and keeps IDE/proxy connections alive while
+                // llama.cpp is evaluating a long prompt before its first token.
+                stream.write_all(b": talvik keep-alive\n\n")?;
+                stream.flush()?;
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
                 finish_owner(owners, &request_id);
@@ -3861,17 +3929,17 @@ mod tests {
         build_response_prompt, completion_finish_reason, completion_termination_reason,
         flatten_content, generation_options, iso8601_now, ollama_generation_options, ollama_prompt,
         ollama_request_content, ollama_tool_call, ollama_tool_stream_chunk,
-        openai_model_output_error, openai_stream_error_frame, openai_tool_stream_delta,
-        parse_ollama_format, parse_openai_response_format, parse_tool_calls, reason,
-        request_body_size_is_allowed, responses_sse_frame, tool_call_output_error_code,
-        validate_generated_tool_calls, validate_generation_request,
+        openai_chat_stream_start_event, openai_model_output_error, openai_stream_error_frame,
+        openai_tool_stream_delta, parse_ollama_format, parse_openai_response_format,
+        parse_tool_calls, reason, request_body_size_is_allowed, responses_sse_frame,
+        tool_call_output_error_code, validate_generated_tool_calls, validate_generation_request,
         validate_ollama_generation_request, validate_openai_tool_history,
         validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
         OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
         MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
     use base64::Engine as _;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn rejects_oversized_http_bodies() {
@@ -4389,6 +4457,21 @@ mod tests {
     }
 
     #[test]
+    fn openai_chat_stream_starts_with_assistant_role_chunk() {
+        let event = openai_chat_stream_start_event("req-1", 1, "qwen");
+        assert_eq!(event["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(event["choices"][0]["finish_reason"], Value::Null);
+    }
+
+    #[test]
+    fn sse_heartbeat_is_a_comment_frame() {
+        assert!(b": talvik keep-alive\n\n".starts_with(b":"));
+        assert!(std::str::from_utf8(b": talvik keep-alive\n\n")
+            .expect("valid SSE comment")
+            .ends_with("\n\n"));
+    }
+
+    #[test]
     fn classifies_model_output_failures_and_gateway_status() {
         let error = openai_model_output_error("incomplete_tool_call", "model ended early");
         assert_eq!(error["error"]["type"], "model_output_error");
@@ -4462,7 +4545,10 @@ mod tests {
         .is_ok());
         for (body, status) in [
             (json!({"stream_options":{"include_usage":true}}), 400),
-            (json!({"stream":true,"stream_options":{"include_usage":"yes"}}), 400),
+            (
+                json!({"stream":true,"stream_options":{"include_usage":"yes"}}),
+                400,
+            ),
             (json!({"stream":true,"stream_options":"x"}), 400),
             (json!({"stream":true,"stream_options":{"other":1}}), 501),
         ] {
