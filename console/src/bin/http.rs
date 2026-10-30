@@ -1853,6 +1853,14 @@ impl ToolCallStreamParser {
             .as_bytes()
             .starts_with(self.buffer.as_bytes())
         {
+            // Some instruction-tuned models emit another opening marker after
+            // a complete call, then stop before its payload. The completed call
+            // is already valid and streamed to the client, so discard only
+            // this trailing partial marker instead of invalidating the turn.
+            if self.next_index > 0 {
+                self.buffer.clear();
+                return Ok(parts);
+            }
             return Err("model ended with an incomplete tool-call marker".to_owned());
         }
         let remaining = std::mem::take(&mut self.buffer);
@@ -2257,6 +2265,30 @@ fn parse_tool_choice(body: &Value) -> Result<OpenAiToolChoice, (u16, String)> {
     }
 }
 
+fn parse_chat_template_kwargs(body: &Value) -> Result<Option<bool>, (u16, String)> {
+    let Some(kwargs) = body.get("chat_template_kwargs") else {
+        return Ok(None);
+    };
+    let Some(kwargs) = kwargs.as_object() else {
+        return Err((400, "`chat_template_kwargs` must be an object".to_owned()));
+    };
+    if let Some(field) = kwargs.keys().find(|key| key.as_str() != "enable_thinking") {
+        return Err((
+            501,
+            format!("`chat_template_kwargs.{field}` is not supported yet"),
+        ));
+    }
+    let Some(enabled) = kwargs.get("enable_thinking") else {
+        return Ok(None);
+    };
+    enabled.as_bool().map(Some).ok_or_else(|| {
+        (
+            400,
+            "`chat_template_kwargs.enable_thinking` must be a boolean".to_owned(),
+        )
+    })
+}
+
 fn validate_tool_definitions(body: &Value) -> Result<Vec<String>, (u16, String)> {
     let Some(tools) = body.get("tools") else {
         return Ok(Vec::new());
@@ -2534,6 +2566,15 @@ fn validate_generation_request(
             ));
         }
     }
+    if body.get("chat_template_kwargs").is_some() {
+        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+            return Err((
+                501,
+                "`chat_template_kwargs` is only supported for Chat Completions".to_owned(),
+            ));
+        }
+        parse_chat_template_kwargs(body)?;
+    }
     if let Some(value) = body.get("n") {
         match value.as_u64() {
             Some(1) => {}
@@ -2737,6 +2778,10 @@ fn generate(
         Ok(output) => output,
         Err((status, message)) => return respond_error(stream, status, message),
     };
+    let enable_thinking = match parse_chat_template_kwargs(body) {
+        Ok(value) => value,
+        Err((status, message)) => return respond_error(stream, status, message),
+    };
     if structured_output.is_some()
         && body
             .get("tools")
@@ -2784,6 +2829,12 @@ fn generate(
         Err(message) => return respond_error(stream, 400, message),
     };
     let base_prompt = prompt.clone();
+    if let Some(enabled) = enable_thinking {
+        prompt.insert_str(
+            0,
+            &format!("\u{001e}__talvik_template\nenable_thinking={enabled}"),
+        );
+    }
     if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
         if let Some(tools) = tool_definitions {
             prompt.insert_str(
@@ -3862,9 +3913,9 @@ mod tests {
         flatten_content, generation_options, iso8601_now, ollama_generation_options, ollama_prompt,
         ollama_request_content, ollama_tool_call, ollama_tool_stream_chunk,
         openai_model_output_error, openai_stream_error_frame, openai_tool_stream_delta,
-        parse_ollama_format, parse_openai_response_format, parse_tool_calls, reason,
-        request_body_size_is_allowed, responses_sse_frame, tool_call_output_error_code,
-        validate_generated_tool_calls, validate_generation_request,
+        parse_chat_template_kwargs, parse_ollama_format, parse_openai_response_format,
+        parse_tool_calls, reason, request_body_size_is_allowed, responses_sse_frame,
+        tool_call_output_error_code, validate_generated_tool_calls, validate_generation_request,
         validate_ollama_generation_request, validate_openai_tool_history,
         validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
         OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
@@ -3877,6 +3928,30 @@ mod tests {
     fn rejects_oversized_http_bodies() {
         assert!(request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES));
         assert!(!request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES + 1));
+    }
+
+    #[test]
+    fn parses_chat_template_thinking_option() {
+        assert_eq!(
+            parse_chat_template_kwargs(&json!({
+                "chat_template_kwargs": {"enable_thinking": false}
+            })),
+            Ok(Some(false))
+        );
+        assert_eq!(
+            parse_chat_template_kwargs(&json!({
+                "chat_template_kwargs": {"enable_thinking": true}
+            })),
+            Ok(Some(true))
+        );
+        assert!(parse_chat_template_kwargs(&json!({
+            "chat_template_kwargs": {"enable_thinking": "false"}
+        }))
+        .is_err());
+        assert!(parse_chat_template_kwargs(&json!({
+            "chat_template_kwargs": {"unknown": false}
+        }))
+        .is_err());
     }
 
     #[test]
@@ -4117,6 +4192,15 @@ mod tests {
         let mut incomplete_marker = ToolCallStreamParser::new("marker".to_owned());
         assert!(incomplete_marker.push("text<tool_").is_ok());
         assert!(incomplete_marker.finish().is_err());
+
+        let mut trailing_marker = ToolCallStreamParser::new("trailing".to_owned());
+        let parts = trailing_marker
+            .push("<tool_call>{\"name\":\"weather\",\"arguments\":{}}</tool_call><tool_")
+            .expect("complete call is retained");
+        assert!(parts
+            .iter()
+            .any(|part| matches!(part, ToolStreamPart::Call { .. })));
+        assert!(trailing_marker.finish().is_ok());
     }
 
     #[test]

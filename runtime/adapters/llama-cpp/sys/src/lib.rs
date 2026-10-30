@@ -13,7 +13,6 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_void, CStr, CString};
 #[cfg(native_mtmd)]
 use std::io::Cursor;
-#[cfg(any(native_llama_cpp, test))]
 use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::AtomicPtr;
@@ -796,7 +795,7 @@ impl EndMarkerFilter {
             self.held.clear();
             return (emit, true);
         }
-        let keep = (1..=self.held.len())
+        let mut keep = (1..=self.held.len())
             .rev()
             .filter(|length| self.held.is_char_boundary(self.held.len() - length))
             .find(|length| {
@@ -804,6 +803,21 @@ impl EndMarkerFilter {
                 END_MARKERS.iter().any(|marker| marker.starts_with(suffix))
             })
             .unwrap_or(0);
+        // Keep runs of marker-start bytes together. Otherwise a repeated `<`
+        // can cause every copy except the last to be emitted before an EOG
+        // token, leaking a dangling marker into the completed response.
+        let repeated_marker_prefix = self
+            .held
+            .chars()
+            .rev()
+            .take_while(|character| {
+                END_MARKERS
+                    .iter()
+                    .any(|marker| marker.starts_with(*character))
+            })
+            .map(char::len_utf8)
+            .sum::<usize>();
+        keep = keep.max(repeated_marker_prefix);
         let split = self.held.len() - keep;
         let emit = self.held[..split].to_owned();
         self.held.drain(..split);
@@ -812,7 +826,20 @@ impl EndMarkerFilter {
 
     /// Returns text held back as a possible marker prefix once generation ends.
     fn finish(&mut self) -> String {
-        std::mem::take(&mut self.held)
+        let held = std::mem::take(&mut self.held);
+        if END_MARKERS
+            .iter()
+            .any(|marker| marker.starts_with(held.as_str()))
+            || held.chars().all(|character| {
+                END_MARKERS
+                    .iter()
+                    .any(|marker| marker.starts_with(character))
+            })
+        {
+            String::new()
+        } else {
+            held
+        }
     }
 }
 
@@ -1027,9 +1054,19 @@ impl NativeModel {
                 })
                 .transpose()?;
             let entries = parsed.unwrap_or_else(|| vec![("user", prompt)]);
+            let mut enable_thinking = None;
             let entries = entries
                 .into_iter()
                 .map(|(role, content)| {
+                    if role == "__talvik_template" {
+                        let value = content
+                            .strip_prefix("enable_thinking=")
+                            .ok_or_else(|| "invalid chat template option".to_owned())?
+                            .parse::<bool>()
+                            .map_err(|_| "invalid chat template option".to_owned())?;
+                        enable_thinking = Some(value);
+                        return Ok(None);
+                    }
                     let entry = if role == "__talvik_tools" {
                         (
                             "system".to_owned(),
@@ -1057,9 +1094,37 @@ impl NativeModel {
                     } else {
                         (role.to_owned(), content.to_owned())
                     };
-                    Ok(entry)
+                    Ok(Some(entry))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, String>>()?
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>();
+            let template_override = enable_thinking
+                .map(|enabled| {
+                    let mut template_text = CStr::from_ptr(template).to_string_lossy().into_owned();
+                    // Qwen3.5's template explicitly checks whether this option is
+                    // defined and false. The llama.cpp C chat-template API does
+                    // not expose arbitrary template kwargs, so specialize that
+                    // branch directly when the API request provides the option.
+                    let condition = "enable_thinking is defined and enable_thinking is false";
+                    if template_text.contains(condition) {
+                        template_text = template_text.replace(
+                            condition,
+                            if enabled { "false" } else { "true" },
+                        );
+                    } else {
+                        template_text = format!(
+                            "{{% set enable_thinking = {enabled} %}}\n{template_text}"
+                        );
+                    }
+                    CString::new(template_text)
+                    .map_err(|_| "model chat template contains NUL".to_owned())
+                })
+                .transpose()?;
+            let template = template_override
+                .as_ref()
+                .map_or(template, |template| template.as_ptr());
             let roles = entries
                 .iter()
                 .map(|(role, _)| {
@@ -2221,15 +2286,24 @@ mod tests {
     }
 
     #[test]
-    fn partial_marker_prefix_is_flushed_when_generation_ends() {
+    fn partial_marker_prefix_is_discarded_when_generation_ends() {
         let mut filter = super::EndMarkerFilter::default();
         let (text, seen) = filter.push("a <|im");
         assert_eq!(text, "a ");
         assert!(!seen);
-        assert_eq!(filter.finish(), "<|im");
+        assert!(filter.finish().is_empty());
         let (text, seen) = filter.push("plain | text");
         assert_eq!(text, "plain | text");
         assert!(!seen);
+    }
+
+    #[test]
+    fn repeated_marker_prefix_is_not_leaked_at_generation_end() {
+        let mut filter = super::EndMarkerFilter::default();
+        let (text, seen) = filter.push("answer<<");
+        assert_eq!(text, "answer");
+        assert!(!seen);
+        assert!(filter.finish().is_empty());
     }
 
     #[cfg(native_llama_cpp)]

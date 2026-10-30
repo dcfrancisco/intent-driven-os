@@ -111,14 +111,19 @@ provide `context_size`, bounded to 32,768 tokens in this first HTTP slice;
 the runtime also rejects generation when available memory is unknown or when
 the conservative model-plus-context reserve cannot be admitted. The response
 contains a Marina-owned `generation_id` separate from the caller's request ID.
+Chat Completions may set `chat_template_kwargs.enable_thinking` to a boolean;
+the native GGUF adapter applies it to models whose chat template exposes that
+option, including Qwen3.5.
 The current policy remains CPU-first and single-generation; accelerator-aware
 allocation and multi-generation scheduling are follow-on capabilities.
 
-This bridge currently supports model listing and non-streaming text chat. The
-token is an access credential for Marina; it is not a provider API key. Remote
-BYOK provider credentials are not yet implemented and must remain in the IDE
-or an OS secret manager. The bridge binds to loopback by default and must not
-be exposed publicly without the planned authenticated service boundary.
+This bridge supports model listing, streaming and non-streaming chat, function
+tool calls, and inline image input when the selected model has a vision
+projector. The token is an access credential for Marina; it is not a provider
+API key. Remote BYOK provider credentials are not yet implemented and must
+remain in the IDE or an OS secret manager. The bridge binds to loopback by
+default and must not be exposed publicly without the planned authenticated
+service boundary.
 
 The provider-neutral OID client uses `OID_MARINA_URL`, `OID_MARINA_TOKEN`, and
 optional `OID_MARINA_MODEL`. Its default endpoint is
