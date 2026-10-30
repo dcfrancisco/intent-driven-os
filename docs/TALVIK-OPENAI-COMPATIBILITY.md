@@ -131,6 +131,17 @@ The response contains `id`, `object: "chat.completion"`, `model`, `choices`,
 and `usage`. Talvik adds `generation_id`, `backend`, `execution`,
 `termination_reason`, and `metrics`.
 
+### Streaming lifecycle
+
+Chat Completions streams begin with the standard assistant-role delta before
+model output. While llama.cpp is evaluating a prompt or waiting in the bounded
+runtime scheduler, Talvik emits an SSE comment heartbeat (`: talvik
+keep-alive`) every ten seconds. Comments are ignored by OpenAI clients but keep
+long first-token requests from being mistaken for a dead connection. A normal
+stream still ends with a finish chunk followed by `data: [DONE]`; heartbeats
+never replace terminal events. This improves IDE interoperability but does not
+qualify inference latency or Continue on unsupported hardware.
+
 The standard completion envelope includes `created`. `usage.total_tokens` is
 derived from Talvik context-token statistics. The single-generation runtime
 always returns one choice; only `n: 1` is supported.
