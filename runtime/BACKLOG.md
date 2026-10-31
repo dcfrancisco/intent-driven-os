@@ -15,6 +15,14 @@ Items are intentionally written as design and implementation slices for future w
   Preserve `$HOME/.marina` in place until an atomic migration, rollback, and
   compatibility window are specified and tested.
 
+## Current stabilization priority — 2026-10-31
+
+WP-0111 owns the working local runner milestone and RC gates. Close real IDE
+failures, duplicate-daemon startup, concurrent admission races, native output
+artifacts, and installation payload gaps before expanding compatibility claims.
+Recurring soak automation is stopped; checks are targeted to a source change
+or an unresolved acceptance gate.
+
 ## Current execution sequence
 
 The repository now has a validated CPU-first local GGUF runner. Execute the

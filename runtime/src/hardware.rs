@@ -305,9 +305,9 @@ mod tests {
     fn detects_portable_snapshot_without_accelerator_requirements() {
         let service = HardwareService::detect(&EventBus::new());
         let snapshot = service.snapshot();
-        assert!(!snapshot.operating_system.is_empty());
-        assert!(!snapshot.architecture.is_empty());
-        assert!(!snapshot.machine_variant.is_empty());
+        assert_ne!(snapshot.operating_system, "");
+        assert_ne!(snapshot.architecture, "");
+        assert_ne!(snapshot.machine_variant, "");
         assert!(snapshot.logical_cores > 0);
     }
 }

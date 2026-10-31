@@ -473,8 +473,7 @@ fn inference_threads() -> i32 {
         .filter(|value| *value > 0)
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|count| i32::try_from(count.get()).unwrap_or(i32::MAX))
-                .unwrap_or(0)
+                .map_or(0, |count| i32::try_from(count.get()).unwrap_or(i32::MAX))
         })
 }
 
@@ -790,7 +789,23 @@ impl EndMarkerFilter {
             .iter()
             .filter_map(|marker| self.held.find(marker))
             .min();
-        if let Some(index) = earliest {
+        if let Some(mut index) = earliest {
+            // Bare markers also match inside a split angle-bracketed marker
+            // before its final '>' arrives. Consume its leading '<' as well.
+            if index > 0
+                && self.held.as_bytes()[index] == b'|'
+                && self.held.as_bytes()[index - 1] == b'<'
+            {
+                index -= 1;
+            }
+            // A model can repeat '<' before a split terminal marker. Keep
+            // these control-prefix bytes out of the completed response.
+            while index > 0
+                && self.held.as_bytes()[index] == b'<'
+                && self.held.as_bytes()[index - 1] == b'<'
+            {
+                index -= 1;
+            }
             let emit = self.held[..index].to_owned();
             self.held.clear();
             return (emit, true);
@@ -818,7 +833,12 @@ impl EndMarkerFilter {
             .map(char::len_utf8)
             .sum::<usize>();
         keep = keep.max(repeated_marker_prefix);
-        let split = self.held.len() - keep;
+        let mut split = self.held.len() - keep;
+        if keep > 0 && self.held.as_bytes()[split] == b'<' {
+            while split > 0 && self.held.as_bytes()[split - 1] == b'<' {
+                split -= 1;
+            }
+        }
         let emit = self.held[..split].to_owned();
         self.held.drain(..split);
         (emit, false)
@@ -841,6 +861,22 @@ impl EndMarkerFilter {
             held
         }
     }
+}
+
+// The C template API selects a built-in formatter; it does not evaluate the
+// GGUF's Jinja kwargs. Apply Qwen's documented assistant prefill explicitly.
+#[cfg_attr(not(native_llama_cpp), allow(dead_code))]
+fn apply_thinking_prefill(mut prompt: String, template: &str, enabled: Option<bool>) -> String {
+    if template.contains("enable_thinking") && template.contains("<think>") {
+        match enabled {
+            Some(false) if !prompt.ends_with("</think>\n\n") => {
+                prompt.push_str("<think>\n\n</think>\n\n");
+            }
+            Some(true) if !prompt.ends_with("<think>\n") => prompt.push_str("<think>\n"),
+            _ => {}
+        }
+    }
+    prompt
 }
 
 #[cfg(native_llama_cpp)]
@@ -1071,7 +1107,7 @@ impl NativeModel {
                         (
                             "system".to_owned(),
                             format!(
-                                "You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. Emit each call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{}}}}</tool_call>. The arguments must be valid JSON. Tools: {content}"
+                                "You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. Emit each call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{\"argument_name\":\"argument_value\"}}}}</tool_call>. Match argument names and types to the selected tool schema and include every required property. Never use an empty arguments object when required properties exist. The arguments must be valid JSON. Tools: {content}"
                             ),
                         )
                     } else if role == "__talvik_tool_choice" {
@@ -1100,31 +1136,6 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            let template_override = enable_thinking
-                .map(|enabled| {
-                    let mut template_text = CStr::from_ptr(template).to_string_lossy().into_owned();
-                    // Qwen3.5's template explicitly checks whether this option is
-                    // defined and false. The llama.cpp C chat-template API does
-                    // not expose arbitrary template kwargs, so specialize that
-                    // branch directly when the API request provides the option.
-                    let condition = "enable_thinking is defined and enable_thinking is false";
-                    if template_text.contains(condition) {
-                        template_text = template_text.replace(
-                            condition,
-                            if enabled { "false" } else { "true" },
-                        );
-                    } else {
-                        template_text = format!(
-                            "{{% set enable_thinking = {enabled} %}}\n{template_text}"
-                        );
-                    }
-                    CString::new(template_text)
-                    .map_err(|_| "model chat template contains NUL".to_owned())
-                })
-                .transpose()?;
-            let template = template_override
-                .as_ref()
-                .map_or(template, |template| template.as_ptr());
             let roles = entries
                 .iter()
                 .map(|(role, _)| {
@@ -1183,8 +1194,13 @@ impl NativeModel {
                 buffer.as_ptr().cast::<u8>(),
                 usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
             );
-            String::from_utf8(bytes.to_vec())
-                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+            let formatted = String::from_utf8(bytes.to_vec())
+                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())?;
+            Ok(apply_thinking_prefill(
+                formatted,
+                &CStr::from_ptr(template).to_string_lossy(),
+                enable_thinking,
+            ))
         }
     }
 
@@ -1441,7 +1457,7 @@ impl NativeModel {
                         mtmd_ffi::mtmd_tokenize(
                             mtmd,
                             chunks.0,
-                            &input_text,
+                            std::ptr::from_ref(&input_text),
                             bitmap_pointers.as_ptr(),
                             bitmap_pointers.len(),
                         )
@@ -1460,6 +1476,9 @@ impl NativeModel {
                     multimodal_bitmaps = Some(owned_bitmaps);
                 }
             }
+            eprintln!(
+                "llama.cpp generation prompt_tokens={prompt_count} context_size={context_size} max_tokens={max_tokens}"
+            );
             let prompt_count_u64 = prompt_count as u64;
             let max_context =
                 usize::try_from(context_size).map_err(|_| "context too large".to_owned())?;
@@ -1665,7 +1684,7 @@ impl NativeModel {
                             i32::try_from(physical_batch)
                                 .map_err(|_| "invalid batch size".to_owned())?,
                             true,
-                            &mut new_n_past,
+                            std::ptr::from_mut(&mut new_n_past),
                         )
                     };
                     match classify_decode_result(
@@ -2282,7 +2301,7 @@ mod tests {
         }
         assert_eq!(output, "11,664 ");
         assert!(terminal);
-        assert!(filter.finish().is_empty());
+        assert_eq!(filter.finish(), "");
     }
 
     #[test]
@@ -2291,7 +2310,7 @@ mod tests {
         let (text, seen) = filter.push("a <|im");
         assert_eq!(text, "a ");
         assert!(!seen);
-        assert!(filter.finish().is_empty());
+        assert_eq!(filter.finish(), "");
         let (text, seen) = filter.push("plain | text");
         assert_eq!(text, "plain | text");
         assert!(!seen);
@@ -2303,7 +2322,64 @@ mod tests {
         let (text, seen) = filter.push("answer<<");
         assert_eq!(text, "answer");
         assert!(!seen);
-        assert!(filter.finish().is_empty());
+        assert_eq!(filter.finish(), "");
+    }
+
+    #[test]
+    fn bare_marker_match_does_not_leak_its_angle_bracket_prefix() {
+        let mut filter = super::EndMarkerFilter::default();
+        let mut output = String::new();
+        let mut stopped = false;
+        for part in ["answer", "<", "|", "im", "_end", "|", ">"] {
+            let (delta, terminal) = filter.push(part);
+            output.push_str(&delta);
+            if terminal {
+                stopped = true;
+                break;
+            }
+        }
+        output.push_str(&filter.finish());
+        assert_eq!(output, "answer");
+        assert!(stopped);
+    }
+
+    #[test]
+    fn repeated_prefix_before_split_terminal_marker_is_not_emitted() {
+        let mut filter = super::EndMarkerFilter::default();
+        let mut output = String::new();
+        for part in ["answer<", "<|", "im_end", "|>"] {
+            let (delta, _) = filter.push(part);
+            output.push_str(&delta);
+        }
+        output.push_str(&filter.finish());
+        assert_eq!(output, "answer");
+        let (output, stopped) = filter.push("answer<<|im_end|>");
+        assert_eq!(output, "answer");
+        assert!(stopped);
+    }
+
+    #[test]
+    fn thinking_option_prefills_only_models_that_support_it() {
+        let template = "enable_thinking <think>";
+        let prompt = "assistant\n".to_owned();
+        let disabled = super::apply_thinking_prefill(prompt.clone(), template, Some(false));
+        assert_eq!(disabled, "assistant\n<think>\n\n</think>\n\n");
+        assert_eq!(
+            super::apply_thinking_prefill(disabled.clone(), template, Some(false)),
+            disabled
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), template, Some(true)),
+            "assistant\n<think>\n"
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), template, None),
+            prompt
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), "chatml", Some(false)),
+            prompt
+        );
     }
 
     #[cfg(native_llama_cpp)]
@@ -2380,12 +2456,9 @@ pub fn load_model(
         }
         #[cfg(native_mtmd)]
         let (mtmd, mtmd_relay) = if let Some(projector_path) = projector_path {
-            let projector_path = match CString::new(projector_path) {
-                Ok(path) => path,
-                Err(_) => {
-                    ffi::llama_model_free(pointer);
-                    return Err("projector path contains NUL".to_owned());
-                }
+            let Ok(projector_path) = CString::new(projector_path) else {
+                ffi::llama_model_free(pointer);
+                return Err("projector path contains NUL".to_owned());
             };
             let relay = Box::new(CancellationRelay {
                 current: AtomicPtr::new(std::ptr::null_mut()),

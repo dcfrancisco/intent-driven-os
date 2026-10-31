@@ -85,30 +85,38 @@ jobs:
           cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama-build"
           -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
           -DGGML_BLAS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
-          -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
-      - name: Build llama.cpp
-        run: cmake --build "$RUNNER_TEMP/llama-build" --config Release --target llama --parallel 2
+          -DLLAMA_BUILD_COMMON=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_MTMD=ON
+          -DMTMD_VIDEO=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+      - name: Enable Apple BLAS for macOS CPU prompt processing
+        if: runner.os == 'macOS'
+        run: >-
+          cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama-build"
+          -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=Apple
+      - name: Build llama.cpp and vision library
+        run: cmake --build "$RUNNER_TEMP/llama-build" --config Release --target llama mtmd --parallel 2
       - name: Collect native libraries (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p "$RUNNER_TEMP/talvik/lib"
-          find "$RUNNER_TEMP/llama-build" \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' \) -exec cp -a {} "$RUNNER_TEMP/talvik/lib" \;
+          find "$RUNNER_TEMP/llama-build" \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' \) -exec cp -a {} "$RUNNER_TEMP/talvik/lib" \;
           test -n "$(find "$RUNNER_TEMP/talvik/lib" -maxdepth 1 -type f -name 'libllama.*' -print -quit)"
+          test -n "$(find "$RUNNER_TEMP/talvik/lib" -maxdepth 1 -type f -name 'libmtmd.*' -print -quit)"
       - name: Collect native libraries (Windows)
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/talvik/lib" | Out-Null
-          Get-ChildItem -Path "$env:RUNNER_TEMP/llama-build" -Recurse -File -Include llama.lib,ggml*.lib,llama.dll,ggml*.dll | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/lib"
+          Get-ChildItem -Path "$env:RUNNER_TEMP/llama-build" -Recurse -File -Include llama.lib,ggml*.lib,mtmd.lib,llama.dll,ggml*.dll,mtmd.dll | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/lib"
           if (-not (Get-ChildItem -Path "$env:RUNNER_TEMP/talvik/lib" -Filter "llama.dll" -File)) { throw "llama.dll was not produced" }
       - name: Build Talvik (Unix)
         if: runner.os != 'Windows'
         run: |
-          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/talvik/lib" LLAMA_CPP_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
+          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/talvik/lib" LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
       - name: Build Talvik (Windows)
         if: runner.os == 'Windows'
         run: |
           $env:LLAMA_CPP_LIB_DIR = "$env:RUNNER_TEMP/talvik/lib"
           $env:LLAMA_CPP_REQUIRED = "1"
+          $env:LLAMA_CPP_MTMD_REQUIRED = "1"
           cargo install --path console --root "$env:RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
       - name: Package Unix
         if: runner.os != 'Windows'

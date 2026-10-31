@@ -176,9 +176,7 @@ fn _path_is_private(path: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o077 == 0)
-            .unwrap_or(false)
+        fs::metadata(path).is_ok_and(|metadata| metadata.permissions().mode() & 0o077 == 0)
     }
     #[cfg(not(unix))]
     {

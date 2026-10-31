@@ -429,7 +429,7 @@ mod tests {
             .expect("approve");
         assert!(store.is_approved(&operation_id).expect("approval lookup"));
         store.consume(&operation_id).expect("consume");
-        assert!(store.recoverable().expect("recover").is_empty());
+        assert_eq!(store.recoverable().expect("recover").len(), 0);
         std::fs::remove_file(path).expect("cleanup");
     }
 }

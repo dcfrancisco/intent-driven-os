@@ -181,13 +181,12 @@ impl Readiness {
 
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
-    address: &str,
+    listener: TcpListener,
     runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
     default_model_id: Option<&String>,
     readiness: &Arc<Readiness>,
 ) -> std::io::Result<()> {
-    let listener = TcpListener::bind(address)?;
     let default_model_id = default_model_id.cloned();
     let owners = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     for connection in listener.incoming() {
@@ -899,8 +898,7 @@ fn generate_ollama(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
                             finish_owner(owners, &request_id);
@@ -915,8 +913,7 @@ fn generate_ollama(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
                                 finish_owner(owners, &request_id);
@@ -933,8 +930,7 @@ fn generate_ollama(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
                             finish_owner(owners, &request_id);
@@ -1884,7 +1880,7 @@ impl ToolCallStreamParser {
                     TOOL_CALL_END.as_bytes(),
                 ) {
                     let end = self.close_search_from + relative;
-                    let value = serde_json::from_str::<Value>(&self.buffer[..end].trim())
+                    let value = serde_json::from_str::<Value>(self.buffer[..end].trim())
                         .map_err(|error| format!("malformed model tool call: {error}"))?;
                     parts.push(self.parse_call(&value)?);
                     self.buffer.drain(..end + TOOL_CALL_END.len());
@@ -2447,10 +2443,10 @@ fn parse_openai_response_format(
                     "`response_format.json_schema` contains an unsupported field".to_owned(),
                 ));
             }
-            if !spec
+            if spec
                 .get("name")
                 .and_then(Value::as_str)
-                .is_some_and(|name| !name.trim().is_empty())
+                .is_none_or(|name| name.trim().is_empty())
             {
                 return Err((
                     400,
@@ -2556,8 +2552,14 @@ fn validate_generation_request(
                 format!("`stream_options.{field}` is not supported yet"),
             ));
         }
-        if options.get("include_usage").is_some_and(|value| !value.is_boolean()) {
-            return Err((400, "`stream_options.include_usage` must be a boolean".to_owned()));
+        if options
+            .get("include_usage")
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err((
+                400,
+                "`stream_options.include_usage` must be a boolean".to_owned(),
+            ));
         }
         if !body.get("stream").and_then(Value::as_bool).unwrap_or(false) {
             return Err((
@@ -2590,13 +2592,11 @@ fn validate_generation_request(
     if body.get("tools").is_some() && !body.get("tools").is_some_and(Value::is_array) {
         return Err((400, "tools must be an array".to_owned()));
     }
-    if body.get("tool_choice").is_some() {
-        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
-            return Err((
-                501,
-                "`tool_choice` is only supported for Chat Completions".to_owned(),
-            ));
-        }
+    if body.get("tool_choice").is_some() && endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+        return Err((
+            501,
+            "`tool_choice` is only supported for Chat Completions".to_owned(),
+        ));
     }
     if let Some(value) = body.get("parallel_tool_calls") {
         if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
@@ -2685,7 +2685,7 @@ fn validate_generation_request(
         if let Some(value) = body.get(field) {
             if !value
                 .as_u64()
-                .is_some_and(|tokens| tokens > 0 && tokens <= u64::from(u32::MAX))
+                .is_some_and(|tokens| tokens > 0 && u32::try_from(tokens).is_ok())
             {
                 return Err((400, format!("{field} must be a positive integer")));
             }
@@ -2722,9 +2722,9 @@ fn validate_generation_request(
         }
     }
     if let Some(value) = body.get("seed") {
-        if !value
+        if value
             .as_u64()
-            .is_some_and(|seed| seed <= u64::from(u32::MAX))
+            .is_none_or(|seed| u32::try_from(seed).is_err())
         {
             return Err((400, "seed must be an unsigned 32-bit integer".to_owned()));
         }
@@ -2759,6 +2759,47 @@ fn validate_generation_request(
     Ok(())
 }
 
+fn generation_defaults(
+    body: &Value,
+    context_default: Option<&str>,
+    thinking_default: Option<&str>,
+) -> Result<(u32, Option<bool>), (u16, String)> {
+    let context = if let Some(value) = body.get("context_size") {
+        value
+            .as_u64()
+            .ok_or_else(|| (400, "context_size must be an integer".to_owned()))?
+    } else {
+        context_default
+            .unwrap_or("4096")
+            .parse::<u64>()
+            .map_err(|_| {
+                (
+                    500,
+                    "TALVIK_HTTP_CONTEXT_SIZE must be an integer".to_owned(),
+                )
+            })?
+    };
+    if context == 0 || context > MAX_CONTEXT_TOKENS {
+        return Err((
+            400,
+            format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
+        ));
+    }
+    let thinking = match parse_chat_template_kwargs(body)? {
+        Some(value) => Some(value),
+        None => thinking_default
+            .map(str::parse::<bool>)
+            .transpose()
+            .map_err(|_| {
+                (
+                    500,
+                    "TALVIK_ENABLE_THINKING must be true or false".to_owned(),
+                )
+            })?,
+    };
+    Ok((u32::try_from(context).unwrap_or(u32::MAX), thinking))
+}
+
 #[allow(clippy::too_many_lines)]
 fn generate(
     stream: &mut TcpStream,
@@ -2778,7 +2819,11 @@ fn generate(
         Ok(output) => output,
         Err((status, message)) => return respond_error(stream, status, message),
     };
-    let enable_thinking = match parse_chat_template_kwargs(body) {
+    let (context_size, enable_thinking) = match generation_defaults(
+        body,
+        std::env::var("TALVIK_HTTP_CONTEXT_SIZE").ok().as_deref(),
+        std::env::var("TALVIK_ENABLE_THINKING").ok().as_deref(),
+    ) {
         Ok(value) => value,
         Err((status, message)) => return respond_error(stream, status, message),
     };
@@ -2829,7 +2874,9 @@ fn generate(
         Err(message) => return respond_error(stream, 400, message),
     };
     let base_prompt = prompt.clone();
-    if let Some(enabled) = enable_thinking {
+    if let Some(enabled) =
+        enable_thinking.filter(|_| endpoint == OpenAiGenerationEndpoint::ChatCompletions)
+    {
         prompt.insert_str(
             0,
             &format!("\u{001e}__talvik_template\nenable_thinking={enabled}"),
@@ -2880,18 +2927,7 @@ fn generate(
         .get("timeout_ms")
         .and_then(Value::as_u64)
         .map(|milliseconds| Duration::from_millis(milliseconds.min(300_000)));
-    let context_size = body
-        .get("context_size")
-        .and_then(Value::as_u64)
-        .unwrap_or(4096);
-    if context_size == 0 || context_size > MAX_CONTEXT_TOKENS {
-        return respond_error(
-            stream,
-            429,
-            format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
-        );
-    }
-    let options = generation_options(body, u32::try_from(context_size).unwrap_or(u32::MAX));
+    let options = generation_options(body, context_size);
     let response_temperature = options.temperature;
     let response_top_p = options.top_p;
     let created = match openai_timestamp() {
@@ -2974,10 +3010,7 @@ fn generate(
             ) {
                 generation.cancel();
                 if !drain_cancelled_generation(&generation) {
-                    eprintln!(
-                        "Talvik HTTP generation cleanup timed out request_id={}",
-                        request_id
-                    );
+                    eprintln!("Talvik HTTP generation cleanup timed out request_id={request_id}");
                 }
                 finish_owner(owners, &request_id);
                 return Err(error);
@@ -3011,8 +3044,7 @@ fn generate(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
                             finish_owner(owners, &request_id);
@@ -3043,8 +3075,7 @@ fn generate(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
                                 finish_owner(owners, &request_id);
@@ -3068,8 +3099,7 @@ fn generate(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
                             finish_owner(owners, &request_id);
@@ -3110,8 +3140,7 @@ fn generate(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
                                 finish_owner(owners, &request_id);
@@ -3195,16 +3224,14 @@ fn generate(
                                 }
                                 streamed_tool_calls.push(call.clone());
                             }
-                            if let Err(error) = write_openai_tool_stream_part(
+                            write_openai_tool_stream_part(
                                 stream,
                                 &request_id,
                                 created,
                                 model,
                                 part,
                                 &mut stream_headers_sent,
-                            ) {
-                                return Err(error);
-                            }
+                            )?;
                         }
                         (!streamed_tool_calls.is_empty()).then(|| streamed_tool_calls.clone())
                     } else {
@@ -3715,7 +3742,13 @@ fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
         .or_else(|| body.get("max_output_tokens"))
         .or_else(|| body.get("max_tokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(128)
+        .unwrap_or_else(|| {
+            std::env::var("TALVIK_HTTP_MAX_TOKENS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(128)
+        })
         .min(u64::from(u32::MAX));
     let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let temperature = body
@@ -3928,6 +3961,34 @@ mod tests {
     fn rejects_oversized_http_bodies() {
         assert!(request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES));
         assert!(!request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES + 1));
+    }
+
+    #[test]
+    fn daemon_defaults_support_ide_context_and_allow_request_overrides() {
+        assert_eq!(
+            super::generation_defaults(&json!({}), None, None),
+            Ok((4096, None))
+        );
+        assert_eq!(
+            super::generation_defaults(&json!({}), Some("16384"), Some("false")),
+            Ok((16384, Some(false)))
+        );
+        assert_eq!(
+            super::generation_defaults(
+                &json!({"context_size":8192,"chat_template_kwargs":{"enable_thinking":true}}),
+                Some("16384"),
+                Some("false")
+            ),
+            Ok((8192, Some(true)))
+        );
+        for (context, thinking) in [
+            ("0", "false"),
+            ("32769", "false"),
+            ("bad", "false"),
+            ("16384", "bad"),
+        ] {
+            assert!(super::generation_defaults(&json!({}), Some(context), Some(thinking)).is_err());
+        }
     }
 
     #[test]
@@ -4546,7 +4607,10 @@ mod tests {
         .is_ok());
         for (body, status) in [
             (json!({"stream_options":{"include_usage":true}}), 400),
-            (json!({"stream":true,"stream_options":{"include_usage":"yes"}}), 400),
+            (
+                json!({"stream":true,"stream_options":{"include_usage":"yes"}}),
+                400,
+            ),
             (json!({"stream":true,"stream_options":"x"}), 400),
             (json!({"stream":true,"stream_options":{"other":1}}), 501),
         ] {

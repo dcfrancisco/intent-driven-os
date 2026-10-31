@@ -962,8 +962,11 @@ mod tests {
         )
         .expect("parse remote snapshot");
 
-        assert!(snapshot.loaded_models.is_empty());
-        assert!(snapshot.resident_models.is_empty());
+        assert_eq!(snapshot.loaded_models, [] as [std::string::String; 0]);
+        assert_eq!(
+            snapshot.resident_models,
+            [] as [oid_runtime::ResidentModelSnapshot; 0]
+        );
     }
 
     #[test]

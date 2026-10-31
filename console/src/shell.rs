@@ -351,6 +351,6 @@ mod tests {
             directory: WorkingDirectoryManager::from_path(directory),
             signals,
         };
-        assert!(controller.execute("true").is_empty());
+        assert_eq!(controller.execute("true"), [] as [std::string::String; 0]);
     }
 }

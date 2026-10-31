@@ -73,3 +73,32 @@ fn local_console_rejects_http_backend_selection() {
     assert!(stderr.contains("oid-console is a local MarinaOS client"));
     assert!(stderr.contains("only supports Talvik IPC"));
 }
+
+#[test]
+fn daemon_rejects_an_occupied_http_port_before_starting_the_runtime() {
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupied port");
+    let root = std::env::temp_dir().join(format!("talvik-duplicate-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_talvikd"))
+        .env(
+            "TALVIK_HTTP_ADDR",
+            occupied.local_addr().expect("address").to_string(),
+        )
+        .env("TALVIK_HOME", &root)
+        .env("TALVIK_CONFIG", root.join("config.yaml"))
+        .env("TALVIK_SOCKET", root.join("daemon.sock"))
+        .output()
+        .expect("duplicate daemon should exit");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot bind Talvik HTTP listener"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("loaded meta data"),
+        "model loading must not start"
+    );
+    if root.exists() {
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+}

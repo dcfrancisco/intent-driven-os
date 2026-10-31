@@ -2,5 +2,5 @@
 
 #[test]
 fn crate_boundary_is_reachable() {
-    assert!(!oid_linux_skills::boundary_name().is_empty());
+    assert_ne!(oid_linux_skills::boundary_name(), "");
 }

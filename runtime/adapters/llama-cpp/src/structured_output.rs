@@ -244,6 +244,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a real GGUF in MARINA_TEST_GGUF and native llama.cpp"]
+    #[allow(clippy::too_many_lines)]
     fn native_grammar_sampler_constrains_json_and_recovers_after_cancellation() {
         let model_path = std::env::var("MARINA_TEST_GGUF")
             .expect("MARINA_TEST_GGUF must point to a local GGUF model");
@@ -342,8 +343,11 @@ mod tests {
                     cancelled.cancel();
                 }
                 Ok(GenerationEvent::Token(_)) => {}
-                Ok(GenerationEvent::Completed(_) | GenerationEvent::Cancelled(_))
-                | Ok(GenerationEvent::Error(_)) => break,
+                Ok(
+                    GenerationEvent::Completed(_)
+                    | GenerationEvent::Cancelled(_)
+                    | GenerationEvent::Error(_),
+                ) => break,
                 Err(error) => panic!("cancelled structured generation timed out: {error}"),
             }
         }

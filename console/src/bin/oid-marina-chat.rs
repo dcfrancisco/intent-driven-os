@@ -183,7 +183,11 @@ fn fallback_model(models: &[ModelDescriptor], failed: &str) -> Option<String> {
     models
         .iter()
         .filter(|model| !model.id.eq_ignore_ascii_case(failed))
-        .filter(|model| model.estimated_memory_mib.is_some_and(|estimate| estimate > 0))
+        .filter(|model| {
+            model
+                .estimated_memory_mib
+                .is_some_and(|estimate| estimate > 0)
+        })
         .min_by_key(|model| model.estimated_memory_mib)
         .map(|model| model.id.clone())
 }
@@ -529,7 +533,7 @@ fn format_execution(execution: Option<&ExecutionPlacement>) -> String {
     let fallback = execution
         .fallback_reason
         .as_deref()
-        .map_or_else(|| "none".to_owned(), |reason| reason.to_owned());
+        .map_or_else(|| "none".to_owned(), std::borrow::ToOwned::to_owned);
     format!(
         "backend {backend}; device {device}; requested GPU layers {requested_layers}; GPU layers offloaded {offloaded_layers}; Vulkan {vulkan}; fallback {fallback}"
     )

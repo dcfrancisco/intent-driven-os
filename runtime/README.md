@@ -113,7 +113,17 @@ the conservative model-plus-context reserve cannot be admitted. The response
 contains a Marina-owned `generation_id` separate from the caller's request ID.
 Chat Completions may set `chat_template_kwargs.enable_thinking` to a boolean;
 the native GGUF adapter applies it to models whose chat template exposes that
-option, including Qwen3.5.
+option, including Qwen3.5. The C template formatter uses built-in formats,
+so the adapter supplies the supported thinking prefill explicitly.
+`TALVIK_HTTP_CONTEXT_SIZE` changes the default HTTP context from 4,096 tokens
+(maximum 32,768); `TALVIK_ENABLE_THINKING=false` disables thinking by default
+for templates that support it. Explicit request values override these defaults.
+These daemon defaults also work with IDE clients that discard extra model
+options. Advertise an IDE input-plus-output budget smaller than the configured
+context to leave room for native chat-template tokens.
+`TALVIK_HTTP_MAX_TOKENS` sets the default output budget (otherwise 128) when
+an IDE omits both `max_tokens` and `max_completion_tokens`; explicit request
+limits take precedence.
 The current policy remains CPU-first and single-generation; accelerator-aware
 allocation and multi-generation scheduling are follow-on capabilities.
 
@@ -141,3 +151,13 @@ External HTTP clients configure `OID_MARINA_URL`, `OID_MARINA_TOKEN`, and
 optionally `OID_MARINA_MODEL` in their own client process. Keep HTTP bound to
 loopback unless a trusted TLS, identity, authorization, and network-exposure
 policy has been configured.
+
+Daemon startup reserves its HTTP and local IPC listeners before starting the
+runtime. A second process using the same listener exits with an address-in-use
+error. A running Unix socket is preserved; only a stale socket is removed on
+restart. Separate development instances require separate listener addresses
+and state directories.
+
+Concurrent HTTP clients and IDE utility requests share the runtime's bounded
+single-generation queue. Admission and enqueue transitions are synchronized so
+simultaneous requests cannot race for the active slot or miss queue wakeups.

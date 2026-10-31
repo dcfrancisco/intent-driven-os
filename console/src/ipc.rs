@@ -69,22 +69,49 @@ pub fn endpoint() -> String {
 pub fn bind_listener() -> io::Result<TalvikListener> {
     #[cfg(unix)]
     {
-        let socket = socket_path();
-        if socket.exists() {
-            std::fs::remove_file(&socket)?;
-        }
-        let listener = UnixListener::bind(&socket)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(listener)
+        bind_unix_listener(&socket_path())
     }
     #[cfg(windows)]
     {
         TcpListener::bind(endpoint())
     }
+}
+
+#[cfg(unix)]
+fn bind_unix_listener(socket: &std::path::Path) -> io::Result<UnixListener> {
+    use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+    if socket.exists() {
+        if !std::fs::symlink_metadata(socket)?.file_type().is_socket() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Talvik socket path is not a socket",
+            ));
+        }
+        match UnixStream::connect(socket) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!("Talvik is already running at {}", socket.display()),
+                ))
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
+                ) =>
+            {
+                match std::fs::remove_file(socket) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let listener = UnixListener::bind(socket)?;
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
 }
 
 /// Connect a local Talvik client transport.
@@ -149,5 +176,40 @@ pub fn ensure_socket_parent() -> io::Result<()> {
             std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn running_socket_is_preserved_and_stale_socket_can_be_restarted() {
+        let socket = std::env::temp_dir().join(format!("tv-singleton-{}.sock", std::process::id()));
+        let first = super::bind_unix_listener(&socket).expect("first daemon");
+        let error = super::bind_unix_listener(&socket).expect_err("duplicate daemon must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        let client = super::UnixStream::connect(&socket).expect("original listener remains live");
+        // Drain both health probes before closing. macOS may keep a listener
+        // reachable while accepted-but-unconsumed connections remain queued.
+        drop(first.accept().expect("duplicate probe"));
+        drop(first.accept().expect("connectivity probe"));
+        drop(client);
+        drop(first);
+        // Other tests fork shell children concurrently. Until their exec closes
+        // inherited descriptors, macOS can still see this listener as live.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let restarted = loop {
+            match super::bind_unix_listener(&socket) {
+                Ok(listener) => break listener,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::AddrInUse
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("stale socket is recoverable: {error}"),
+            }
+        };
+        drop(restarted);
+        std::fs::remove_file(socket).expect("cleanup socket");
     }
 }

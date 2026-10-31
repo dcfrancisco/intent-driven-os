@@ -61,7 +61,7 @@ impl ConsoleProcess {
             cleanup_state,
             _daemon: daemon,
         };
-        process.wait_for_text("✓ Console ready");
+        process.wait_for_text("to begin.");
         process
     }
 
