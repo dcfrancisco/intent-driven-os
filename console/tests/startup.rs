@@ -26,11 +26,13 @@ fn console_binary_starts_with_runtime_prompt() {
     std::fs::remove_dir_all(&state_root).expect("cleanup startup test state");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("startup output is UTF-8");
-    assert!(stdout.contains("AI CONSOLE"));
-    assert!(stdout.contains("Runtime:"));
-    assert!(stdout.contains("Available models:") || stdout.contains("No models found"));
+    assert!(stdout.contains("OID Console"));
+    assert!(stdout.contains("Type :help to begin."));
+    assert!(!stdout.contains("Available models:"));
+    assert!(!stdout.contains("Intelligent Runtime"));
+    assert!(!stdout.contains('\x1b'));
     assert!(!stdout.contains("No models installed."));
-    assert!(stdout.contains("$ "));
+    assert!(stdout.contains(". "));
 }
 
 #[test]

@@ -201,3 +201,40 @@ TALVIK_TEST_NATIVE_LIB_DIR="$HOME/.marina/lib" python3 scripts/test-talvik-termi
 The terminal checks launch real clients in pseudo-terminals against a local
 fixture daemon; they do not require models or modify the installed daemon.
 Conventions: <https://clig.dev/#output> and <https://no-color.org/>.
+
+
+### OID Console: dot prompt and compact status
+
+Start the optional console with `oid-console`. The dBase-style `. ` prompt stays
+constant when changing directories. Ordinary input still goes to the shell;
+OID commands use their existing colon namespace: `:help`, `:status`, `:generate`,
+and `:quit`. Use `pwd` to inspect the current directory.
+
+The interactive footer reserves one bottom row for **state · model**, with a
+`:help` hint only when there is room. There is no model inventory or telemetry
+dump at startup, no repeated status lines in command output, and no extra block
+cursor drawn into input. Runtime details remain available with `:status`,
+`:hardware` and model/backend commands. `OID_STATUS_MODE=hidden` removes the
+footer. The legacy `full` setting now retains the same compact footer rather
+than restoring the automatic telemetry dump.
+
+The console respects the terminal palette and `NO_COLOR`. Long command lines
+use a single-row viewport; history, Unicode input, Home/End, Ctrl+A/E, Ctrl+L,
+Ctrl+C and Ctrl+D are supported. Bracketed multiline paste becomes one editable
+line rather than executing commands automatically. Native programs temporarily
+regain the whole terminal; the footer returns after they exit. Resize, graceful
+exit and handled signals restore terminal settings. Plain/dumb terminals and
+pipes receive no footer/cursor escape sequences, including from `:clear`.
+
+`OID_HISTORY_FILE` overrides the normal `~/.oip/history` path, including for
+isolated development checks. The presentation stays in the client; model
+ownership and the governed operation boundary remain in Talvik/OID services.
+
+```sh
+TALVIK_TEST_NATIVE_LIB_DIR="$HOME/.marina/lib" python3 scripts/test-oid-console-terminal.py target/debug
+```
+
+The Unix acceptance suite uses a fixture daemon and pseudo-terminals to check
+footer layout, resize, shell handoff, Unicode, hidden/plain modes and terminal
+restoration. Input and resize handling use [crossterm](https://docs.rs/crossterm/0.28.1/crossterm/event/index.html);
+width calculations use [unicode-width](https://docs.rs/unicode-width/0.2.0/unicode_width/).

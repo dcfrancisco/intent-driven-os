@@ -32,3 +32,21 @@ WP-0002, WP-0007, WP-0009, WP-0010; ADR-0004, ADR-0005.
 
 Add shell escape modes, configurable themes, panes, local history, remote sessions, and desktop embedding.
 
+
+
+## Dot-prompt implementation, 2026-10-31
+
+The console now uses a dBase-style `. ` prompt, a restrained two-line heading,
+and one pinned status row with state/model only. No inline presence glyph or
+startup model dump remains. Detailed state is requested through `:status` and
+other inspection commands. `OID_STATUS_MODE=hidden` is supported; legacy `full`
+no longer makes the default screen crowded.
+
+Terminal input is event-driven, supports Unicode and a horizontal viewport,
+and responds to resize. Native commands temporarily get the full terminal;
+normal exit, cancellation and handled shutdown restore terminal settings.
+The colon command namespace and OID approval/evidence boundaries are unchanged.
+
+Executable verification: `scripts/test-oid-console-terminal.py` against built
+clients, plus console unit/process tests. Qualification is local Intel macOS;
+no other platform claim follows from these checks.

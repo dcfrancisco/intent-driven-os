@@ -80,32 +80,46 @@ impl Application {
 
     /// Run the interactive console until exit, cancellation, or end-of-file.
     pub fn run(mut self) -> io::Result<()> {
-        Renderer::render_startup(self.runtime.as_ref());
+        Renderer::render_startup();
         self.presence.refresh();
-        Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
+        let mut footer = self.status_bar.attach(self.runtime.as_ref())?;
         loop {
-            self.prompt.set_directory(self.shell.directory.current());
             match LineEditor::read_command(
                 &self.prompt,
                 &mut self.history,
                 self.runtime.as_ref(),
                 &mut self.presence,
                 &self.shell.signals,
+                &mut footer,
             )? {
                 EditResult::Submitted(line) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
                     self.history.push(line.clone());
                     let result = match self.router.route(&line) {
-                        InputRoute::Oid(command) => commands::execute_with_operations_and_signals(
-                            &command,
-                            &HistoryView::new(self.history.entries()),
-                            self.runtime.as_ref(),
-                            &mut self.operations,
-                            Some(&self.shell.signals),
-                        ),
-                        InputRoute::Shell(command) => commands::CommandResult {
-                            output: self.shell.execute(&command),
-                            action: CommandAction::Continue,
-                        },
+                        InputRoute::Oid(command) => {
+                            footer.update(
+                                self.runtime.as_ref(),
+                                crate::presence::PresenceState::Busy,
+                            )?;
+                            commands::execute_with_operations_and_signals(
+                                &command,
+                                &HistoryView::new(self.history.entries()),
+                                self.runtime.as_ref(),
+                                &mut self.operations,
+                                Some(&self.shell.signals),
+                            )
+                        }
+                        InputRoute::Shell(command) => {
+                            footer.suspend()?;
+                            let output = self.shell.execute(&command);
+                            footer.resume()?;
+                            commands::CommandResult {
+                                output,
+                                action: CommandAction::Continue,
+                            }
+                        }
                     };
                     let shutdown_requested = self.shell.signals.is_shutdown_requested();
                     self.presence.refresh();
@@ -113,20 +127,22 @@ impl Application {
                         Renderer::clear()?;
                     }
                     Renderer::render_output(&result.output);
-                    Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
+                    footer.update(self.runtime.as_ref(), self.presence.state())?;
                     if result.action == CommandAction::Exit || shutdown_requested {
                         self.runtime.stop();
                         self.presence.refresh();
+                        drop(footer);
                         Renderer::render_shutdown();
                         break;
                     }
                 }
                 EditResult::Cancelled => {
-                    Renderer::render_status(self.runtime.as_ref(), &self.status_bar);
+                    footer.update(self.runtime.as_ref(), self.presence.state())?;
                 }
                 EditResult::Eof => {
                     self.runtime.stop();
                     self.bus.publish(&RuntimeEvent::RuntimeStopped);
+                    drop(footer);
                     Renderer::render_shutdown();
                     break;
                 }

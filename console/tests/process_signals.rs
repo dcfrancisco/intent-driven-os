@@ -47,6 +47,7 @@ impl ConsoleProcess {
             .env("TALVIK_REGISTRY", state_root.join("models.registry"))
             .env("TALVIK_SOCKET", state_root.join("talvik.sock"))
             .env("TALVIK_TOKEN_FILE", state_root.join("tokens"))
+            .env("OID_HISTORY_FILE", state_root.join("history"))
             .env("OID_STATE_DIR", &state_root)
             .env("OID_RUNTIME_BACKEND", "talvik-ipc");
         daemon.configure(&mut command);

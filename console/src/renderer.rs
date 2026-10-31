@@ -1,7 +1,6 @@
 //! Console rendering boundary.
 
-use crate::status_bar::StatusBar;
-use oid_runtime::RuntimeService;
+use crate::terminal_ui;
 use std::io::{self, Write};
 
 /// Terminal renderer for the interactive console.
@@ -9,34 +8,17 @@ use std::io::{self, Write};
 pub struct Renderer;
 
 impl Renderer {
-    /// Render the startup banner and current runtime/model state.
-    pub fn render_startup(runtime: &dyn RuntimeService) {
-        let snapshot = runtime.snapshot();
-        let models = runtime.model_list();
-        println!("=================================================");
-        println!(" AI CONSOLE");
-        println!(" Intelligent Runtime v0.1");
-        println!("=================================================");
-        println!();
-        println!("Runtime: {} ({})", snapshot.health, snapshot.backend);
-        if models.is_empty() {
-            println!("No models found in the active runtime.");
-        } else {
-            println!("Available models:");
-            for model in models {
-                println!("  {} [{:?}]", model.id, model.status);
-            }
-        }
-        println!();
-        println!("Type");
-        println!("help");
-        println!("to begin.");
-        println!();
-    }
-
-    /// Render the permanent status line.
-    pub fn render_status(runtime: &dyn RuntimeService, status_bar: &StatusBar) {
-        status_bar.render(runtime);
+    /// Render a restrained console heading and command hint.
+    pub fn render_startup() {
+        println!(
+            "\n{} {}",
+            terminal_ui::accent("1;36", "OID Console"),
+            terminal_ui::accent("2", env!("CARGO_PKG_VERSION"))
+        );
+        println!(
+            "{}\n",
+            terminal_ui::accent("2", "Type :help to begin. :quit to exit.")
+        );
     }
 
     /// Render command output without adding UI state of its own.
@@ -48,6 +30,9 @@ impl Renderer {
 
     /// Render the terminal clear operation.
     pub fn clear() -> io::Result<()> {
+        if !terminal_ui::interactive() {
+            return Ok(());
+        }
         let mut stdout = io::stdout().lock();
         write!(stdout, "\x1b[2J\x1b[H")?;
         stdout.flush()
@@ -55,6 +40,6 @@ impl Renderer {
 
     /// Render a shutdown message.
     pub fn render_shutdown() {
-        println!("Runtime stopped.");
+        println!("Console closed.");
     }
 }
