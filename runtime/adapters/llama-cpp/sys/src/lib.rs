@@ -1257,6 +1257,40 @@ fn tool_declarations(template: &str, content: &str) -> Result<String, String> {
     }
 }
 
+// Match the embedded tools branch: client instructions, tool declarations,
+// then tool-choice restrictions in the initial system message. Never move
+// conversation messages or later system turns across a user/tool boundary.
+#[cfg(any(native_llama_cpp, test))]
+fn merge_tool_system_prefix(entries: Vec<(String, String)>) -> Vec<(String, String)> {
+    let prefix_len = entries
+        .iter()
+        .take_while(|(role, _)| {
+            matches!(
+                role.as_str(),
+                "system" | "__talvik_tools" | "__talvik_tool_choice"
+            )
+        })
+        .count();
+    if !entries[..prefix_len]
+        .iter()
+        .any(|(role, _)| role == "__talvik_tools")
+    {
+        return entries;
+    }
+    let mut parts = Vec::new();
+    for role in ["system", "__talvik_tools", "__talvik_tool_choice"] {
+        parts.extend(
+            entries[..prefix_len]
+                .iter()
+                .filter(|(entry_role, _)| entry_role == role)
+                .map(|(_, text)| text.as_str()),
+        );
+    }
+    let mut merged = vec![("system".to_owned(), parts.join("\n\n"))];
+    merged.extend(entries.into_iter().skip(prefix_len));
+    merged
+}
+
 #[cfg(any(native_llama_cpp, test))]
 fn verified_checkpoint_position(prefix: &[i32], prompt: &[i32]) -> Option<usize> {
     // BPE tokenization can merge at a text boundary. Text-prefix matching alone
@@ -1531,7 +1565,7 @@ impl NativeModel {
                             None => return Err("the loaded model has no supported tool output format".to_owned()),
                         };
                         let declarations = tool_declarations(&CStr::from_ptr(template).to_string_lossy(), content)?;
-                        ("system".to_owned(), format!("{declarations}\n\n{format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Do not invoke tools just because they are available. When tool use is optional, answer self-contained questions directly without tools. When the user's request requires an external action, invoke an available tool that performs it; narration does not execute an action. Do not end with a promise to perform an action instead of calling the tool. Respect the user's requested scope, including exclusions such as no tests or no edits. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results or claim execution without a corresponding result."))
+                        ("__talvik_tools".to_owned(), format!("{declarations}\n\n{format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Do not invoke tools just because they are available. When tool use is optional, answer self-contained questions directly without tools. When the user's request requires an external action, invoke an available tool that performs it; narration does not execute an action. Do not end with a promise to perform an action instead of calling the tool. Respect the user's requested scope, including exclusions such as no tests or no edits. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results or claim execution without a corresponding result."))
                     } else if role == "__talvik_tool_calls" {
                         ("assistant".to_owned(), render_tool_history(content, self.profile.tool_format)?)
                     } else if role == "tool" && self.profile.tool_format.is_some()
@@ -1556,7 +1590,7 @@ impl NativeModel {
                             ),
                             _ => return Err("invalid tool-choice prompt directive".to_owned()),
                         };
-                        ("system".to_owned(), instruction)
+                        ("__talvik_tool_choice".to_owned(), instruction)
                     } else {
                         (role.to_owned(), content.to_owned())
                     };
@@ -1566,6 +1600,7 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
+            let entries = merge_tool_system_prefix(entries);
             render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
                 |mut prompt| {
                     // Never constrain hidden reasoning as if it were a tool call.
@@ -2544,6 +2579,34 @@ mod tests {
             format!("Tools: {tools}")
         );
         assert!(super::tool_declarations("<tools></tools> <tool_call> tojson", "bad").is_err());
+    }
+
+    #[test]
+    fn tool_system_prefix_matches_declared_order_without_moving_history() {
+        let pairs = |values: &[(&str, &str)]| {
+            values
+                .iter()
+                .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                .collect()
+        };
+        let input = pairs(&[
+            ("__talvik_tool_choice", "Required"),
+            ("__talvik_tools", "Tools"),
+            ("system", "Client"),
+            ("user", "Build"),
+            ("system", "Later"),
+        ]);
+        let merged = super::merge_tool_system_prefix(input);
+        assert_eq!(
+            merged,
+            pairs(&[
+                ("system", "Client\n\nTools\n\nRequired"),
+                ("user", "Build"),
+                ("system", "Later")
+            ])
+        );
+        let plain = pairs(&[("system", "A"), ("system", "B"), ("user", "C")]);
+        assert_eq!(super::merge_tool_system_prefix(plain.clone()), plain);
     }
 
     #[test]

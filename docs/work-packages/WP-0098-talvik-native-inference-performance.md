@@ -283,3 +283,11 @@ actual calls for external actions and evidence before execution claims; they do
 not force `tool_choice:auto`, execute commands, or bypass client approvals.
 The Coding preset narrows build-only scope and removes unconditional inspection.
 Live action-selection and actual IDE execution remain separate acceptance gates.
+
+The first live IDE retry executed a real Maven build (exit 0) but chose
+`clean install`, violating the preset's narrowed build-only scope. Native
+formatting now also matches the initial system-message order of the tools
+branch: client instructions, tool declarations, and explicit choice restrictions.
+Only the leading system/tool metadata prefix is combined. Conversation history
+and later system messages stay in place; requests without tools are unchanged.
+The earlier IDE run proves execution follow-through, not scope compliance.
