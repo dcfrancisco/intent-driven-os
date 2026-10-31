@@ -47,7 +47,7 @@ Talvik is the model provider; the coding assistant owns workspace tools.
 | VS Code Plan | Actual planning request, with truthful tool/context use | Pending |
 | Prompt performance | Same prompt and correctness before/after optimization | Correct PERF_OK at 769 tokens: 33.9s to 25.4s prompt processing (1.33x), local CPU only |
 | Installer contract | Native vision payload, path escaping, source/archive, preservation | Five executable installer tests, including incomplete-payload rejection and host-library isolation |
-| Relocatable release install | Real archive, no developer library paths, status, uninstall | Pending |
+| Relocatable release install | Real archive, no developer library paths, status, uninstall | Passed locally; smoke harness clears host runner configuration and uses isolated state |
 | One state directory | CLI and HTTP use the same daemon, registry, and model pairings | Passed: canonical registry/socket migration and CLI status use the same daemon |
 | Workspace validation | Formatting and all workspace tests | Passed locally; see the build qualification report for totals |
 | Strict Clippy | Same strict command as release CI | Blocked by existing HTTP function shape/ownership lint and test assertion cleanup; no RC claim |

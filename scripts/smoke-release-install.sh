@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ARCHIVE="${1:?usage: $0 RELEASE_ARCHIVE}"
+# Do not let a developer's shell select their real registry/config/model state.
+for variable in $(compgen -v); do
+  case "$variable" in TALVIK_*|MARINA_*|OID_*) unset "$variable" ;; esac
+done
+unset DYLD_LIBRARY_PATH LD_LIBRARY_PATH LLAMA_CPP_LIB_DIR
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/talvik-release-smoke.XXXXXX")"
 PREFIX="$WORK/prefix"
@@ -22,7 +27,7 @@ PAYLOAD="$WORK/talvik"
 [[ -x "$PAYLOAD/bin/talvik" && -x "$PAYLOAD/bin/talvikd" ]] || {
   echo "archive does not contain talvik/bin/talvik and talvikd" >&2; exit 1;
 }
-(cd "$PAYLOAD" && ./install-model-runner.sh --prefix "$PREFIX")
+(cd "$PAYLOAD" && TALVIK_HOME="$STATE" TALVIK_STATE_DIR="$STATE" TALVIK_MODEL_DIR="$STATE/models" ./install-model-runner.sh --prefix "$PREFIX")
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --help >/dev/null
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --version >/dev/null
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvikd" --help >/dev/null
