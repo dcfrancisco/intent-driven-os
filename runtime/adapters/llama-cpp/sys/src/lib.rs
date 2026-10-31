@@ -1453,6 +1453,12 @@ impl NativeModel {
                         ("system".to_owned(), format!("You may call one or more of these tools. Call a tool when needed to fulfill the request. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results. {format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Tools: {content}"))
                     } else if role == "__talvik_tool_calls" {
                         ("assistant".to_owned(), render_tool_history(content, self.profile.tool_format)?)
+                    } else if role == "tool" && self.profile.tool_format.is_some()
+                        && CStr::from_ptr(template).to_bytes().windows(b"<tool_response>".len()).any(|part| part == b"<tool_response>")
+                        && CStr::from_ptr(template).to_bytes().windows(b"</tool_response>".len()).any(|part| part == b"</tool_response>") {
+                        // The role/content C API does not implement the full
+                        // Jinja tool branch. Honor its declared response wrapper.
+                        ("user".to_owned(), format!("<tool_response>\n{content}\n</tool_response>"))
                     } else if role == "__talvik_tool_choice" {
                         let instruction = match content {
                             "single" => {

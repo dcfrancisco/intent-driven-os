@@ -206,3 +206,8 @@ protocol cannot represent. Tool instructions now explicitly prefer using
 available results over repeating completed calls. This does not execute calls
 or relax validation of calls emitted by the model. Live continuation behavior
 must be rechecked; this source change alone is not proof of a fix.
+
+For templates declaring both `<tool_response>` markers and a supported tool
+format, tool results now use that response wrapper under a user role. The
+role/content-only native C renderer otherwise misses the full Jinja tool
+branch and emits a literal tool role. Other templates retain their tool role.
