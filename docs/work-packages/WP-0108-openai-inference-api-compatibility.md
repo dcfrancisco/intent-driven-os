@@ -193,3 +193,16 @@ A focused optional VS Code agent is supplied in
 smaller tool set on CPU hardware. It preserves normal editor tool approvals.
 This is a client configuration option; Talvik does not silently discard schemas
 or truncate requests. Full built-in Agent latency remains separately qualified.
+
+### Tool-result continuation correction, 2026-10-31
+
+A real VS Code read-file exchange exposed a continuation that copied Talvik's
+synthetic plural `<tool_calls>` history wrapper as visible output. The HTTP
+edge now carries assistant tool-call history as a structured private record.
+The native adapter renders each past call using the loaded profile's JSON or
+function/parameter protocol, preserving accompanying assistant text and call
+IDs. Function/parameter history escapes XML text and rejects names that its
+protocol cannot represent. Tool instructions now explicitly prefer using
+available results over repeating completed calls. This does not execute calls
+or relax validation of calls emitted by the model. Live continuation behavior
+must be rechecked; this source change alone is not proof of a fix.

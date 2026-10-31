@@ -351,6 +351,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "oid-model-runner",
+ "serde_json",
 ]
 
 [[package]]

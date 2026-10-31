@@ -2454,17 +2454,25 @@ fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
         if !matches!(role, "system" | "developer" | "user" | "assistant" | "tool") {
             return Err(format!("unsupported message role: {role}"));
         }
-        push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
         if role == "assistant" {
             if let Some(calls) = message.get("tool_calls").filter(|calls| !calls.is_null()) {
-                push_text_part(&mut parts, &format!("<tool_calls>{calls}</tool_calls>"));
-            } else {
-                let content = message
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?;
-                push_text_part(&mut parts, content);
+                // Keep history structured until the adapter can select the
+                // loaded model's tool format, just like tool instructions.
+                let history = json!({"calls": calls, "content": message.get("content").and_then(Value::as_str).unwrap_or("")});
+                push_text_part(
+                    &mut parts,
+                    &format!("\u{001e}__talvik_tool_calls\n{history}"),
+                );
+                continue;
             }
+        }
+        push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
+        if role == "assistant" {
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?;
+            push_text_part(&mut parts, content);
         } else {
             let content = message
                 .get("content")
@@ -5317,6 +5325,8 @@ mod tests {
         let prompt = build_chat_prompt(&body).expect("chat prompt");
         assert!(prompt.contains("tool_call_id: call_123"));
         assert!(prompt.contains("Tool result for get_weather"));
+        assert!(prompt.contains("\u{001e}__talvik_tool_calls\n"));
+        assert!(!prompt.contains("<tool_calls>"));
     }
 
     #[test]

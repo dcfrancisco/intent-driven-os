@@ -802,6 +802,82 @@ fn classify_native_device(device_type: i32, backend_name: &str) -> Option<Native
     }
 }
 
+#[cfg(any(native_llama_cpp, test))]
+fn render_tool_history(
+    content: &str,
+    format: Option<oid_model_runner::ToolFormat>,
+) -> Result<String, String> {
+    use oid_model_runner::ToolFormat;
+    use std::fmt::Write as _;
+    let history: serde_json::Value =
+        serde_json::from_str(content).map_err(|e| format!("invalid tool history: {e}"))?;
+    let calls = history["calls"]
+        .as_array()
+        .filter(|calls| !calls.is_empty())
+        .ok_or("tool history requires calls")?;
+    let mut text = history["content"].as_str().unwrap_or("").to_owned();
+    let escape = |value: &str| {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    for call in calls {
+        let function = &call["function"];
+        let name = function["name"]
+            .as_str()
+            .ok_or("tool history requires a function name")?;
+        let arguments = match &function["arguments"] {
+            serde_json::Value::String(value) => serde_json::from_str(value)
+                .map_err(|e| format!("invalid tool history arguments: {e}"))?,
+            value => value.clone(),
+        };
+        let arguments = arguments
+            .as_object()
+            .ok_or("tool history arguments must be an object")?;
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        if let Some(id) = call["id"].as_str() {
+            writeln!(text, "Tool call ID: {}", serde_json::json!(id)).map_err(|e| e.to_string())?;
+        }
+        match format {
+            Some(ToolFormat::XmlJson) => {
+                let payload = serde_json::json!({"name": name, "arguments": arguments});
+                write!(text, "<tool_call>{payload}</tool_call>").map_err(|e| e.to_string())?;
+            }
+            Some(ToolFormat::XmlFunction) => {
+                let valid_name = |value: &str| {
+                    !value.is_empty()
+                        && value
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                };
+                if !valid_name(name) || arguments.keys().any(|key| !valid_name(key)) {
+                    return Err(
+                        "tool history has an unsupported function or parameter name".to_owned()
+                    );
+                }
+                write!(text, "<tool_call>\n<function={name}>\n").map_err(|e| e.to_string())?;
+                for (key, value) in arguments {
+                    let value = value
+                        .as_str()
+                        .map_or_else(|| value.to_string(), str::to_owned);
+                    write!(
+                        text,
+                        "<parameter={key}>\n{}\n</parameter>\n",
+                        escape(&value)
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+                text.push_str("</function>\n</tool_call>");
+            }
+            None => return Err("the loaded model has no supported tool history format".to_owned()),
+        }
+    }
+    Ok(text)
+}
+
 #[cfg(native_mtmd)]
 struct OwnedMtmdBitmaps(Vec<*mut c_void>);
 
@@ -1374,7 +1450,9 @@ impl NativeModel {
                             Some(oid_model_runner::ToolFormat::XmlFunction) => "Emit each call as <tool_call>\n<function=tool_name>\n<parameter=argument_name>\nargument_value\n</parameter>\n</function>\n</tool_call>. Repeat parameter blocks for every argument. Emit literal text for string parameters and valid JSON for numbers, booleans, arrays or objects, matching the schema.",
                             None => return Err("the loaded model has no supported tool output format".to_owned()),
                         };
-                        ("system".to_owned(), format!("You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. {format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Tools: {content}"))
+                        ("system".to_owned(), format!("You may call one or more of these tools. Call a tool when needed to fulfill the request. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results. {format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Tools: {content}"))
+                    } else if role == "__talvik_tool_calls" {
+                        ("assistant".to_owned(), render_tool_history(content, self.profile.tool_format)?)
                     } else if role == "__talvik_tool_choice" {
                         let instruction = match content {
                             "single" => {
@@ -2128,6 +2206,23 @@ mod tests {
     use super::{cached_prefix_matches, classify_decode_result, decode_error, DecodeOutcome};
     #[cfg(native_mtmd)]
     use std::io::Cursor;
+
+    #[test]
+    fn tool_history_uses_the_selected_protocol_and_preserves_content_and_ids() {
+        use oid_model_runner::ToolFormat;
+        let history = serde_json::json!({"content":"Inspecting.","calls":[{"id":"call_123","function":{"name":"read_file","arguments":"{\"path\":\"a<世界>\",\"count\":2}"}}]}).to_string();
+        let json = super::render_tool_history(&history, Some(ToolFormat::XmlJson)).unwrap();
+        assert!(json.starts_with("Inspecting.\nTool call ID: \"call_123\""));
+        assert!(json.contains("<tool_call>{"));
+        assert!(!json.contains("<tool_calls>"));
+        assert!(json.contains("a<世界>"));
+        let function = super::render_tool_history(&history, Some(ToolFormat::XmlFunction)).unwrap();
+        assert!(function.contains("<function=read_file>"));
+        assert!(function.contains("<parameter=count>\n2\n</parameter>"));
+        assert!(function.contains("a&lt;世界&gt;"));
+        assert!(super::render_tool_history(&history, None).is_err());
+        assert!(super::render_tool_history("{}", Some(ToolFormat::XmlJson)).is_err());
+    }
 
     #[test]
     fn auxiliary_accelerators_are_not_cpu_or_gpu_runners() {
