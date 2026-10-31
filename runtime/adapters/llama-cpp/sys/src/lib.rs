@@ -1235,6 +1235,28 @@ fn render_chat_prompt(
     })
 }
 
+// The C role/content formatter does not execute the Jinja tools branch.
+// Select the declaration envelope from template markers, never a model name.
+#[cfg(any(native_llama_cpp, test))]
+fn tool_declarations(template: &str, content: &str) -> Result<String, String> {
+    if template.contains("<tools>")
+        && template.contains("</tools>")
+        && template.contains("<tool_call>")
+        && template.contains("tojson")
+    {
+        let tools: Vec<serde_json::Value> = serde_json::from_str(content)
+            .map_err(|error| format!("invalid tool definitions: {error}"))?;
+        let signatures = tools
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(format!("# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{signatures}\n</tools>"))
+    } else {
+        Ok(format!("Tools: {content}"))
+    }
+}
+
 #[cfg(any(native_llama_cpp, test))]
 fn verified_checkpoint_position(prefix: &[i32], prompt: &[i32]) -> Option<usize> {
     // BPE tokenization can merge at a text boundary. Text-prefix matching alone
@@ -1508,7 +1530,8 @@ impl NativeModel {
                             Some(oid_model_runner::ToolFormat::XmlFunction) => "Emit each call as <tool_call>\n<function=tool_name>\n<parameter=argument_name>\nargument_value\n</parameter>\n</function>\n</tool_call>. Repeat parameter blocks for every argument. Emit literal text for string parameters and valid JSON for numbers, booleans, arrays or objects, matching the schema.",
                             None => return Err("the loaded model has no supported tool output format".to_owned()),
                         };
-                        ("system".to_owned(), format!("You may call one or more of these tools. Call a tool when needed to fulfill the request. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results. {format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Tools: {content}"))
+                        let declarations = tool_declarations(&CStr::from_ptr(template).to_string_lossy(), content)?;
+                        ("system".to_owned(), format!("{declarations}\n\n{format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. When the user's request requires an external action, invoke an available tool that performs it; narration does not execute an action. Do not end with a promise to perform an action instead of calling the tool. Respect the user's requested scope, including exclusions such as no tests or no edits. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results or claim execution without a corresponding result."))
                     } else if role == "__talvik_tool_calls" {
                         ("assistant".to_owned(), render_tool_history(content, self.profile.tool_format)?)
                     } else if role == "tool" && self.profile.tool_format.is_some()
@@ -2498,6 +2521,29 @@ mod tests {
             super::output_formats("plain chat", false),
             (false, None, None, false)
         );
+    }
+
+    #[test]
+    fn tool_declarations_honor_template_envelopes_without_changing_schemas() {
+        let tools = r#"[{"type":"function","function":{"name":"run_in_terminal","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}}]"#;
+        let native =
+            super::tool_declarations("<tools></tools> <tool_call> tool | tojson", tools).unwrap();
+        let signatures = native
+            .split("<tools>\n")
+            .nth(1)
+            .unwrap()
+            .split("\n</tools>")
+            .next()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(signatures).unwrap(),
+            serde_json::from_str::<serde_json::Value>(tools).unwrap()[0]
+        );
+        assert_eq!(
+            super::tool_declarations("<tool_call> <function=", tools).unwrap(),
+            format!("Tools: {tools}")
+        );
+        assert!(super::tool_declarations("<tools></tools> <tool_call> tojson", "bad").is_err());
     }
 
     #[test]

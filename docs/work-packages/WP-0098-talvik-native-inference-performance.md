@@ -270,3 +270,16 @@ eighth of the prompt/output requirement (at least 128 tokens) before rounding.
 Existing allocations are checked against the actual requirement, so optional
 headroom alone never forces a rebuild. The 6,032-token/2,048-output case now
 starts at 16K and can retain its KV state for the measured 6,332-token follow-up.
+
+### Tool action follow-through, 2026-11-01
+
+A real IDE build-only request ended in narration without a terminal invocation.
+The C role formatter was not executing the embedded template's tools branch.
+Templates declaring `<tools>`, `</tools>`, `<tool_call>` and JSON serialization
+now receive newline-delimited, unchanged function definitions in that declared
+envelope. Other templates retain their existing declaration fallback. Selection
+uses template capabilities rather than model names. Tool instructions require
+actual calls for external actions and evidence before execution claims; they do
+not force `tool_choice:auto`, execute commands, or bypass client approvals.
+The Coding preset narrows build-only scope and removes unconditional inspection.
+Live action-selection and actual IDE execution remain separate acceptance gates.
