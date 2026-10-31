@@ -263,3 +263,10 @@ unchanged. Multimodal requests retain their previously qualified full allocation
 until their position accounting has separate sizing qualification. Native tests
 cover allocation bounds, growth, cold/warm output equality and shorter-turn
 reuse. No additional idle contexts are retained.
+
+A real Plan exchange crossed the 8K allocation boundary after its first tool
+result and paid for a second full prefill. New text allocations now add one
+eighth of the prompt/output requirement (at least 128 tokens) before rounding.
+Existing allocations are checked against the actual requirement, so optional
+headroom alone never forces a rebuild. The 6,032-token/2,048-output case now
+starts at 16K and can retain its KV state for the measured 6,332-token follow-up.

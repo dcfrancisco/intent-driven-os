@@ -554,15 +554,24 @@ fn inference_threads() -> i32 {
 
 #[cfg(any(native_llama_cpp, test))]
 fn text_context_capacity(limit: u32, prompt_tokens: usize, max_tokens: u32) -> u32 {
-    let needed = u32::try_from(prompt_tokens)
-        .unwrap_or(u32::MAX)
-        .saturating_add(max_tokens)
-        .min(limit)
+    let required = required_text_context(limit, prompt_tokens, max_tokens);
+    // Reserve room for the next tool result instead of rebuilding immediately
+    // when prompt + output happens to fall just below a power-of-two boundary.
+    let needed = required
+        .saturating_add((required / 8).max(128))
         .max(512)
         .min(limit);
     needed
         .checked_next_power_of_two()
         .unwrap_or(limit)
+        .min(limit)
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn required_text_context(limit: u32, prompt_tokens: usize, max_tokens: u32) -> u32 {
+    u32::try_from(prompt_tokens)
+        .unwrap_or(u32::MAX)
+        .saturating_add(max_tokens)
         .min(limit)
 }
 
@@ -1854,6 +1863,8 @@ impl NativeModel {
             // allocation. Power-of-two headroom keeps nearby turns reusable;
             // requests that outgrow the retained capacity rebuild safely.
             // Multimodal position accounting retains its qualified full limit.
+            let required_context_size =
+                required_text_context(context_size, prompt_count, max_tokens);
             let allocated_context_size = if images.is_empty() {
                 text_context_capacity(context_size, prompt_count, max_tokens)
             } else {
@@ -1869,7 +1880,7 @@ impl NativeModel {
             let reuse_len = if images.is_empty() {
                 persistent
                     .as_ref()
-                    .filter(|cached| cached.allocated_context_size >= allocated_context_size)
+                    .filter(|cached| cached.allocated_context_size >= required_context_size)
                     .and_then(|cached| {
                         compatible_prompt_reuse_len(
                             cached,
@@ -2320,6 +2331,9 @@ mod tests {
     #[test]
     fn text_context_capacity_reserves_output_and_bounded_growth_headroom() {
         assert_eq!(super::text_context_capacity(32768, 9288, 2048), 16384);
+        assert_eq!(super::text_context_capacity(32768, 6032, 2048), 16384);
+        assert_eq!(super::required_text_context(32768, 6032, 2048), 8080);
+
         assert_eq!(super::text_context_capacity(32768, 12, 16), 512);
         assert_eq!(super::text_context_capacity(128, 20, 8), 128);
         assert_eq!(super::text_context_capacity(5000, 4900, 2048), 5000);
@@ -3120,6 +3134,33 @@ mod tests {
         model.reset_context().expect("capacity probe reset");
         let small = "\u{001e}system\nReply OK only.\u{001e}user\nShort record.";
         run_capacity(small);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            512
+        );
+        // Fresh allocation would reserve 1K, but the existing 512-token
+        // context can still satisfy this request's actual maximum.
+        let fits = model
+            .generate_stream(
+                small,
+                4096,
+                400,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("reuse within actual capacity");
+        assert!(fits.cache_hit);
         assert_eq!(
             model
                 .context
