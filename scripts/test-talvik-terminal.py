@@ -201,6 +201,7 @@ class TerminalTests(unittest.TestCase):
                 self.assertIn("Cancelled", text)
                 self.assertNotIn("Complete", text)
                 self.assertNotIn("Generating", text)
+                self.assertNotIn("failed:", text.lower())
 
     def test_failure_clears_progress_and_never_claims_completion(self):
         with daemon(fail=True) as instance:

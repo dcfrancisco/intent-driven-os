@@ -67,6 +67,12 @@ impl std::fmt::Display for SampleState {
 
 fn main() {
     if let Err(error) = run() {
+        if matches!(
+            error.downcast_ref::<ModelClientError>(),
+            Some(ModelClientError::Cancelled)
+        ) {
+            std::process::exit(130);
+        }
         eprintln!("OID Talvik IPC client failed: {error}");
         std::process::exit(1);
     }

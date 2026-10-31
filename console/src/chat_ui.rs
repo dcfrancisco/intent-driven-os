@@ -85,6 +85,7 @@ pub enum Outcome {
     Complete,
     Cancelled,
     Truncated,
+    ContextLimit,
 }
 
 /// A response display owns and cleans up its temporary progress line.
@@ -172,6 +173,7 @@ impl ChatDisplay {
                 Outcome::Complete => ("✓ Complete", "\x1b[32m"),
                 Outcome::Cancelled => ("Cancelled", "\x1b[33m"),
                 Outcome::Truncated => ("Output limit reached", "\x1b[33m"),
+                Outcome::ContextLimit => ("Context limit reached", "\x1b[33m"),
             };
             let mut details = format!("{:.1}s", self.started.elapsed().as_secs_f64());
             if let Some(tokens) = tokens {
@@ -201,10 +203,12 @@ impl ChatDisplay {
         }
         let outcome = if cancelled {
             Outcome::Cancelled
-        } else if result.statistics.termination == oid_runtime::GenerationTermination::Stop {
-            Outcome::Complete
         } else {
-            Outcome::Truncated
+            match result.statistics.termination {
+                oid_runtime::GenerationTermination::Stop => Outcome::Complete,
+                oid_runtime::GenerationTermination::Length => Outcome::Truncated,
+                oid_runtime::GenerationTermination::ContextLength => Outcome::ContextLimit,
+            }
         };
         self.finish(
             outcome,
