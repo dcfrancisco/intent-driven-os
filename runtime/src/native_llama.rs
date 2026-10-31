@@ -256,9 +256,11 @@ impl Backend for LlamaCppAdapter {
                         prompt_evaluation_time_ms: stats
                             .prompt_eval_time
                             .map(|duration| duration.as_millis()),
-                        generation_time_ms: stats
-                            .generation_time
-                            .map(|duration| duration.as_millis()),
+                        generation_time_ms: stats.generation_time.map(|duration| {
+                            duration
+                                .saturating_sub(stats.prompt_eval_time.unwrap_or_default())
+                                .as_millis()
+                        }),
                         context_tokens: prompt_tokens + stats.generated_tokens,
                         metrics_known: stats.prompt_tokens.is_some()
                             && stats.tokens_per_second.is_some(),

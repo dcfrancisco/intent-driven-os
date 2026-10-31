@@ -146,3 +146,54 @@ Verification on 2026-10-24:
   repeated timing varied substantially and peak memory was not measured.
 - long-prompt test crossed the former native assertion point with `n_ctx=2048`
   and `n_batch=512` and passed on the real Qwen GGUF.
+
+## Intel CPU / Agent latency investigation, 2026-10-31
+
+A real Copilot Agent request supplied 59 tools (75,220 serialized bytes), a
+22,430-byte serialized system message and two user messages of 3,270 / 892
+bytes. The formatted prompt was 22,056 tokens. Native prefill progressed through
+512 tokens at 31.4 s and 1,024 at 52.565 s; the bounded profiling request was
+cancelled, not qualified as an Agent pass. No message bodies or credentials
+were captured by the opt-in diagnostics.
+
+An idle 769-token API probe measured 26.371 s prompt evaluation, about 0.611 s
+remaining inference and 10.338 s model load. CPU stack sampling showed active
+quantized matrix multiplication / dequantization; AVX2, FMA and Apple Accelerate
+are enabled. The host is a four-core/eight-thread i7-8569U with 16 GiB RAM.
+
+Removing two other resident models eliminated swap-outs during the measured
+probe but changed prefill only from 32.094 to 31.768 s. An isolated native
+8-thread / 4-thread / larger-batch comparison showed no reliable tuning win;
+thread and physical batch defaults remain unchanged. These short-prompt results
+must not be reported as measurements of completed 22K-token Agent requests.
+
+### Implemented candidate
+
+- Parse embedded chat-template control tokens on generation input, while keeping
+  the public literal-text tokenizer unchanged. The former text path split role
+  delimiters into ordinary tokens; the multimodal path already parsed them.
+- For hybrid/recurrent models, save at most two partial-state checkpoints: a
+  matching static Qwen system/tool prefix (at least 64 tokens) and the full
+  prompt except its final token. Each snapshot is capped at 64 MiB and their
+  total at 128 MiB. Attention KV remains in its original context. Restore the
+  exact matching recurrent state, trim attention KV and verify the native maximum
+  position before reuse. Any mismatch/failure falls back to a cleared context.
+- Drop checkpoints on cancellation, failures, explicit reset, context changes
+  and model unload. Preserve the existing transformer reuse policy and the
+  one-idle-context-across-models memory boundary. Switching to the Coder utility
+  model still discards the main model's context; this remains a cache limitation.
+- Reserve one output and compute logits only for the final prefill batch. The
+  local Qwen compute-buffer reservation changed from about 503 MiB to 71–77 MiB;
+  this is not total process memory or the complete cost of the checkpoints.
+- Report output tokens/s and generation-time milliseconds using decode time,
+  excluding prompt processing; retain total native inference time separately.
+- `TALVIK_TRACE_PREFILL=true` enables request-size and batch-progress diagnostics
+  containing counts/timings rather than prompt contents. It is off by default.
+
+The recurrent native fixture checks repeated and changed-question warm output
+against cold output, reset/cancel recovery and checkpoint bounds. The API
+benchmark `scripts/test-talvik-prompt-cache.py` checks matching answers, cache
+reuse, context invalidation and phase-timing consistency without model unload.
+Performance acceptance is recorded per installed build in the investigation
+report. A warm-prefix win does not remove the first cold Agent prefill cost or
+qualify Agent/Plan.

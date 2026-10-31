@@ -446,6 +446,9 @@ impl ModelRunner for LlamaCppModelRunner {
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;
+                let decode_time = native_stats
+                    .generation_time
+                    .saturating_sub(native_stats.prompt_eval_time);
                 let stats = GenerationStats {
                     prompt_tokens: Some(native_stats.prompt_tokens),
                     generated_tokens: native_stats.generated_tokens,
@@ -455,11 +458,9 @@ impl ModelRunner for LlamaCppModelRunner {
                         .and_then(|value| value.map(|time| time.duration_since(started))),
                     prompt_eval_time: Some(native_stats.prompt_eval_time),
                     generation_time: Some(native_stats.generation_time),
-                    tokens_per_second: (native_stats.generation_time.as_secs_f64() > 0.0)
-                        .then_some(
-                            native_stats.generated_tokens as f64
-                                / native_stats.generation_time.as_secs_f64(),
-                        ),
+                    tokens_per_second: (decode_time.as_secs_f64() > 0.0).then_some(
+                        native_stats.generated_tokens as f64 / decode_time.as_secs_f64(),
+                    ),
                     termination: match native_stats.termination {
                         native::NativeGenerationTermination::Stop => GenerationTermination::Stop,
                         native::NativeGenerationTermination::Length => {

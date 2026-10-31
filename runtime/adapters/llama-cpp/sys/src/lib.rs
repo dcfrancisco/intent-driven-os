@@ -147,8 +147,35 @@ struct PersistentContext {
     pointer: *mut c_void,
     context_size: u32,
     prompt_tokens: Vec<i32>,
+    checkpoints: Vec<PromptCheckpoint>,
     relay: Box<CancellationRelay>,
 }
+
+// Only partial/recurrent state is copied. Attention KV stays in its existing
+// native context and is trimmed after restoring the matching recurrent state.
+#[cfg(native_llama_cpp)]
+struct PromptCheckpoint {
+    tokens: Vec<i32>,
+    state: Vec<u8>,
+}
+
+#[cfg(native_llama_cpp)]
+impl std::fmt::Debug for PromptCheckpoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PromptCheckpoint")
+            .field("tokens", &self.tokens.len())
+            .field("state_bytes", &self.state.len())
+            .finish()
+    }
+}
+
+#[cfg(native_llama_cpp)]
+const PARTIAL_STATE_ONLY: u32 = 1;
+#[cfg(native_llama_cpp)]
+const MAX_CHECKPOINT_BYTES: usize = 64 * 1_048_576;
+#[cfg(native_llama_cpp)]
+const MAX_TOTAL_CHECKPOINT_BYTES: usize = 128 * 1_048_576;
 
 #[cfg(native_llama_cpp)]
 unsafe impl Send for PersistentContext {}
@@ -283,6 +310,23 @@ mod ffi {
         pub fn llama_init_from_model(model: *mut c_void, params: ContextParams) -> *mut c_void;
         pub fn llama_free(ctx: *mut c_void);
         pub fn llama_get_memory(ctx: *mut c_void) -> *mut c_void;
+        pub fn llama_model_is_recurrent(model: *const c_void) -> bool;
+        pub fn llama_model_is_hybrid(model: *const c_void) -> bool;
+        pub fn llama_state_seq_get_size_ext(ctx: *mut c_void, seq_id: i32, flags: u32) -> usize;
+        pub fn llama_state_seq_get_data_ext(
+            ctx: *mut c_void,
+            dst: *mut u8,
+            size: usize,
+            seq_id: i32,
+            flags: u32,
+        ) -> usize;
+        pub fn llama_state_seq_set_data_ext(
+            ctx: *mut c_void,
+            src: *const u8,
+            size: usize,
+            seq_id: i32,
+            flags: u32,
+        ) -> usize;
         pub fn llama_memory_clear(memory: *mut c_void, data: bool);
         pub fn llama_memory_seq_rm(memory: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
         pub fn llama_memory_seq_pos_max(memory: *mut c_void, seq_id: i32) -> i32;
@@ -413,7 +457,7 @@ struct OwnedBatch {
     _sequence_counts: Vec<i32>,
     _sequence_id: Box<i32>,
     _sequence_ids: Vec<*mut i32>,
-    _logits: Vec<i8>,
+    logits: Vec<i8>,
 }
 
 #[cfg(native_llama_cpp)]
@@ -450,7 +494,7 @@ fn make_batch(tokens: &mut [i32], start_position: usize) -> Result<OwnedBatch, S
         _sequence_counts: sequence_counts,
         _sequence_id: sequence_id,
         _sequence_ids: sequence_ids,
-        _logits: logits,
+        logits,
     })
 }
 
@@ -462,6 +506,7 @@ fn invalidate_context(context: &mut Option<PersistentContext>) {
             unsafe { ffi::llama_memory_clear(memory, true) };
         }
         cached.prompt_tokens.clear();
+        cached.checkpoints.clear();
     }
 }
 
@@ -483,10 +528,67 @@ fn compatible_prompt_reuse_len(
     prompt_tokens: &[i32],
     context_size: u32,
 ) -> Option<usize> {
-    (cached.context_size == context_size
-        && cached.prompt_tokens.len() <= prompt_tokens.len()
+    if cached.context_size != context_size || prompt_tokens.len() < 2 {
+        return None;
+    }
+    if !cached.checkpoints.is_empty() {
+        return cached
+            .checkpoints
+            .iter()
+            .filter(|checkpoint| {
+                checkpoint.tokens.len() < prompt_tokens.len()
+                    && prompt_tokens.starts_with(&checkpoint.tokens)
+            })
+            .map(|checkpoint| checkpoint.tokens.len())
+            .max();
+    }
+    (cached.prompt_tokens.len() <= prompt_tokens.len()
         && cached.prompt_tokens == prompt_tokens[..cached.prompt_tokens.len()])
         .then(|| cached.prompt_tokens.len().saturating_sub(1))
+}
+
+#[cfg(native_llama_cpp)]
+fn save_prompt_checkpoint(cached: &mut PersistentContext, tokens: &[i32]) {
+    if tokens.is_empty() {
+        return;
+    }
+    // Replacing a checkpoint releases its buffer before allocating a new one.
+    cached
+        .checkpoints
+        .retain(|checkpoint| checkpoint.tokens.len() != tokens.len());
+    let size = unsafe { ffi::llama_state_seq_get_size_ext(cached.pointer, 0, PARTIAL_STATE_ONLY) };
+    let retained: usize = cached
+        .checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.state.len())
+        .sum();
+    if size == 0
+        || size > MAX_CHECKPOINT_BYTES
+        || retained.saturating_add(size) > MAX_TOTAL_CHECKPOINT_BYTES
+    {
+        return;
+    }
+    let mut state = vec![0; size];
+    let written = unsafe {
+        ffi::llama_state_seq_get_data_ext(
+            cached.pointer,
+            state.as_mut_ptr(),
+            state.len(),
+            0,
+            PARTIAL_STATE_ONLY,
+        )
+    };
+    if written != size {
+        return;
+    }
+    cached.checkpoints.push(PromptCheckpoint {
+        tokens: tokens.to_vec(),
+        state,
+    });
+    eprintln!(
+        "llama.cpp prompt checkpoint tokens={} bytes={size}",
+        tokens.len()
+    );
 }
 
 #[cfg(any(native_llama_cpp, test))]
@@ -964,6 +1066,10 @@ impl NativeModel {
     /// Returns an error when the text cannot be represented for the C API or
     /// llama.cpp reports a tokenization failure.
     pub fn tokenize(&self, text: &str) -> Result<Vec<i32>, String> {
+        self.tokenize_with_special(text, false)
+    }
+
+    fn tokenize_with_special(&self, text: &str, parse_special: bool) -> Result<Vec<i32>, String> {
         #[cfg(native_llama_cpp)]
         unsafe {
             let vocabulary = ffi::llama_model_get_vocab(self.pointer.cast_const());
@@ -976,7 +1082,7 @@ impl NativeModel {
                 std::ptr::null_mut(),
                 0,
                 false,
-                false,
+                parse_special,
             );
             if required >= 0 {
                 return Err("llama.cpp returned no token count".to_owned());
@@ -993,7 +1099,7 @@ impl NativeModel {
                 tokens.as_mut_ptr(),
                 capacity,
                 false,
-                false,
+                parse_special,
             );
             if count < 0 {
                 return Err("llama.cpp tokenization failed".to_owned());
@@ -1003,7 +1109,7 @@ impl NativeModel {
         }
         #[cfg(not(native_llama_cpp))]
         {
-            let _ = text;
+            let _ = (text, parse_special);
             Err("native llama.cpp is unavailable".to_owned())
         }
     }
@@ -1412,7 +1518,7 @@ impl NativeModel {
             #[cfg(native_mtmd)]
             let mut multimodal_bitmaps = None;
             if images.is_empty() {
-                prompt_tokens = self.tokenize(&formatted_prompt)?;
+                prompt_tokens = self.tokenize_with_special(&formatted_prompt, true)?;
                 prompt_count = prompt_tokens.len();
             } else {
                 #[cfg(not(native_mtmd))]
@@ -1485,6 +1591,32 @@ impl NativeModel {
             if prompt_count >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
+            let recurrent = images.is_empty()
+                && unsafe {
+                    ffi::llama_model_is_recurrent(self.pointer.cast_const())
+                        || ffi::llama_model_is_hybrid(self.pointer.cast_const())
+                };
+            let mut checkpoint_positions = Vec::new();
+            if recurrent && prompt_tokens.len() > 1 {
+                if let Some(offset) = formatted_prompt
+                    .rfind("<|im_start|>user\n")
+                    .filter(|offset| *offset > 0)
+                {
+                    let prefix = self.tokenize_with_special(&formatted_prompt[..offset], true)?;
+                    // Tiny static prefixes cost more to checkpoint than to decode.
+                    if prefix.len() >= 64
+                        && prefix.len() < prompt_tokens.len()
+                        && prompt_tokens.starts_with(&prefix)
+                    {
+                        checkpoint_positions.push(prefix.len());
+                    }
+                }
+                checkpoint_positions.push(prompt_tokens.len() - 1);
+                checkpoint_positions.sort_unstable();
+                checkpoint_positions.dedup();
+            }
+            let trace_prefill = std::env::var("TALVIK_TRACE_PREFILL")
+                .is_ok_and(|value| matches!(value.as_str(), "1" | "true"));
             let physical_batch = context_size.min(512);
             let mut persistent = self
                 .context
@@ -1507,8 +1639,22 @@ impl NativeModel {
                     .relay
                     .current
                     .store(std::ptr::from_ref(cancelled).cast_mut(), Ordering::SeqCst);
+                let restored = cached
+                    .checkpoints
+                    .iter()
+                    .find(|checkpoint| checkpoint.tokens.len() == reuse_len)
+                    .is_none_or(|checkpoint| unsafe {
+                        ffi::llama_state_seq_set_data_ext(
+                            cached.pointer,
+                            checkpoint.state.as_ptr(),
+                            checkpoint.state.len(),
+                            0,
+                            PARTIAL_STATE_ONLY,
+                        ) == checkpoint.state.len()
+                    });
                 let memory = unsafe { ffi::llama_get_memory(cached.pointer) };
-                let removed = !memory.is_null()
+                let removed = restored
+                    && !memory.is_null()
                     && unsafe {
                         ffi::llama_memory_seq_rm(
                             memory,
@@ -1540,6 +1686,7 @@ impl NativeModel {
                         unsafe { ffi::llama_memory_clear(memory, true) };
                     }
                     cached.prompt_tokens.clear();
+                    cached.checkpoints.clear();
                     (cached.pointer, 0)
                 }
             } else {
@@ -1552,6 +1699,8 @@ impl NativeModel {
                     // physical batch are decoded incrementally below.
                     n_batch: physical_batch,
                     n_ubatch: physical_batch,
+                    n_outputs_max: 1,
+                    n_outputs_max_per_seq: 1,
                     n_threads: inference_threads(),
                     n_threads_batch: inference_threads(),
                     ..unsafe { ffi::llama_context_default_params() }
@@ -1569,10 +1718,17 @@ impl NativeModel {
                     pointer,
                     context_size,
                     prompt_tokens: Vec::new(),
+                    checkpoints: Vec::new(),
                     relay,
                 });
                 (pointer, 0)
             };
+            if let Some(cached) = persistent.as_mut() {
+                cached.checkpoints.retain(|checkpoint| {
+                    prompt_tokens.starts_with(&checkpoint.tokens)
+                        && checkpoint_positions.contains(&checkpoint.tokens.len())
+                });
+            }
             let relay = persistent
                 .as_ref()
                 .ok_or_else(|| "native context cache disappeared".to_owned())?
@@ -1632,16 +1788,26 @@ impl NativeModel {
                 }
             }
             let generation_position = if images.is_empty() {
-                let remaining_prompt = prompt_tokens
-                    .get_mut(prompt_position..)
-                    .ok_or_else(|| "cached prompt position exceeds request prompt".to_owned())?;
-                for prompt_batch in remaining_prompt.chunks_mut(
-                    usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
-                ) {
-                    let decode_result = unsafe {
-                        ffi::llama_decode(context, make_batch(prompt_batch, prompt_position)?.batch)
-                    };
-                    prompt_position += prompt_batch.len();
+                while prompt_position < prompt_tokens.len() {
+                    let mut end = (prompt_position
+                        + usize::try_from(physical_batch)
+                            .map_err(|_| "invalid batch size".to_owned())?)
+                    .min(prompt_tokens.len());
+                    if let Some(boundary) = checkpoint_positions
+                        .iter()
+                        .copied()
+                        .find(|position| *position > prompt_position && *position < end)
+                    {
+                        end = boundary;
+                    }
+                    let final_batch = end == prompt_tokens.len();
+                    let mut batch =
+                        make_batch(&mut prompt_tokens[prompt_position..end], prompt_position)?;
+                    if !final_batch {
+                        batch.logits.fill(0);
+                    }
+                    let decode_result = unsafe { ffi::llama_decode(context, batch.batch) };
+                    prompt_position = end;
                     match classify_decode_result(
                         decode_result,
                         cancelled.load(std::sync::atomic::Ordering::SeqCst),
@@ -1660,6 +1826,14 @@ impl NativeModel {
                             }
                             invalidate_context(&mut persistent);
                             return Err(decode_error("prompt", decode_result));
+                        }
+                    }
+                    if trace_prefill {
+                        eprintln!("Talvik prefill progress processed={prompt_position} total={} elapsed_ms={} reused={reused_prompt_tokens}", prompt_tokens.len(), inference_started.elapsed().as_millis());
+                    }
+                    if checkpoint_positions.contains(&prompt_position) {
+                        if let Some(cached) = persistent.as_mut() {
+                            save_prompt_checkpoint(cached, &prompt_tokens[..prompt_position]);
                         }
                     }
                 }
@@ -1879,6 +2053,7 @@ mod tests {
             pointer: std::ptr::null_mut(),
             context_size: 512,
             prompt_tokens: vec![1, 2, 3],
+            checkpoints: Vec::new(),
             relay: Box::new(super::CancellationRelay {
                 current: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             }),
@@ -1908,6 +2083,111 @@ mod tests {
 
     #[cfg(native_llama_cpp)]
     #[test]
+    #[ignore = "requires a hybrid/recurrent GGUF supplied through TALVIK_TEST_RECURRENT_GGUF"]
+    fn recurrent_checkpoint_reuse_matches_cold_output_and_clears_on_cancel() {
+        use std::sync::atomic::AtomicBool;
+        let path = std::env::var("TALVIK_TEST_RECURRENT_GGUF").expect("recurrent GGUF fixture");
+        super::initialize().expect("initialize");
+        let model = super::load_model(&path, None, super::cpu_load_options()).expect("load");
+        assert!(unsafe {
+            super::ffi::llama_model_is_hybrid(model.pointer.cast_const())
+                || super::ffi::llama_model_is_recurrent(model.pointer.cast_const())
+        });
+        // A user-only template has no static prefix before its first marker.
+        // Do not pass that empty prefix through the native token-count probe.
+        model
+            .generate_stream(
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nReply OK.",
+                2048,
+                4,
+                0.0,
+                1.0,
+                40,
+                42,
+                &[],
+                |_| true,
+                &AtomicBool::new(false),
+            )
+            .expect("user-only template has no static prefix");
+        model.reset_context().expect("reset short prompt");
+        let prefix = "A completed record.\n".repeat(16);
+        let prompt = |question: &str| {
+            format!("\u{001e}__talvik_template\nenable_thinking=false\u{001e}system\n{prefix}Answer the arithmetic question with a number only.\u{001e}user\n{question}")
+        };
+        let run = |question: &str| {
+            let mut text = String::new();
+            let stats = model
+                .generate_stream(
+                    &prompt(question),
+                    2048,
+                    16,
+                    0.0,
+                    1.0,
+                    40,
+                    42,
+                    &[],
+                    |part| {
+                        text.push_str(part);
+                        true
+                    },
+                    &AtomicBool::new(false),
+                )
+                .expect("generation");
+            (text, stats)
+        };
+        let first = run("What is 2 + 2?");
+        let repeat = run("What is 2 + 2?");
+        assert_eq!(first.0.trim(), "4");
+        assert_eq!(repeat.0, first.0);
+        assert!(repeat.1.cache_hit);
+        assert!(repeat.1.reused_prompt_tokens >= repeat.1.prompt_tokens - 2);
+        let changed = run("What is 3 + 3?");
+        assert!(changed.1.cache_hit);
+        assert!(changed.1.reused_prompt_tokens > 32);
+        model.reset_context().expect("reset");
+        let cold_changed = run("What is 3 + 3?");
+        assert!(!cold_changed.1.cache_hit);
+        assert_eq!(changed.0, cold_changed.0);
+        assert_eq!(changed.0.trim(), "6");
+        let cancellation = AtomicBool::new(false);
+        assert!(model
+            .generate_stream(
+                &prompt("What is 3 + 3?"),
+                2048,
+                32,
+                0.0,
+                1.0,
+                40,
+                42,
+                &[],
+                |_| {
+                    cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
+                    false
+                },
+                &cancellation
+            )
+            .is_err());
+        let recovered = run("What is 3 + 3?");
+        assert!(!recovered.1.cache_hit);
+        assert_eq!(recovered.0, cold_changed.0);
+        let context = model.context.lock().expect("context");
+        let cache = context.as_ref().expect("cache");
+        assert!(cache.checkpoints.len() <= 2);
+        assert!(
+            cache
+                .checkpoints
+                .iter()
+                .map(|checkpoint| checkpoint.state.len())
+                .sum::<usize>()
+                <= super::MAX_TOTAL_CHECKPOINT_BYTES
+        );
+        drop(context);
+        drop(model);
+        super::shutdown();
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
     #[ignore = "requires a real GGUF supplied through MARINA_TEST_GGUF"]
     fn embedded_chat_template_formats_a_user_prompt() {
         let model_path = std::env::var("MARINA_TEST_GGUF")
@@ -1921,6 +2201,21 @@ mod tests {
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));
+        let marker = model
+            .tokenize_with_special("<|im_start|>", true)
+            .expect("special marker");
+        assert_eq!(marker.len(), 1);
+        let prompt_tokens = model
+            .tokenize_with_special(&formatted, true)
+            .expect("formatted tokens");
+        assert!(prompt_tokens.contains(&marker[0]));
+        assert!(
+            model
+                .tokenize("<|im_start|>")
+                .expect("literal marker")
+                .len()
+                > 1
+        );
         drop(model);
         super::shutdown();
     }

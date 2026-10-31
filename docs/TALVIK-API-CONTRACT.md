@@ -110,3 +110,17 @@ controlled memory budget. It checks manual load/unload readiness transitions,
 rejects a large context, then completes twelve short serial requests. It requires
 the canonical installed daemon idle with its DeepSeek fixture resident and does
 not exhaust OS memory. `TALVIK_TEST_OUTPUT_DIR` selects its artifact directory.
+
+## Prompt-cache diagnostics
+
+`metrics.inference_time_ms` is total native inference; `prompt_eval_time_ms` is
+its prompt-processing portion and `generation_time_ms` is the remaining decode
+portion. `tokens_per_second` describes output decoding, not input prefill. Cache
+reuse is reported separately. Hybrid/recurrent prompt checkpoints are bounded
+and validated against exact token prefixes; unrelated requests and explicit
+reset/cancellation do not inherit unmatched context. Opt-in
+`TALVIK_TRACE_PREFILL=true` logs sizes and progress, not prompt contents.
+
+Use `scripts/test-talvik-prompt-cache.py` against an idle loopback daemon for
+Qwen3.5 warm-prefix and timing acceptance. It changes that model's context size
+to create a cold reference and does not require model-admin HTTP scope.

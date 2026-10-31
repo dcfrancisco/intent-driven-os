@@ -3006,6 +3006,16 @@ fn generate(
             "request_id is already in use or ownership registry unavailable".to_owned(),
         );
     }
+    if std::env::var("TALVIK_TRACE_PREFILL")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    {
+        let messages = body.get("messages").and_then(Value::as_array);
+        let roles = messages.into_iter().flatten().map(|message| json!({"role": message.get("role"), "content_bytes": message.get("content").map_or(0, |content| content.to_string().len())})).collect::<Vec<_>>();
+        let tool_bytes = tool_definitions.map_or(0, |tools| {
+            serde_json::to_vec(tools).map_or(0, |value| value.len())
+        });
+        eprintln!("Talvik HTTP request_profile request_id={request_id} prompt_bytes={} tool_count={} tool_schema_bytes={tool_bytes} messages={}", prompt.len(), tool_definitions.map_or(0, Vec::len), json!(roles));
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
