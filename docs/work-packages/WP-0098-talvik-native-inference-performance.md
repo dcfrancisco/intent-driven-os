@@ -197,3 +197,28 @@ reuse, context invalidation and phase-timing consistency without model unload.
 Performance acceptance is recorded per installed build in the investigation
 report. A warm-prefix win does not remove the first cold Agent prefill cost or
 qualify Agent/Plan.
+
+### Model-neutral checkpoint boundary implementation, 2026-10-31
+
+The optional static checkpoint no longer searches for ChatML/Qwen role markers.
+The native adapter renders the structured conversation before its final user
+message with the loaded model's selected template and without an assistant
+suffix. It accepts this candidate only when it is a nonempty byte prefix of the
+actual full render and its tokenization is an exact prefix of the full token
+sequence. The existing 64-token minimum and recurrent snapshot bounds remain.
+Embedded role-marker text inside message content cannot move this boundary.
+
+Templates that merge/rewrite system messages, fail partial rendering, return an
+empty prefix, or tokenize differently at the boundary simply omit the additional
+checkpoint. Generation and full-prompt reuse remain available. No speculative
+cache boundary is used. Main template errors still reject the request explicitly.
+The template buffer helper also checks the native written length before decoding.
+
+Native renderer tests exercise ChatML, Llama 3, DeepSeek and Vicuna boundaries,
+Gemma merged-system fallback, user-only prompts, multi-turn history, unsupported
+templates and token-boundary mismatch. These renderer tests do not qualify real
+inference for every corresponding model family. Named GGUF fixtures verify
+actual recurrent cache equivalence/reset/cancellation and existing text/vision
+paths. Architecture-selected cache strategies and single-context ownership are
+unchanged. Full Jinja kwargs/tools rendering, parser capability profiles and
+cross-model admitted cache retention remain open model-adaptation work.

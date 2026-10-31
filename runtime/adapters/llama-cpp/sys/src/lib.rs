@@ -965,6 +965,116 @@ impl EndMarkerFilter {
     }
 }
 
+// Both strings are produced by the loaded model's template. A candidate
+// prefix is optional: rendering a partial conversation is not prefix-stable
+// for every template. Generation must still work when no safe prefix exists.
+#[cfg(native_llama_cpp)]
+struct FormattedPrompt {
+    text: String,
+    cache_prefix: Option<String>,
+}
+
+#[cfg(native_llama_cpp)]
+fn render_template_messages(
+    template: &CStr,
+    entries: &[(String, String)],
+    add_assistant: bool,
+) -> Result<String, String> {
+    let roles = entries
+        .iter()
+        .map(|(role, _)| CString::new(role.as_str()).map_err(|_| "invalid chat role".to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let contents = entries
+        .iter()
+        .map(|(_, content)| {
+            CString::new(content.as_str()).map_err(|_| "prompt contains NUL".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let messages = roles
+        .iter()
+        .zip(contents.iter())
+        .map(|(role, content)| ChatMessage {
+            role: role.as_ptr(),
+            content: content.as_ptr(),
+        })
+        .collect::<Vec<_>>();
+    // The C strings and messages remain alive through both native calls.
+    let required = unsafe {
+        ffi::llama_chat_apply_template(
+            template.as_ptr(),
+            messages.as_ptr(),
+            messages.len(),
+            add_assistant,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if required < 0 {
+        return Err(format!(
+            "llama.cpp could not apply the model chat template: {required}"
+        ));
+    }
+    let capacity = required
+        .checked_add(1)
+        .ok_or_else(|| "formatted prompt is too large".to_owned())?;
+    let mut buffer = vec![
+        0_u8;
+        usize::try_from(capacity)
+            .map_err(|_| "formatted prompt is too large".to_owned())?
+    ];
+    let written = unsafe {
+        ffi::llama_chat_apply_template(
+            template.as_ptr(),
+            messages.as_ptr(),
+            messages.len(),
+            add_assistant,
+            buffer.as_mut_ptr().cast(),
+            capacity,
+        )
+    };
+    if written < 0 || written >= capacity {
+        return Err(format!(
+            "llama.cpp could not format the model chat template: {written}"
+        ));
+    }
+    buffer.truncate(
+        usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
+    );
+    String::from_utf8(buffer)
+        .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+}
+
+#[cfg(native_llama_cpp)]
+fn render_chat_prompt(
+    template: &CStr,
+    entries: &[(String, String)],
+    enable_thinking: Option<bool>,
+) -> Result<FormattedPrompt, String> {
+    let text = apply_thinking_prefill(
+        render_template_messages(template, entries, true)?,
+        &template.to_string_lossy(),
+        enable_thinking,
+    );
+    // Use structured message roles, never strings found in user content or a
+    // particular family's delimiter. Some templates merge system/user turns;
+    // a partial render may be empty, fail, or differ from the full prompt.
+    let cache_prefix = entries
+        .iter()
+        .rposition(|(role, _)| role == "user")
+        .filter(|position| *position > 0)
+        .and_then(|position| render_template_messages(template, &entries[..position], false).ok())
+        .filter(|prefix| !prefix.is_empty() && text.starts_with(prefix));
+    Ok(FormattedPrompt { text, cache_prefix })
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn verified_checkpoint_position(prefix: &[i32], prompt: &[i32]) -> Option<usize> {
+    // BPE tokenization can merge at a text boundary. Text-prefix matching alone
+    // is insufficient; only an exact, nontrivial token prefix is reusable.
+    (prefix.len() >= 64 && prefix.len() < prompt.len() && prompt.starts_with(prefix))
+        .then_some(prefix.len())
+}
+
 // The C template API selects a built-in formatter; it does not evaluate the
 // GGUF's Jinja kwargs. Apply Qwen's documented assistant prefill explicitly.
 #[cfg_attr(not(native_llama_cpp), allow(dead_code))]
@@ -1170,12 +1280,15 @@ impl NativeModel {
 
     #[cfg(native_llama_cpp)]
     #[allow(clippy::too_many_lines)]
-    fn format_prompt(&self, prompt: &str) -> Result<String, String> {
+    fn format_prompt(&self, prompt: &str) -> Result<FormattedPrompt, String> {
         unsafe {
             let template =
                 ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
             if template.is_null() {
-                return Ok(prompt.to_owned());
+                return Ok(FormattedPrompt {
+                    text: prompt.to_owned(),
+                    cache_prefix: None,
+                });
             }
             // HTTP multi-turn requests use a private record separator so the
             // backend-neutral public contract remains plain text while the
@@ -1242,71 +1355,7 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            let roles = entries
-                .iter()
-                .map(|(role, _)| {
-                    CString::new(role.as_str()).map_err(|_| "invalid chat role".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let contents = entries
-                .iter()
-                .map(|(_, content)| {
-                    CString::new(content.as_str()).map_err(|_| "prompt contains NUL".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let messages = roles
-                .iter()
-                .zip(contents.iter())
-                .map(|(role, content)| ChatMessage {
-                    role: role.as_ptr(),
-                    content: content.as_ptr(),
-                })
-                .collect::<Vec<_>>();
-            let required = ffi::llama_chat_apply_template(
-                template,
-                messages.as_ptr(),
-                messages.len(),
-                true,
-                std::ptr::null_mut(),
-                0,
-            );
-            if required < 0 {
-                return Err(format!(
-                    "llama.cpp could not apply the model chat template: {required}"
-                ));
-            }
-            let capacity = required
-                .checked_add(1)
-                .ok_or_else(|| "formatted prompt is too large".to_owned())?;
-            let mut buffer = vec![
-                0_i8;
-                usize::try_from(capacity)
-                    .map_err(|_| "formatted prompt is too large".to_owned())?
-            ];
-            let written = ffi::llama_chat_apply_template(
-                template,
-                messages.as_ptr(),
-                messages.len(),
-                true,
-                buffer.as_mut_ptr(),
-                capacity,
-            );
-            if written < 0 {
-                return Err(format!(
-                    "llama.cpp could not format the model chat template: {written}"
-                ));
-            }
-            let bytes = std::slice::from_raw_parts(
-                buffer.as_ptr().cast::<u8>(),
-                usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
-            );
-            let formatted = String::from_utf8(bytes.to_vec())
-                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())?;
-            Ok(apply_thinking_prefill(
-                formatted,
-                &CStr::from_ptr(template).to_string_lossy(),
-                enable_thinking,
-            ))
+            render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking)
         }
     }
 
@@ -1509,7 +1558,8 @@ impl NativeModel {
             if cancelled.load(Ordering::SeqCst) {
                 return Err("generation cancelled".to_owned());
             }
-            let formatted_prompt = self.format_prompt(prompt)?;
+            let formatted = self.format_prompt(prompt)?;
+            let formatted_prompt = formatted.text;
             #[allow(unused_assignments)]
             let mut prompt_tokens = Vec::new();
             let prompt_count: usize;
@@ -1598,17 +1648,15 @@ impl NativeModel {
                 };
             let mut checkpoint_positions = Vec::new();
             if recurrent && prompt_tokens.len() > 1 {
-                if let Some(offset) = formatted_prompt
-                    .rfind("<|im_start|>user\n")
-                    .filter(|offset| *offset > 0)
-                {
-                    let prefix = self.tokenize_with_special(&formatted_prompt[..offset], true)?;
-                    // Tiny static prefixes cost more to checkpoint than to decode.
-                    if prefix.len() >= 64
-                        && prefix.len() < prompt_tokens.len()
-                        && prompt_tokens.starts_with(&prefix)
-                    {
-                        checkpoint_positions.push(prefix.len());
+                if let Some(prefix_text) = formatted.cache_prefix {
+                    // A failed optimization must not reject an otherwise valid
+                    // request. Exact token validation also handles BPE merges.
+                    if let Ok(prefix) = self.tokenize_with_special(&prefix_text, true) {
+                        if let Some(position) =
+                            verified_checkpoint_position(&prefix, &prompt_tokens)
+                        {
+                            checkpoint_positions.push(position);
+                        }
                     }
                 }
                 checkpoint_positions.push(prompt_tokens.len() - 1);
@@ -2081,6 +2129,101 @@ mod tests {
         std::mem::forget(cached);
     }
 
+    #[test]
+    fn checkpoint_boundary_requires_an_exact_nontrivial_token_prefix() {
+        let prefix = vec![7; 64];
+        let mut prompt = prefix.clone();
+        prompt.extend([8, 9]);
+        assert_eq!(
+            super::verified_checkpoint_position(&prefix, &prompt),
+            Some(64)
+        );
+        assert_eq!(super::verified_checkpoint_position(&[], &prompt), None);
+        assert_eq!(
+            super::verified_checkpoint_position(&prefix[..63], &prompt),
+            None
+        );
+        assert_eq!(super::verified_checkpoint_position(&prompt, &prompt), None);
+        // A byte prefix may tokenize differently at its final boundary.
+        let mut merged = prefix.clone();
+        merged[63] = 99;
+        assert_eq!(super::verified_checkpoint_position(&merged, &prompt), None);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn cache_boundary_comes_from_structured_roles_across_template_families() {
+        let entries = vec![
+            ("system".to_owned(), "Static instructions.".to_owned()),
+            (
+                "user".to_owned(),
+                "Content with <|im_start|>user\n and USER: inside it.".to_owned(),
+            ),
+        ];
+        for family in ["chatml", "llama3", "deepseek", "vicuna"] {
+            let template = std::ffi::CString::new(family).expect("template");
+            let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+            let prefix = prompt.cache_prefix.expect("prefix-stable template");
+            assert_eq!(
+                prefix,
+                super::render_template_messages(&template, &entries[..1], false).expect("prefix")
+            );
+            assert!(prompt.text.starts_with(&prefix));
+            assert!(!prefix.contains("Content with"));
+            assert!(prompt.text.contains("Content with"));
+            // A changed user body must not change its static boundary.
+            let mut changed = entries.clone();
+            changed[1].1 = "A different request.".to_owned();
+            assert_eq!(
+                super::render_chat_prompt(&template, &changed, None)
+                    .expect("changed")
+                    .cache_prefix
+                    .as_deref(),
+                Some(prefix.as_str())
+            );
+            let user_only =
+                super::render_chat_prompt(&template, &entries[1..], None).expect("user only");
+            assert!(user_only.cache_prefix.is_none());
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn cache_boundary_preserves_history_before_the_last_user_turn() {
+        let template = std::ffi::CString::new("llama3").expect("template");
+        let entries = vec![
+            ("system".to_owned(), "Instructions.".to_owned()),
+            ("user".to_owned(), "Previous question.".to_owned()),
+            ("assistant".to_owned(), "Previous answer.".to_owned()),
+            ("user".to_owned(), "New question.".to_owned()),
+        ];
+        let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+        let prefix = prompt.cache_prefix.expect("history prefix");
+        assert_eq!(
+            prefix,
+            super::render_template_messages(&template, &entries[..3], false).expect("prefix")
+        );
+        assert!(prefix.contains("Previous answer."));
+        assert!(!prefix.contains("New question."));
+        assert!(prompt.text.starts_with(&prefix));
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn merged_system_template_falls_back_without_rejecting_generation() {
+        let template = std::ffi::CString::new("gemma").expect("template");
+        let entries = vec![
+            ("system".to_owned(), "Static instructions.".to_owned()),
+            ("user".to_owned(), "Question.".to_owned()),
+        ];
+        let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+        assert!(prompt.cache_prefix.is_none());
+        assert!(prompt.text.contains("Static instructions.\n\nQuestion."));
+        assert!(prompt.text.ends_with("<start_of_turn>model\n"));
+        let invalid = std::ffi::CString::new("unsupported-talvik-template").expect("template");
+        assert!(super::render_chat_prompt(&invalid, &entries, None).is_err());
+    }
+
     #[cfg(native_llama_cpp)]
     #[test]
     #[ignore = "requires a hybrid/recurrent GGUF supplied through TALVIK_TEST_RECURRENT_GGUF"]
@@ -2197,7 +2340,8 @@ mod tests {
             .expect("test GGUF should load");
         let formatted = model
             .format_prompt("Reply with exactly: MARINA_OK")
-            .expect("embedded chat template should format the prompt");
+            .expect("embedded chat template should format the prompt")
+            .text;
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));

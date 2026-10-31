@@ -124,3 +124,10 @@ reset/cancellation do not inherit unmatched context. Opt-in
 Use `scripts/test-talvik-prompt-cache.py` against an idle loopback daemon for
 Qwen3.5 warm-prefix and timing acceptance. It changes that model's context size
 to create a cold reference and does not require model-admin HTTP scope.
+
+Static recurrent checkpoints are derived from structured messages rendered by
+the loaded model's template, not a model name or hard-coded role delimiter.
+Partial rendering must match both the full rendered text and its token prefix;
+otherwise the optional optimization is skipped. Template rewriting/merging and
+unknown boundaries never justify guessing cache compatibility. This does not
+imply that every template, tool format or model architecture is supported.
