@@ -1257,11 +1257,27 @@ fn tool_declarations(template: &str, content: &str) -> Result<String, String> {
     }
 }
 
-// Match the embedded tools branch: client instructions, tool declarations,
+// For declared JSON tool envelopes, match the embedded branch: client instructions, tool declarations,
 // then tool-choice restrictions in the initial system message. Never move
 // conversation messages or later system turns across a user/tool boundary.
 #[cfg(any(native_llama_cpp, test))]
-fn merge_tool_system_prefix(entries: Vec<(String, String)>) -> Vec<(String, String)> {
+fn merge_tool_system_prefix(
+    entries: Vec<(String, String)>,
+    combine: bool,
+) -> Vec<(String, String)> {
+    if !combine {
+        return entries
+            .into_iter()
+            .map(|(role, text)| {
+                let role = if matches!(role.as_str(), "__talvik_tools" | "__talvik_tool_choice") {
+                    "system".to_owned()
+                } else {
+                    role
+                };
+                (role, text)
+            })
+            .collect();
+    }
     let prefix_len = entries
         .iter()
         .take_while(|(role, _)| {
@@ -1600,7 +1616,12 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            let entries = merge_tool_system_prefix(entries);
+            let combine = self.profile.tool_format == Some(oid_model_runner::ToolFormat::XmlJson)
+                && CStr::from_ptr(template)
+                    .to_bytes()
+                    .windows(b"<tools>".len())
+                    .any(|part| part == b"<tools>");
+            let entries = merge_tool_system_prefix(entries, combine);
             render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
                 |mut prompt| {
                     // Never constrain hidden reasoning as if it were a tool call.
@@ -2583,7 +2604,7 @@ mod tests {
 
     #[test]
     fn tool_system_prefix_matches_declared_order_without_moving_history() {
-        let pairs = |values: &[(&str, &str)]| {
+        let pairs = |values: &[(&str, &str)]| -> Vec<(String, String)> {
             values
                 .iter()
                 .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
@@ -2596,7 +2617,17 @@ mod tests {
             ("user", "Build"),
             ("system", "Later"),
         ]);
-        let merged = super::merge_tool_system_prefix(input);
+        let merged = super::merge_tool_system_prefix(input.clone(), true);
+        assert_eq!(
+            super::merge_tool_system_prefix(input, false),
+            pairs(&[
+                ("system", "Required"),
+                ("system", "Tools"),
+                ("system", "Client"),
+                ("user", "Build"),
+                ("system", "Later")
+            ])
+        );
         assert_eq!(
             merged,
             pairs(&[
@@ -2606,7 +2637,7 @@ mod tests {
             ])
         );
         let plain = pairs(&[("system", "A"), ("system", "B"), ("user", "C")]);
-        assert_eq!(super::merge_tool_system_prefix(plain.clone()), plain);
+        assert_eq!(super::merge_tool_system_prefix(plain.clone(), true), plain);
     }
 
     #[test]

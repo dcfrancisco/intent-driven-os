@@ -291,3 +291,9 @@ branch: client instructions, tool declarations, and explicit choice restrictions
 Only the leading system/tool metadata prefix is combined. Conversation history
 and later system messages stay in place; requests without tools are unchanged.
 The earlier IDE run proves execution follow-through, not scope compliance.
+
+Cross-model acceptance caught incomplete XML-function parameters after the
+system-prefix reordering. Combining the prefix is now limited to XML/JSON
+profiles whose templates declare a `<tools>` envelope. XML-function profiles
+retain the previously qualified separate-system order. The regression checks
+both role layouts; this is capability gating rather than a model-name branch.
