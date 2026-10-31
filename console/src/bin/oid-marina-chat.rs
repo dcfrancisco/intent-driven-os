@@ -541,7 +541,7 @@ fn percentile(samples: &[f64], percentile: Percentile) -> Option<f64> {
     match percentile {
         Percentile::Median if sorted.len() % 2 == 0 => {
             let upper = sorted.len() / 2;
-            Some((sorted[upper - 1] + sorted[upper]) / 2.0)
+            Some(f64::midpoint(sorted[upper - 1], sorted[upper]))
         }
         Percentile::Median => Some(sorted[sorted.len() / 2]),
         Percentile::P95 => {

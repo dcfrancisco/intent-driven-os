@@ -4898,8 +4898,8 @@ mod tests {
         .expect("supported options");
         assert_eq!(options.context_size, 2048);
         assert_eq!(options.max_tokens, 32);
-        assert_eq!(options.temperature, 0.2);
-        assert_eq!(options.top_p, 0.75);
+        assert_eq!(options.temperature.to_bits(), 0.2_f32.to_bits());
+        assert_eq!(options.top_p.to_bits(), 0.75_f32.to_bits());
         assert_eq!(options.top_k, 10);
         assert_eq!(options.seed, 7);
         assert_eq!(options.stop_sequences, ["END"]);

@@ -20,14 +20,14 @@ jobs:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.88.0
           components: rustfmt, clippy
       - name: Check
         run: cargo fmt --all -- --check
       - name: Test
-        run: cargo test --workspace --exclude oid-console
+        run: cargo test --workspace --locked
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings -A clippy::module_name_repetitions
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -A clippy::module_name_repetitions
 
   build:
     name: Build ${{ matrix.name }}
@@ -64,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.82.0
+          toolchain: 1.88.0
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
       - uses: lukka/get-cmake@v3.31.6

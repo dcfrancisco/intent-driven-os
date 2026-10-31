@@ -735,8 +735,8 @@ mod tests {
         assert_eq!(request.model_id, "qwen");
         assert_eq!(request.prompt, "first line\nsecond\t line");
         assert_eq!(request.options.max_tokens, 32);
-        assert_eq!(request.options.temperature, 0.4);
-        assert_eq!(request.options.top_p, 0.8);
+        assert_eq!(request.options.temperature.to_bits(), 0.4_f32.to_bits());
+        assert_eq!(request.options.top_p.to_bits(), 0.8_f32.to_bits());
         assert_eq!(request.options.top_k, 12);
         assert_eq!(request.options.seed, 7);
         assert_eq!(request.options.context_size, 2048);

@@ -1064,7 +1064,10 @@ mod tests {
         assert_eq!(result.statistics.prompt_tokens, 3);
         assert_eq!(result.statistics.context_tokens, 8);
         assert_eq!(result.statistics.latency_ms, 1200);
-        assert_eq!(result.statistics.tokens_per_second, 4.5);
+        assert_eq!(
+            result.statistics.tokens_per_second.to_bits(),
+            4.5_f64.to_bits()
+        );
         assert!(result.statistics.metrics_known);
         assert_eq!(
             result

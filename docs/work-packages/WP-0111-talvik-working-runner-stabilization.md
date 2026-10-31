@@ -110,3 +110,12 @@ recorded separately. Official Python SDK discovery and all six text generation
 shapes passed (Chat Completions, legacy Completions and Responses, streaming and
 non-streaming). See `docs/TALVIK-API-CONTRACT.md` for the bounded surface and
 transport/deadline limitations. These results do not waive IDE or platform gates.
+
+The dependency lockfile includes image 0.25.10 (Rust 1.88 minimum), moxcms
+0.8.1 and pxfm 0.1.30 (Rust 1.85 minimum). The previous Rust 1.82 workspace/CI
+declaration could not build this lockfile. The minimum and pinned workflows now
+use Rust 1.88; qualification on that toolchain is recorded separately.
+
+The release check job now runs the complete locked workspace, including console
+and daemon HTTP regression tests; the former console exclusion would miss the
+API recovery tests added in this slice.
