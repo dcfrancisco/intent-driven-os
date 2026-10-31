@@ -1,6 +1,6 @@
 ---
 name: Talvik Coding
-model: "Talvik Qwen2.5 Coder 3B (CPU coding, Agent, Chat, Plan) (customendpoint)"
+model: "Talvik Qwen3 1.7B (Agent, Plan) (customendpoint)"
 description: Local CPU coding with a focused set of file, search, edit, and terminal tools.
 tools: ['read/readFile', 'search/fileSearch', 'search/textSearch', 'search/listDirectory', 'edit/createFile', 'edit/editFiles', 'execute/runInTerminal']
 ---
