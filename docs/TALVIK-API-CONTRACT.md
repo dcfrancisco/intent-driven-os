@@ -18,7 +18,7 @@ client cancellation. Chunked request bodies and HTTP pipelining are not qualifie
 
 | Route | Contract / limit | Evidence |
 |---|---|---|
-| `GET /healthz`, `/readyz` | Process health versus bootstrap inference readiness | Local service checks |
+| `GET /healthz`, `/readyz` | Process health versus current model-residency readiness | Local service checks |
 | `GET /v1/version` | Build identity | Local installed build checks |
 | `GET /v1/models` | Registered model list, default/residency/memory hints | Official Python SDK discovery |
 | `POST /v1/chat/completions` | Text and inline image messages; stream or JSON; model-dependent tools | Native API suite and Python SDK |
@@ -104,3 +104,9 @@ tokens. The recovery harness cancels only its own generated request IDs, but its
 load test must run on an idle/disposable instance. Qualification is recorded
 per build; passing these suites does not establish VS Code Agent/Plan success,
 GPU correctness, clean-machine installation, or other-platform release status.
+
+`scripts/test-talvik-resource-profile.py` uses an isolated native daemon with a
+controlled memory budget. It checks manual load/unload readiness transitions,
+rejects a large context, then completes twelve short serial requests. It requires
+the canonical installed daemon idle with its DeepSeek fixture resident and does
+not exhaust OS memory. `TALVIK_TEST_OUTPUT_DIR` selects its artifact directory.

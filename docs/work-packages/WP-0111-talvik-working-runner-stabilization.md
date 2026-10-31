@@ -119,3 +119,15 @@ use Rust 1.88; qualification on that toolchain is recorded separately.
 The release check job now runs the complete locked workspace, including console
 and daemon HTTP regression tests; the former console exclusion would miss the
 API recovery tests added in this slice.
+
+All five previously ignored native fixtures passed explicitly on Rust 1.88,
+including Qwen3.5 vision cancellation/recovery. A real VS Code Agent read-only
+request carried 22,107 prompt tokens and produced no tool result/answer before
+its five-minute usability budget; it was cancelled after 350.76 seconds and
+the next API request succeeded. Agent/Plan promotion remains blocked by latency.
+
+A controlled native resource fixture additionally exposed stale readiness when
+default-model auto-load was disabled. Health/readiness now derives inference
+availability from actual resident models rather than the one-time bootstrap
+flag. Manual load/unload transitions and memory-budget recovery are exercised by
+`scripts/test-talvik-resource-profile.py`.

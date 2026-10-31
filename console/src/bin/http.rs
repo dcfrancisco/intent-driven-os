@@ -169,13 +169,18 @@ impl Readiness {
         self.ready.store(ready, Ordering::Release);
     }
 
-    fn snapshot(&self) -> (bool, String) {
-        (
-            self.ready.load(Ordering::Acquire),
+    fn snapshot(&self, runtime: &dyn RuntimeService) -> (bool, String) {
+        // Bootstrap describes default-model provisioning. Inference readiness
+        // follows current residency, including explicit loads and unloads.
+        let ready = !runtime.snapshot().loaded_models.is_empty();
+        let bootstrap = if self.ready.load(Ordering::Acquire) && !ready {
+            "no_resident_model".to_owned()
+        } else {
             self.state
                 .lock()
-                .map_or_else(|_| "unknown".to_owned(), |state| state.clone()),
-        )
+                .map_or_else(|_| "unknown".to_owned(), |state| state.clone())
+        };
+        (ready, bootstrap)
     }
 }
 
@@ -284,7 +289,7 @@ fn handle(
     });
     match (method, path) {
         ("GET", "/healthz") => {
-            let (ready, bootstrap) = readiness.snapshot();
+            let (ready, bootstrap) = readiness.snapshot(runtime);
             respond_json(
                 &mut stream,
                 200,
@@ -292,7 +297,7 @@ fn handle(
             )
         }
         ("GET", "/readyz") => {
-            let (ready, bootstrap) = readiness.snapshot();
+            let (ready, bootstrap) = readiness.snapshot(runtime);
             if ready {
                 respond_json(
                     &mut stream,
