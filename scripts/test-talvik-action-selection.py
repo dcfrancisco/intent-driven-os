@@ -25,7 +25,7 @@ def build_call(message):
         return False
     args = json.loads(calls[0]['function']['arguments'])
     command = shlex.split(args.get('command', ''))
-    return command in (['mvn', '-DskipTests', 'package'], ['mvn', '-DskipTests=true', 'package']) and args.get('isBackground') is False
+    return len(command) == 3 and command[0] == 'mvn' and set(command[1:]) in ({'-DskipTests', 'package'}, {'-DskipTests=true', 'package'}) and args.get('isBackground') is False
 
 ps = request('/api/ps')
 assert ps['active_requests'] == ps['pending_requests'] == 0, 'Daemon busy: do not compete with live requests'
