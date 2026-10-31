@@ -7,6 +7,7 @@ import shlex
 import re
 import time
 import urllib.request
+import urllib.error
 
 BASE = os.getenv('TALVIK_TEST_BASE', 'http://127.0.0.1:11435').rstrip('/')
 TOKEN = Path(os.getenv('TALVIK_TEST_TOKEN_FILE', str(Path.home() / '.marina/sse-test.token'))).read_text().strip()
@@ -30,6 +31,7 @@ def build_call(message):
 
 ps = request('/api/ps')
 assert ps['active_requests'] == ps['pending_requests'] == 0, 'Daemon busy: do not compete with live requests'
+profile = request('/api/show', {'model': MODEL}).get('runtime_profile') or {}
 user = {'role': 'user', 'content': "build this project, don't check anything. just build"}
 call = {'id': 'call_build', 'type': 'function', 'function': {'name': 'run_in_terminal', 'arguments': json.dumps({'command': 'mvn -DskipTests package', 'explanation': 'Build only, skipping tests.', 'isBackground': False})}}
 cases = [
@@ -41,9 +43,15 @@ cases = [
 results = []
 for name, messages, check in cases:
     start = time.monotonic()
-    response = request('/v1/chat/completions', {'model': MODEL, 'messages': [{'role': 'system', 'content': SYSTEM}] + messages, 'tools': [TOOL], 'tool_choice': 'auto', 'temperature': 0, 'max_tokens': 192, 'context_size': 4096, 'chat_template_kwargs': {'enable_thinking': False}})
-    message = response['choices'][0]['message']
-    result = {'test': name, 'passed': check(message), 'seconds': round(time.monotonic() - start, 3), 'message': message}
+    body = {'model': MODEL, 'messages': [{'role': 'system', 'content': SYSTEM}] + messages, 'tools': [TOOL], 'tool_choice': 'auto', 'temperature': 0, 'max_tokens': 192, 'context_size': 4096}
+    if profile.get('thinking_control'):
+        body['chat_template_kwargs'] = {'enable_thinking': False}
+    try:
+        response = request('/v1/chat/completions', body)
+        message = response['choices'][0]['message']
+        result = {'test': name, 'passed': check(message), 'seconds': round(time.monotonic() - start, 3), 'message': message}
+    except urllib.error.HTTPError as error:
+        result = {'test': name, 'passed': False, 'http_status': error.code, 'error': json.loads(error.read())}
     results.append(result)
     print(json.dumps(result), flush=True)
 report = {'model': MODEL, 'execution': 'selection-only; no commands executed; supplied build result is a synthetic fixture', 'passed': all(r['passed'] for r in results), 'results': results}
