@@ -11,7 +11,7 @@ import urllib.error
 
 BASE = os.getenv('TALVIK_TEST_BASE', 'http://127.0.0.1:11435').rstrip('/')
 TOKEN = Path(os.getenv('TALVIK_TEST_TOKEN_FILE', str(Path.home() / '.marina/sse-test.token'))).read_text().strip()
-MODEL = os.getenv('TALVIK_TEST_MODEL', 'qwen3-1.7b-q4_k_m')
+MODEL = os.getenv('TALVIK_TEST_MODEL', 'qwen3.5-4b-Q4_K_M')
 PRESET = Path(__file__).resolve().parents[1] / 'docs/examples/vscode/talvik-coding.agent.md'
 SYSTEM = PRESET.read_text().split('---', 2)[2].strip() + '\nWorkspace context: this is a Maven project with pom.xml. Maven is available. No Maven wrapper is present.'
 TOOL = {'type': 'function', 'function': {'name': 'run_in_terminal', 'description': 'Execute a shell command in the workspace terminal.', 'parameters': {'type': 'object', 'properties': {'command': {'type': 'string'}, 'explanation': {'type': 'string'}, 'isBackground': {'type': 'boolean'}}, 'required': ['command', 'explanation', 'isBackground']}}}

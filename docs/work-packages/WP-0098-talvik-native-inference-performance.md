@@ -297,3 +297,10 @@ system-prefix reordering. Combining the prefix is now limited to XML/JSON
 profiles whose templates declare a `<tools>` envelope. XML-function profiles
 retain the previously qualified separate-system order. The regression checks
 both role layouts; this is capability gating rather than a model-name branch.
+
+Inspection of the complete embedded templates identified two declared layouts:
+client-before-tools and tools-before-client, both within one initial system
+message. Layout detection now follows the relative locations of the initial
+system-role test and tools heading in supported templates. Unknown layouts
+keep the fallback. Native fixtures check the actual embedded Qwen3 and Qwen3.5
+templates, not only synthetic snippets. No model identifiers enter the adapter.

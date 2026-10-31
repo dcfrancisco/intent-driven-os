@@ -1257,15 +1257,47 @@ fn tool_declarations(template: &str, content: &str) -> Result<String, String> {
     }
 }
 
-// For declared JSON tool envelopes, match the embedded branch: client instructions, tool declarations,
-// then tool-choice restrictions in the initial system message. Never move
-// conversation messages or later system turns across a user/tool boundary.
+#[cfg(any(native_llama_cpp, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ToolSystemOrder {
+    Separate,
+    ClientFirst,
+    ToolsFirst,
+}
+
+// These supported templates declare their order around the tools branch.
+// Unknown templates retain the existing role layout; no model names are used.
+#[cfg(any(native_llama_cpp, test))]
+fn tool_system_order(template: &str) -> ToolSystemOrder {
+    if !template.contains("<tools>")
+        || !template.contains("</tools>")
+        || !template.contains("tojson")
+    {
+        return ToolSystemOrder::Separate;
+    }
+    let tools = template.find("# Tools");
+    let client = [
+        "messages[0].role",
+        "messages[0]['role']",
+        "messages[0][\"role\"]",
+    ]
+    .into_iter()
+    .filter_map(|marker| template.find(marker))
+    .min();
+    match (client, tools) {
+        (Some(client), Some(tools)) if client < tools => ToolSystemOrder::ClientFirst,
+        (Some(_), Some(_)) => ToolSystemOrder::ToolsFirst,
+        _ => ToolSystemOrder::Separate,
+    }
+}
+
+// Combine only the initial metadata/system prefix; never move history.
 #[cfg(any(native_llama_cpp, test))]
 fn merge_tool_system_prefix(
     entries: Vec<(String, String)>,
-    combine: bool,
+    order: ToolSystemOrder,
 ) -> Vec<(String, String)> {
-    if !combine {
+    if order == ToolSystemOrder::Separate {
         return entries
             .into_iter()
             .map(|(role, text)| {
@@ -1294,7 +1326,12 @@ fn merge_tool_system_prefix(
         return entries;
     }
     let mut parts = Vec::new();
-    for role in ["system", "__talvik_tools", "__talvik_tool_choice"] {
+    let roles = match order {
+        ToolSystemOrder::ClientFirst => ["system", "__talvik_tools", "__talvik_tool_choice"],
+        ToolSystemOrder::ToolsFirst => ["__talvik_tools", "system", "__talvik_tool_choice"],
+        ToolSystemOrder::Separate => unreachable!("handled above"),
+    };
+    for role in roles {
         parts.extend(
             entries[..prefix_len]
                 .iter()
@@ -1616,12 +1653,8 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            let combine = self.profile.tool_format == Some(oid_model_runner::ToolFormat::XmlJson)
-                && CStr::from_ptr(template)
-                    .to_bytes()
-                    .windows(b"<tools>".len())
-                    .any(|part| part == b"<tools>");
-            let entries = merge_tool_system_prefix(entries, combine);
+            let order = tool_system_order(&CStr::from_ptr(template).to_string_lossy());
+            let entries = merge_tool_system_prefix(entries, order);
             render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
                 |mut prompt| {
                     // Never constrain hidden reasoning as if it were a tool call.
@@ -2617,9 +2650,10 @@ mod tests {
             ("user", "Build"),
             ("system", "Later"),
         ]);
-        let merged = super::merge_tool_system_prefix(input.clone(), true);
+        let merged =
+            super::merge_tool_system_prefix(input.clone(), super::ToolSystemOrder::ClientFirst);
         assert_eq!(
-            super::merge_tool_system_prefix(input, false),
+            super::merge_tool_system_prefix(input.clone(), super::ToolSystemOrder::Separate),
             pairs(&[
                 ("system", "Required"),
                 ("system", "Tools"),
@@ -2636,8 +2670,69 @@ mod tests {
                 ("system", "Later")
             ])
         );
+        assert_eq!(
+            super::merge_tool_system_prefix(input, super::ToolSystemOrder::ToolsFirst),
+            pairs(&[
+                ("system", "Tools\n\nClient\n\nRequired"),
+                ("user", "Build"),
+                ("system", "Later")
+            ])
+        );
         let plain = pairs(&[("system", "A"), ("system", "B"), ("user", "C")]);
-        assert_eq!(super::merge_tool_system_prefix(plain.clone(), true), plain);
+        assert_eq!(
+            super::merge_tool_system_prefix(plain.clone(), super::ToolSystemOrder::ClientFirst),
+            plain
+        );
+    }
+
+    #[test]
+    fn tool_system_order_is_declared_by_template_structure() {
+        use super::ToolSystemOrder::{ClientFirst, Separate, ToolsFirst};
+        assert_eq!(
+            super::tool_system_order("messages[0].role # Tools <tools></tools> tojson"),
+            ClientFirst
+        );
+        assert_eq!(
+            super::tool_system_order("# Tools <tools></tools> tojson messages[0].role"),
+            ToolsFirst
+        );
+        assert_eq!(
+            super::tool_system_order("messages[0]['role'] # Tools <tools></tools> tojson"),
+            ClientFirst
+        );
+        assert_eq!(
+            super::tool_system_order("# Tools <tools></tools> tojson"),
+            Separate
+        );
+        assert_eq!(super::tool_system_order("plain chatml"), Separate);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires MARINA_TEST_GGUF for embedded template qualification"]
+    fn tool_system_layout_matches_the_loaded_template() {
+        let path = std::env::var("MARINA_TEST_GGUF").expect("GGUF fixture");
+        super::initialize().unwrap();
+        let model = super::load_model(&path, None, super::cpu_load_options()).unwrap();
+        let template = unsafe {
+            std::ffi::CStr::from_ptr(super::ffi::llama_model_chat_template(
+                model.pointer.cast_const(),
+                std::ptr::null(),
+            ))
+        }
+        .to_string_lossy();
+        let order = super::tool_system_order(&template);
+        assert_ne!(
+            order,
+            super::ToolSystemOrder::Separate,
+            "fixture must declare a supported tool layout"
+        );
+        let prompt = "\u{001e}__talvik_tools\n[]\u{001e}system\nCLIENT_SCOPE_MARKER\u{001e}user\nRead a file.";
+        let rendered = model.format_prompt(prompt).unwrap();
+        assert_eq!(rendered.text.matches("<|im_start|>system\n").count(), 1);
+        let client = rendered.text.find("CLIENT_SCOPE_MARKER").unwrap();
+        let tools = rendered.text.find("# Tools").unwrap();
+        assert_eq!(client < tools, order == super::ToolSystemOrder::ClientFirst);
     }
 
     #[test]
