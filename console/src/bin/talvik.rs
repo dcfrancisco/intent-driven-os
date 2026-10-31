@@ -4,17 +4,22 @@
 
 #[path = "../build_info.rs"]
 mod build_info;
+#[path = "../chat_ui.rs"]
+mod chat_ui;
 #[path = "../ipc.rs"]
 mod ipc;
+#[path = "../ipc_runtime.rs"]
+mod ipc_runtime;
+use oid_runtime::{GenerationMessage, GenerationOptions, GenerationRequest, RuntimeService};
+use oid_shared::EventBus;
 use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::time::Duration;
 
 const HELP: &str = "Talvik local model runtime
 
 Usage:
-  talvik [--json] <command> [arguments]
+  talvik [--json] [--plain] <command> [arguments]
 
 Commands:
   status                         Show daemon health and resident models
@@ -34,6 +39,9 @@ Commands:
 Use `talvik <command> --help` for command-specific usage. JSON output is
 available for status, models, import, load, and unload with --json.
 
+Chat uses terminal colors and progress automatically. Use --plain or
+TALVIK_PLAIN=1 for raw text; NO_COLOR=1 disables colors. Pipes stay plain.
+
 Routing is off by default. Enable ordered fallback with
 TALVIK_ROUTING_ENABLED=1 and TALVIK_ROUTE_MODELS=model-a,model-b.";
 
@@ -44,12 +52,35 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
-    let json_output = arguments.first().is_some_and(|value| value == "--json");
-    if json_output {
+fn global_options(arguments: &mut Vec<String>) -> (bool, bool) {
+    let mut json = false;
+    let mut plain = false;
+    while let Some(flag) = arguments.first() {
+        match flag.as_str() {
+            "--json" => json = true,
+            "--plain" => plain = true,
+            _ => break,
+        }
         arguments.remove(0);
     }
+    (json, plain)
+}
+
+fn print_version(json_output: bool) -> Result<(), serde_json::Error> {
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&build_info::json("talvik", None))?
+        );
+    } else {
+        println!("{}", build_info::display("talvik"));
+    }
+    Ok(())
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let (json_output, plain) = global_options(&mut arguments);
     let mut args = arguments.into_iter();
     let Some(command) = args.next() else {
         println!("{HELP}");
@@ -61,16 +92,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let _ = args.next();
             println!("{}", build_info::display("talvik"));
         }
-        "version" if args.next().is_none() => {
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&build_info::json("talvik", None))?
-                );
-            } else {
-                println!("{}", build_info::display("talvik"));
-            }
-        }
+        "version" if args.next().is_none() => print_version(json_output)?,
         "status" if args.next().is_none() => request_formatted(
             &format!("status\t{}", build_info::current().version),
             json_output,
@@ -141,7 +163,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "cancel\t{}",
             ipc::encode_field(&required(&mut args, "request id")?)
         ))?,
-        "run" => run_prompt(args)?,
+        "run" => run_prompt(args, plain || json_output)?,
         "routing" if args.next().as_deref() == Some("status") && args.next().is_none() => {
             routing_status();
         }
@@ -181,7 +203,10 @@ fn import(
     request_formatted(&line, json_output, "import")
 }
 
-fn run_prompt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+fn run_prompt(
+    mut args: impl Iterator<Item = String>,
+    plain: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let target = required(&mut args, "model id or --route")?;
     if target == "--help" {
         println!(
@@ -194,15 +219,15 @@ fn run_prompt(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn std:
         return Err("prompt required".into());
     }
     match target.as_str() {
-        "--route" => route_generate(&prompt),
+        "--route" => route_generate(&prompt, plain),
         "--default" => {
             let default_model =
                 oid_runtime::config::default_model()?.ok_or("no default model is configured")?;
-            generate(&default_model.id, &prompt)
+            generate(&default_model.id, &prompt, plain)
                 .map(|_| ())
                 .map_err(|failure| failure.message.into())
         }
-        _ => generate(&target, &prompt)
+        _ => generate(&target, &prompt, plain)
             .map(|_| ())
             .map_err(|failure| failure.message.into()),
     }
@@ -242,7 +267,7 @@ fn routing_status() {
     println!("fallback order: {}", models.join(", "));
 }
 
-fn route_generate(prompt: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn route_generate(prompt: &str, plain: bool) -> Result<(), Box<dyn std::error::Error>> {
     if !routing_enabled() {
         return Err("routing is disabled; set TALVIK_ROUTING_ENABLED=1 to opt in".into());
     }
@@ -258,7 +283,7 @@ fn route_generate(prompt: &str) -> Result<(), Box<dyn std::error::Error>> {
             failures.push(format!("{model}: {error}"));
             continue;
         }
-        match generate(&model, prompt) {
+        match generate(&model, prompt, plain) {
             Ok(_) => return Ok(()),
             Err(failure) if !failure.output_started => {
                 eprintln!("route: {model} failed before output: {}", failure.message);
@@ -282,53 +307,65 @@ struct GenerationFailure {
     output_started: bool,
 }
 
-fn generate(model: &str, prompt: &str) -> Result<bool, GenerationFailure> {
-    generate_inner(model, prompt).map_err(|(message, output_started)| GenerationFailure {
+fn generate(model: &str, prompt: &str, plain: bool) -> Result<bool, GenerationFailure> {
+    generate_inner(model, prompt, plain).map_err(|(message, output_started)| GenerationFailure {
         message,
         output_started,
     })
 }
 
-fn generate_inner(model: &str, prompt: &str) -> Result<bool, (String, bool)> {
-    let mut stream = ipc::connect().map_err(|error| (error.to_string(), false))?;
-    let request_id = format!("talvik-{}-{}", std::process::id(), unique_suffix());
-    writeln!(
-        stream,
-        "generate\t{}\t128\t{}\t{}",
-        ipc::encode_field(model),
-        ipc::encode_field(&request_id),
-        ipc::encode_field(prompt)
-    )
-    .map_err(|error| (error.to_string(), false))?;
-    let cancelled = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&cancelled))
+fn generate_inner(model: &str, prompt: &str, plain: bool) -> Result<bool, (String, bool)> {
+    let mut display =
+        chat_ui::ChatDisplay::new(model, plain).map_err(|error| (error.to_string(), false))?;
+    let interrupt = chat_ui::InterruptGuard::new().map_err(|error| (error.to_string(), false))?;
+    ipc_runtime::IpcRuntimeService::probe().map_err(|error| (error.to_string(), false))?;
+    let client = ipc_runtime::IpcRuntimeService::new(EventBus::new());
+    let stream = client
+        .generate(GenerationRequest {
+            request_id: format!("talvik-{}-{}", std::process::id(), unique_suffix()),
+            model_id: model.to_owned(),
+            prompt: prompt.to_owned(),
+            content: Vec::new(),
+            options: GenerationOptions::default(),
+            structured_output: None,
+        })
         .map_err(|error| (error.to_string(), false))?;
-    let reader = BufReader::new(
-        stream
-            .try_clone()
-            .map_err(|error| (error.to_string(), false))?,
-    );
-    let mut output_started = false;
-    for line in reader.lines() {
-        let line = line.map_err(|error| (error.to_string(), output_started))?;
-        if let Some(token) = line.strip_prefix("TOKEN\t") {
-            output_started = true;
-            print!("{}", ipc::decode_field(token));
-            std::io::stdout()
-                .flush()
-                .map_err(|error| (error.to_string(), true))?;
-        } else if let Some(state) = line.strip_prefix("DONE\t") {
-            println!();
-            println!("DONE {state}");
-            return Ok(output_started);
-        } else if let Some(error) = line.strip_prefix("ERROR\t") {
-            return Err((ipc::decode_field(error), output_started));
+    loop {
+        if interrupt.take() {
+            stream.cancel();
+            display.cancelling();
         }
-        if cancelled.swap(false, Ordering::SeqCst) {
-            let _ = request(&format!("cancel\t{}", ipc::encode_field(&request_id)));
+        match stream.recv_timeout(Duration::from_millis(50)) {
+            Ok(GenerationMessage::Token(token)) => {
+                if let Err(error) = display.token(&token) {
+                    stream.cancel();
+                    return Err((error.to_string(), display.output_started()));
+                }
+            }
+            Ok(message @ (GenerationMessage::Completed(_) | GenerationMessage::Cancelled(_))) => {
+                let cancelled = matches!(message, GenerationMessage::Cancelled(_));
+                let (GenerationMessage::Completed(result) | GenerationMessage::Cancelled(result)) =
+                    message
+                else {
+                    unreachable!()
+                };
+                display
+                    .finish_generation(&result, cancelled)
+                    .map_err(|error| (error.to_string(), display.output_started()))?;
+                return Ok(display.output_started());
+            }
+            Ok(GenerationMessage::Failed(error)) => {
+                return Err((error.to_string(), display.output_started()))
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err((
+                    "connection closed before completion".to_owned(),
+                    display.output_started(),
+                ));
+            }
         }
     }
-    Err(("connection closed before DONE".to_owned(), output_started))
 }
 
 fn request(line: &str) -> Result<(), Box<dyn std::error::Error>> {

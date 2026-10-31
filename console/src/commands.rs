@@ -2,7 +2,6 @@
 
 use crate::operations::ConsoleOperations;
 use crate::signals::SignalController;
-use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static GENERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -487,45 +486,58 @@ fn generate_lines_result_with_interrupt(
         options,
         structured_output: None,
     };
+    let mut display = signals
+        .map(|_| crate::chat_ui::ChatDisplay::new(&request.model_id, false))
+        .transpose()
+        .map_err(|error| oid_runtime::RuntimeError::ModelLifecycle(error.to_string()))?;
+    let interactive = display
+        .as_ref()
+        .is_some_and(crate::chat_ui::ChatDisplay::interactive);
     let stream = runtime.generate(request)?;
-    let mut lines = vec!["Generating...".to_owned()];
+    let mut lines = if interactive {
+        Vec::new()
+    } else {
+        vec!["Generating...".to_owned()]
+    };
     loop {
         if signals.is_some_and(SignalController::take_interrupt) {
-            runtime.cancel_generation();
+            stream.cancel();
+            if let Some(display) = display.as_mut() {
+                display.cancelling();
+            }
         }
         match stream.recv_timeout(std::time::Duration::from_millis(25)) {
             Ok(GenerationMessage::Token(token)) => {
-                if signals.is_some() {
-                    print!("{token}");
-                    let _ = std::io::stdout().flush();
+                if let Some(display) = display.as_mut() {
+                    if let Err(error) = display.token(&token) {
+                        stream.cancel();
+                        return Err(oid_runtime::RuntimeError::ModelLifecycle(error.to_string()));
+                    }
                 } else {
                     lines.push(token);
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
-                let metrics = if result.statistics.metrics_known {
-                    format!(
-                        "generated {} tokens at {:.1} tokens/sec",
-                        result.statistics.generated_tokens, result.statistics.tokens_per_second
-                    )
-                } else {
-                    "generation metrics unknown".to_owned()
-                };
-                lines.push(format!(
-                    "Request {} completed: {metrics}",
-                    result.request_id
-                ));
-                if result.statistics.metrics_known {
-                    lines.push(format!(
-                        "Prompt tokens: {} | Context: {} | Latency: {} ms",
-                        result.statistics.prompt_tokens,
-                        result.statistics.context_tokens,
-                        result.statistics.latency_ms
-                    ));
+                if let Some(display) = display.as_mut() {
+                    display.finish_generation(&result, false).map_err(|error| {
+                        oid_runtime::RuntimeError::ModelLifecycle(error.to_string())
+                    })?;
                 }
+                if interactive {
+                    break;
+                }
+                lines.extend(generation_completion_lines(&result));
                 break;
             }
             Ok(GenerationMessage::Cancelled(result)) => {
+                if let Some(display) = display.as_mut() {
+                    display.finish_generation(&result, true).map_err(|error| {
+                        oid_runtime::RuntimeError::ModelLifecycle(error.to_string())
+                    })?;
+                }
+                if interactive {
+                    break;
+                }
                 lines.push(format!(
                     "Request {} cancelled after {} tokens",
                     result.request_id, result.statistics.generated_tokens
@@ -542,6 +554,31 @@ fn generate_lines_result_with_interrupt(
         }
     }
     Ok(lines)
+}
+
+fn generation_completion_lines(result: &oid_runtime::GenerationResult) -> Vec<String> {
+    let mut lines = Vec::new();
+    let metrics = if result.statistics.metrics_known {
+        format!(
+            "generated {} tokens at {:.1} tokens/sec",
+            result.statistics.generated_tokens, result.statistics.tokens_per_second
+        )
+    } else {
+        "generation metrics unknown".to_owned()
+    };
+    lines.push(format!(
+        "Request {} completed: {metrics}",
+        result.request_id
+    ));
+    if result.statistics.metrics_known {
+        lines.push(format!(
+            "Prompt tokens: {} | Context: {} | Latency: {} ms",
+            result.statistics.prompt_tokens,
+            result.statistics.context_tokens,
+            result.statistics.latency_ms
+        ));
+    }
+    lines
 }
 
 fn select_generation_model(

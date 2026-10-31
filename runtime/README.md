@@ -161,3 +161,43 @@ and state directories.
 Concurrent HTTP clients and IDE utility requests share the runtime's bounded
 single-generation queue. Admission and enqueue transitions are synchronized so
 simultaneous requests cannot race for the active slot or miss queue wakeups.
+
+
+### Terminal chat presentation
+
+`talvik run <model-id> <prompt>`, `oid-marina-chat <prompt>`, and OID console
+responses share a streaming terminal renderer:
+
+- Cyan model/answer labels, muted thinking text, bold Markdown headings and
+  emphasis, and cyan inline/fenced code. Markdown remains copyable as text;
+  this is lightweight highlighting, not full Markdown layout or language syntax
+  highlighting.
+- An animated waiting indicator with elapsed time until tokens arrive. This
+  does not claim to distinguish queueing, loading and prompt processing, which
+  the IPC stream does not report separately.
+- A Thinking section only for an emitted leading `<think>` block containing
+  text. Empty wrappers stay hidden. Code containing literal thinking tags is
+  preserved. Normal responses start with Generating.
+- A compact completion footer with elapsed time and reported token metrics;
+  cancellation and output limits have separate labels.
+- Ctrl+C cancels while waiting for the first token as well as during streaming.
+  Progress is cleared and styles reset on handled completion/error/cancellation.
+
+Use `talvik --plain run ...` or `oid-marina-chat --plain ...` to get raw streamed
+model text. `TALVIK_PLAIN=1` disables the renderer for all three clients.
+Nonempty `NO_COLOR` disables colors while retaining readable interactive labels.
+`TERM=dumb` and redirected output disable decoration and animations. Progress
+and summaries use stderr; raw model text goes to stdout. `talvik run` no longer
+appends the internal `DONE` protocol record to its output.
+
+Development acceptance checks (Unix; use an explicit native library directory
+for native-linked development binaries):
+
+```sh
+cargo test -p oid-console
+TALVIK_TEST_NATIVE_LIB_DIR="$HOME/.marina/lib" python3 scripts/test-talvik-terminal.py target/debug
+```
+
+The terminal checks launch real clients in pseudo-terminals against a local
+fixture daemon; they do not require models or modify the installed daemon.
+Conventions: <https://clig.dev/#output> and <https://no-color.org/>.

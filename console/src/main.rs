@@ -4,6 +4,7 @@
 #![warn(missing_docs)]
 
 mod audio;
+mod chat_ui;
 mod commands;
 mod editor;
 mod foundation;
