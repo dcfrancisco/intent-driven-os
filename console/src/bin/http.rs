@@ -2,8 +2,10 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use oid_runtime::{
-    auth, ContentPart, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
-    GenerationTermination, ImageInput, MarinaRuntime, RuntimeService, StructuredOutput,
+    auth, CacheStrategy, ContentPart, GenerationMessage, GenerationOptions, GenerationRequest,
+    GenerationResult, GenerationStream, GenerationTermination, ImageInput, MarinaRuntime,
+    ModelProfile, ParsedText, ReasoningFormat, ReasoningStreamParser, RuntimeService,
+    StructuredOutput, ToolFormat,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -337,7 +339,8 @@ fn handle(
                         "owned_by": "marina",
                         "default": default_model_id.is_some_and(|id| id == model.id),
                         "resident": resident_ids.iter().any(|id| id == &model.id),
-                        "estimated_memory_mib": model.memory_requirement_mb
+                        "estimated_memory_mib": model.memory_requirement_mb,
+                        "runtime_profile": runtime.model_profile(&model.id).as_ref().map(profile_json)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -665,7 +668,9 @@ fn ollama_show(
                 "families": [model.family],
                 "quantization_level": model.quantization
             },
-            "capabilities": model.capabilities,
+            "capabilities": runtime.model_profile(model_id).as_ref().map(profile_capabilities).unwrap_or_default(),
+            "declared_capabilities": model.capabilities,
+            "runtime_profile": runtime.model_profile(model_id).as_ref().map(profile_json),
             "model_info": {}
         }),
     )
@@ -795,11 +800,24 @@ fn generate_ollama(
         Ok(output) => output,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
     };
-    let prompt = match ollama_prompt(body, endpoint) {
+    let mut prompt = match ollama_prompt(body, endpoint) {
         Ok(prompt) => prompt,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
     };
     let base_prompt = prompt.clone();
+    let enabled_thinking = body.get("think").and_then(Value::as_bool).or_else(|| {
+        std::env::var("TALVIK_ENABLE_THINKING")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    });
+    if endpoint == OllamaGenerationEndpoint::Chat {
+        if let Some(enabled) = enabled_thinking {
+            prompt.insert_str(
+                0,
+                &format!("\u{001e}__talvik_template\nenable_thinking={enabled}"),
+            );
+        }
+    }
     let options = match ollama_generation_options(body) {
         Ok(options) => options,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
@@ -849,6 +867,34 @@ fn generate_ollama(
     } else {
         duration_nanos(load_started.elapsed())
     };
+    let output_profile = runtime.model_profile(model);
+    if let Some(profile) = output_profile.as_ref() {
+        if body.get("think").is_some() && !profile.thinking_control {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded template has no supported thinking control",
+            );
+        }
+        if !profile.completion || (endpoint == OllamaGenerationEndpoint::Chat && !profile.chat) {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded model does not support this text generation endpoint",
+            );
+        }
+        if request_content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image(_)))
+            && !profile.vision
+        {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded model has no initialized vision projector",
+            );
+        }
+    }
     if tool_definitions.is_some() && !runtime.tool_support(model).supported {
         return respond_ollama_error(
             stream,
@@ -898,8 +944,22 @@ fn generate_ollama(
     }
     let stream_tool_calls =
         streaming && endpoint == OllamaGenerationEndpoint::Chat && tool_definitions.is_some();
-    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut tool_parser = stream_tool_calls.then(|| {
+        selected_tool_parser(
+            request_id.clone(),
+            output_profile.as_ref(),
+            tool_definitions,
+        )
+    });
     let mut streamed_tool_calls = Vec::new();
+    let mut reason_parser =
+        if endpoint == OllamaGenerationEndpoint::Chat && structured_output.is_none() {
+            reasoning_parser(output_profile.as_ref(), enabled_thinking)
+        } else {
+            None
+        };
+    let mut reasoning = String::new();
+    let mut pending_completion = None;
     let mut output = String::new();
     loop {
         if peer_disconnected(stream)? {
@@ -910,9 +970,29 @@ fn generate_ollama(
                 "inference client disconnected",
             ));
         }
-        match generation.recv_timeout(Duration::from_millis(100)) {
+        let message = pending_completion.take().map_or_else(
+            || generation.recv_timeout(Duration::from_millis(100)),
+            |result| Ok(GenerationMessage::Completed(result)),
+        );
+        let (message, thought) =
+            split_reasoning_message(message, &mut reason_parser, &mut pending_completion);
+        reasoning.push_str(&thought);
+        if streaming && !thought.is_empty() {
+            if let Err(error) = write_ndjson_line(
+                stream,
+                &json!({"model":model,"created_at":created_at,"message":{"role":"assistant","content":"","thinking":thought},"done":false}),
+            ) {
+                generation.cancel();
+                let _ = drain_cancelled_generation(&generation);
+                return Err(error);
+            }
+        }
+        match message {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(GenerationMessage::Token(token)) => {
+                if token.is_empty() {
+                    continue;
+                }
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
                         Ok(parts) => parts,
@@ -1018,7 +1098,12 @@ fn generate_ollama(
                             .collect::<Vec<_>>()
                     })
                 } else {
-                    match parse_tool_calls(&output, &unique_request_id()) {
+                    match parse_tool_calls_selected(
+                        &output,
+                        &unique_request_id(),
+                        output_profile.as_ref(),
+                        tool_definitions,
+                    ) {
                         Ok(calls) => calls
                             .map(|calls| calls.iter().map(ollama_tool_call).collect::<Vec<_>>()),
                         Err(message) if streaming => {
@@ -1069,6 +1154,12 @@ fn generate_ollama(
                     if endpoint == OllamaGenerationEndpoint::Chat {
                         terminal["message"]["tool_calls"] = json!(tool_calls);
                     }
+                }
+                if !streaming
+                    && !reasoning.trim().is_empty()
+                    && endpoint == OllamaGenerationEndpoint::Chat
+                {
+                    terminal["message"]["thinking"] = json!(reasoning);
                 }
                 add_ollama_statistics(
                     &mut terminal,
@@ -1137,10 +1228,16 @@ fn validate_ollama_generation_request(
     body: &Value,
     endpoint: OllamaGenerationEndpoint,
 ) -> Result<(), (u16, String)> {
-    for field in ["keep_alive", "think", "template", "context"] {
+    for field in ["keep_alive", "template", "context"] {
         if body.get(field).is_some_and(|value| !value.is_null()) {
             return Err((501, format!("request field `{field}` is not supported yet")));
         }
+    }
+    if body.get("think").is_some_and(|v| !v.is_boolean()) {
+        return Err((400, "think must be a boolean".to_owned()));
+    }
+    if endpoint != OllamaGenerationEndpoint::Chat && body.get("think").is_some() {
+        return Err((501, "think is supported only by chat".to_owned()));
     }
     parse_ollama_format(body.get("format"))?;
     if body.get("raw").and_then(Value::as_bool) == Some(true) {
@@ -1832,6 +1929,122 @@ fn respond_ollama_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::R
     respond_ollama_error(stream, 403, format!("required scope: {scope}"))
 }
 
+fn profile_capabilities(profile: &ModelProfile) -> Vec<&'static str> {
+    let mut result = Vec::new();
+    for (enabled, name) in [
+        (profile.completion, "completion"),
+        (profile.chat, "chat"),
+        (profile.embedding, "embedding"),
+        (profile.vision, "vision"),
+        (profile.tool_format.is_some(), "tools"),
+        (profile.reasoning_format.is_some(), "thinking"),
+    ] {
+        if enabled {
+            result.push(name);
+        }
+    }
+    result
+}
+
+fn profile_json(profile: &ModelProfile) -> Value {
+    json!({
+        "architecture": profile.architecture, "training_context_length": profile.context_length,
+        "capabilities": profile_capabilities(profile), "tokenizer_adds_bos": profile.tokenizer_adds_bos,
+        "cache_strategy": match profile.cache { CacheStrategy::Disabled => "disabled", CacheStrategy::Attention => "attention", CacheStrategy::Recurrent => "recurrent_checkpoint" },
+        "tools_declared": profile.tools_declared,
+        "tool_parser": profile.tool_format.map(|format| match format { ToolFormat::XmlJson => "xml_json", ToolFormat::XmlFunction => "xml_function" }),
+        "embedding_declared":profile.embedding_declared,
+        "reasoning_parser": profile.reasoning_format.map(|ReasoningFormat::ThinkTags| "think_tags"),
+        "thinking_control": profile.thinking_control, "reasoning_prefilled": profile.reasoning_prefilled,
+        "evidence": "loaded_artifact_and_backend_support"
+    })
+}
+
+fn reasoning_parser(
+    profile: Option<&ModelProfile>,
+    enabled: Option<bool>,
+) -> Option<ReasoningStreamParser> {
+    let profile = profile?;
+    match profile.reasoning_format? {
+        ReasoningFormat::ThinkTags => Some(ReasoningStreamParser::new(
+            enabled
+                .filter(|_| profile.thinking_control)
+                .unwrap_or(profile.reasoning_prefilled),
+        )),
+    }
+}
+
+fn selected_tool_parser(
+    id: String,
+    profile: Option<&ModelProfile>,
+    definitions: Option<&Vec<Value>>,
+) -> ToolCallStreamParser {
+    let mut parser = ToolCallStreamParser::new(id);
+    parser.format = profile
+        .and_then(|p| p.tool_format)
+        .unwrap_or(ToolFormat::XmlJson);
+    parser.definitions = definitions.cloned().unwrap_or_default();
+    parser
+}
+
+fn split_reasoning_message(
+    message: Result<GenerationMessage, std::sync::mpsc::RecvTimeoutError>,
+    parser: &mut Option<ReasoningStreamParser>,
+    pending: &mut Option<GenerationResult>,
+) -> (
+    Result<GenerationMessage, std::sync::mpsc::RecvTimeoutError>,
+    String,
+) {
+    match message {
+        Ok(GenerationMessage::Token(token)) => {
+            let parsed = parser.as_mut().map_or_else(
+                || ParsedText {
+                    content: token.clone(),
+                    reasoning: String::new(),
+                },
+                |p| p.push(&token),
+            );
+            (
+                Ok(GenerationMessage::Token(parsed.content)),
+                parsed.reasoning,
+            )
+        }
+        Ok(GenerationMessage::Completed(result)) => {
+            let tail = parser
+                .take()
+                .map_or_else(ParsedText::default, |mut p| p.finish());
+            if tail.content.is_empty() {
+                (Ok(GenerationMessage::Completed(result)), tail.reasoning)
+            } else {
+                *pending = Some(result);
+                (Ok(GenerationMessage::Token(tail.content)), tail.reasoning)
+            }
+        }
+        other => (other, String::new()),
+    }
+}
+
+fn write_openai_reasoning(
+    stream: &mut TcpStream,
+    id: &str,
+    created: u64,
+    model: &str,
+    text: &str,
+    headers: &mut bool,
+) -> std::io::Result<()> {
+    if !*headers {
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+    }
+    let mut delta = json!({"reasoning_content":text});
+    if !*headers {
+        delta["role"] = json!("assistant");
+    }
+    *headers = true;
+    let event = json!({"id":id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":delta,"finish_reason":Value::Null}]});
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
 const TOOL_CALL_START: &str = "<tool_call>";
 const TOOL_CALL_END: &str = "</tool_call>";
 const MAX_TOOL_CALL_BYTES: usize = 64 * 1024;
@@ -1842,6 +2055,8 @@ enum ToolStreamPart {
 }
 
 struct ToolCallStreamParser {
+    format: ToolFormat,
+    definitions: Vec<Value>,
     buffer: String,
     inside_call: bool,
     close_search_from: usize,
@@ -1852,6 +2067,8 @@ struct ToolCallStreamParser {
 impl ToolCallStreamParser {
     fn new(id_prefix: String) -> Self {
         Self {
+            format: ToolFormat::XmlJson,
+            definitions: Vec::new(),
             buffer: String::new(),
             inside_call: false,
             close_search_from: 0,
@@ -1888,8 +2105,13 @@ impl ToolCallStreamParser {
             return Err("model ended with an incomplete tool-call marker".to_owned());
         }
         let remaining = std::mem::take(&mut self.buffer);
-        if let Ok(value) = serde_json::from_str::<Value>(remaining.trim()) {
-            if value.get("name").is_some() || value.get("arguments").is_some() {
+        let candidate = remaining.trim();
+        let candidate = candidate
+            .strip_prefix("```json")
+            .and_then(|v| v.trim_end().strip_suffix("```"))
+            .map_or(candidate, str::trim);
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            if value.get("name").is_some() && value.get("arguments").is_some() {
                 parts.push(self.parse_call(&value)?);
                 return Ok(parts);
             }
@@ -1908,8 +2130,14 @@ impl ToolCallStreamParser {
                     TOOL_CALL_END.as_bytes(),
                 ) {
                     let end = self.close_search_from + relative;
-                    let value = serde_json::from_str::<Value>(self.buffer[..end].trim())
-                        .map_err(|error| format!("malformed model tool call: {error}"))?;
+                    if end > MAX_TOOL_CALL_BYTES {
+                        return Err("model tool call exceeded the 64 KiB limit".to_owned());
+                    }
+                    let value = parse_tool_payload(
+                        self.buffer[..end].trim(),
+                        self.format,
+                        &self.definitions,
+                    )?;
                     parts.push(self.parse_call(&value)?);
                     self.buffer.drain(..end + TOOL_CALL_END.len());
                     self.inside_call = false;
@@ -1926,6 +2154,20 @@ impl ToolCallStreamParser {
                 break;
             }
 
+            let leading = self.buffer.trim_start();
+            if self.next_index == 0
+                && (leading.starts_with('{')
+                    || leading.starts_with("```json")
+                    || (!leading.is_empty() && "```json".starts_with(leading)))
+            {
+                if self.buffer.len() > MAX_TOOL_CALL_BYTES {
+                    return Err("model tool call exceeded the 64 KiB limit".to_owned());
+                }
+                // A standalone JSON call may be fenced by coding models. Hold
+                // only this leading bounded candidate until completion; never
+                // scan arbitrary answer prose or later code blocks for calls.
+                break;
+            }
             if let Some(start) = self.buffer.find(TOOL_CALL_START) {
                 if start > 0 {
                     parts.push(ToolStreamPart::Content(self.buffer[..start].to_owned()));
@@ -1986,6 +2228,77 @@ impl ToolCallStreamParser {
     }
 }
 
+fn parse_tool_payload(
+    payload: &str,
+    format: ToolFormat,
+    definitions: &[Value],
+) -> Result<Value, String> {
+    if format == ToolFormat::XmlJson || payload.starts_with('{') {
+        return serde_json::from_str(payload)
+            .map_err(|error| format!("malformed model tool call: {error}"));
+    }
+    // This is the model's bounded function-tag protocol, not general XML:
+    // no DTDs, entities, attributes, I/O or recursive element expansion.
+    let rest = payload
+        .strip_prefix("<function=")
+        .ok_or_else(|| "model tool call is missing a function block".to_owned())?;
+    let (name, rest) = rest
+        .split_once('>')
+        .ok_or_else(|| "model tool call has an incomplete function name".to_owned())?;
+    let mut body = rest
+        .trim_end()
+        .strip_suffix("</function>")
+        .ok_or_else(|| "model tool call is missing its function terminator".to_owned())?
+        .trim();
+    let schema = definitions
+        .iter()
+        .find(|d| d.pointer("/function/name").and_then(Value::as_str) == Some(name))
+        .and_then(|d| d.pointer("/function/parameters/properties"));
+    let mut arguments = serde_json::Map::new();
+    while !body.is_empty() {
+        let parameter = body
+            .strip_prefix("<parameter=")
+            .ok_or_else(|| "unexpected content in model function call".to_owned())?;
+        let (key, rest) = parameter
+            .split_once('>')
+            .ok_or_else(|| "incomplete model parameter name".to_owned())?;
+        if key.is_empty() || arguments.contains_key(key) {
+            return Err("empty or duplicate model parameter name".to_owned());
+        }
+        let (raw, remaining) = rest
+            .split_once("</parameter>")
+            .ok_or_else(|| "incomplete model parameter value".to_owned())?;
+        let raw = raw.strip_prefix('\n').unwrap_or(raw);
+        let raw = raw.strip_suffix('\n').unwrap_or(raw);
+        let kind = schema
+            .and_then(|p| p.get(key))
+            .and_then(|p| p.get("type"))
+            .and_then(Value::as_str);
+        let value = if kind == Some("string") {
+            Value::String(raw.to_owned())
+        } else {
+            let parsed = serde_json::from_str::<Value>(raw.trim());
+            match (kind, parsed) {
+                (None, _) => Value::String(raw.to_owned()),
+                (Some("integer"), Ok(v)) if v.is_i64() || v.is_u64() => v,
+                (Some("number"), Ok(v)) if v.is_number() => v,
+                (Some("boolean"), Ok(v)) if v.is_boolean() => v,
+                (Some("object"), Ok(v)) if v.is_object() => v,
+                (Some("array"), Ok(v)) if v.is_array() => v,
+                (Some("null"), Ok(v)) if v.is_null() => v,
+                _ => {
+                    return Err(format!(
+                        "model parameter {key:?} does not match its declared type"
+                    ))
+                }
+            }
+        };
+        arguments.insert(key.to_owned(), value);
+        body = remaining.trim();
+    }
+    Ok(json!({"name":name,"arguments":arguments}))
+}
+
 fn find_byte_sequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -2000,8 +2313,18 @@ fn suffix_prefix_overlap(value: &[u8], marker: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 fn parse_tool_calls(output: &str, id_prefix: &str) -> Result<Option<Vec<Value>>, String> {
-    let mut parser = ToolCallStreamParser::new(id_prefix.to_owned());
+    parse_tool_calls_selected(output, id_prefix, None, None)
+}
+
+fn parse_tool_calls_selected(
+    output: &str,
+    id_prefix: &str,
+    profile: Option<&ModelProfile>,
+    definitions: Option<&Vec<Value>>,
+) -> Result<Option<Vec<Value>>, String> {
+    let mut parser = selected_tool_parser(id_prefix.to_owned(), profile, definitions);
     let mut calls = Vec::new();
     for part in parser.push(output)?.into_iter().chain(parser.finish()?) {
         if let ToolStreamPart::Call { call, .. } = part {
@@ -2989,6 +3312,40 @@ fn generate(
         options.top_k,
         options.seed
     );
+    let output_profile = runtime.model_profile(model);
+    if let Some(profile) = output_profile.as_ref() {
+        if !profile.completion
+            || (endpoint == OpenAiGenerationEndpoint::ChatCompletions && !profile.chat)
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded model does not support this text generation endpoint".to_owned(),
+            );
+        }
+        if body
+            .get("chat_template_kwargs")
+            .is_some_and(|kwargs| kwargs.get("enable_thinking").is_some())
+            && !profile.thinking_control
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded template has no supported thinking control".to_owned(),
+            );
+        }
+        if request_content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image(_)))
+            && !profile.vision
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded model has no initialized vision projector".to_owned(),
+            );
+        }
+    }
     if tool_definitions.is_some() {
         let support = runtime.tool_support(model);
         if !support.supported {
@@ -3044,7 +3401,13 @@ fn generate(
     let stream_tool_calls = streaming
         && endpoint == OpenAiGenerationEndpoint::ChatCompletions
         && tool_definitions.is_some();
-    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut tool_parser = stream_tool_calls.then(|| {
+        selected_tool_parser(
+            request_id.clone(),
+            output_profile.as_ref(),
+            tool_definitions,
+        )
+    });
     let mut streamed_tool_calls = Vec::new();
     let mut stream_headers_sent = false;
     let mut response_sequence_number = 0;
@@ -3074,6 +3437,14 @@ fn generate(
             }
         }
     }
+    let mut reason_parser =
+        if endpoint == OpenAiGenerationEndpoint::ChatCompletions && structured_output.is_none() {
+            reasoning_parser(output_profile.as_ref(), enable_thinking)
+        } else {
+            None
+        };
+    let mut reasoning = String::new();
+    let mut pending_completion = None;
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
     loop {
@@ -3091,14 +3462,37 @@ fn generate(
             end.saturating_duration_since(Instant::now())
                 .min(Duration::from_millis(100))
         });
-        let message = generation.recv_timeout(wait);
+        let message = pending_completion.take().map_or_else(
+            || generation.recv_timeout(wait),
+            |result| Ok(GenerationMessage::Completed(result)),
+        );
         if matches!(message, Err(std::sync::mpsc::RecvTimeoutError::Timeout))
             && deadline.is_none_or(|end| Instant::now() < end)
         {
             continue;
         }
+        let (message, thought) =
+            split_reasoning_message(message, &mut reason_parser, &mut pending_completion);
+        reasoning.push_str(&thought);
+        if streaming && !thought.is_empty() {
+            if let Err(error) = write_openai_reasoning(
+                stream,
+                &request_id,
+                created,
+                model,
+                &thought,
+                &mut stream_headers_sent,
+            ) {
+                generation.cancel();
+                let _ = drain_cancelled_generation(&generation);
+                return Err(error);
+            }
+        }
         match message {
             Ok(GenerationMessage::Token(token)) => {
+                if token.is_empty() {
+                    continue;
+                }
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
                         Ok(parts) => parts,
@@ -3292,7 +3686,12 @@ fn generate(
                         }
                         (!streamed_tool_calls.is_empty()).then(|| streamed_tool_calls.clone())
                     } else {
-                        match parse_tool_calls(&output, &unique_request_id()) {
+                        match parse_tool_calls_selected(
+                            &output,
+                            &unique_request_id(),
+                            output_profile.as_ref(),
+                            tool_definitions,
+                        ) {
                             Ok(calls) => calls,
                             Err(message) => {
                                 return respond_model_output_error(
@@ -3499,10 +3898,13 @@ fn generate(
                 }
                 let (choice, response_object) = match endpoint {
                     OpenAiGenerationEndpoint::ChatCompletions => {
-                        let message = tool_calls.as_ref().map_or_else(
+                        let mut message = tool_calls.as_ref().map_or_else(
                             || json!({"role":"assistant","content":output}),
                             |calls| json!({"role":"assistant","content":Value::Null,"tool_calls":calls}),
                         );
+                        if !reasoning.trim().is_empty() {
+                            message["reasoning_content"] = json!(reasoning);
+                        }
                         (
                             json!({
                                 "index": 0,
@@ -4196,6 +4598,165 @@ mod tests {
         ] {
             assert!(super::generation_defaults(&json!({}), Some(context), Some(thinking)).is_err());
         }
+    }
+
+    fn loaded_profile_fixture() -> oid_runtime::ModelProfile {
+        oid_runtime::ModelProfile {
+            architecture: "arbitrary-architecture".to_owned(),
+            context_length: 4096,
+            completion: true,
+            chat: true,
+            embedding: false,
+            embedding_declared: true,
+            vision: false,
+            cache: oid_runtime::CacheStrategy::Attention,
+            tokenizer_adds_bos: true,
+            tools_declared: true,
+            tool_format: Some(oid_runtime::ToolFormat::XmlFunction),
+            reasoning_format: Some(oid_runtime::ReasoningFormat::ThinkTags),
+            thinking_control: true,
+            reasoning_prefilled: false,
+        }
+    }
+
+    #[test]
+    fn profile_discovery_does_not_promote_declared_unsupported_capabilities() {
+        let mut profile = loaded_profile_fixture();
+        profile.tool_format = None;
+        let json = super::profile_json(&profile);
+        assert_eq!(json["tools_declared"], true);
+        assert_eq!(json["embedding_declared"], true);
+        assert!(!super::profile_capabilities(&profile).contains(&"tools"));
+        assert!(!super::profile_capabilities(&profile).contains(&"embedding"));
+        assert!(super::reasoning_parser(Some(&profile), Some(true)).is_some());
+        assert!(super::reasoning_parser(None, Some(true)).is_none());
+        profile.reasoning_prefilled = true;
+        let mut disabled = super::reasoning_parser(Some(&profile), Some(false)).expect("parser");
+        assert_eq!(disabled.push("answer").content, "answer");
+        let mut enabled = super::reasoning_parser(Some(&profile), Some(true)).expect("parser");
+        assert_eq!(enabled.push("reason").reasoning, "reason");
+    }
+
+    #[test]
+    fn selected_function_parser_preserves_schema_types_at_every_split() {
+        let profile = loaded_profile_fixture();
+        let definitions = vec![
+            json!({"function":{"name":"inspect","parameters":{"properties":{"path":{"type":"string"},"count":{"type":"integer"},"flag":{"type":"boolean"},"items":{"type":"array"}}}}}),
+        ];
+        let text = "<tool_call><function=inspect>\n<parameter=path>\n123\n</parameter>\n<parameter=count>2</parameter><parameter=flag>true</parameter><parameter=items>[1,2]</parameter></function></tool_call>";
+        for split in 0..=text.len() {
+            let mut parser =
+                super::selected_tool_parser("test".to_owned(), Some(&profile), Some(&definitions));
+            let parts = parser
+                .push(&text[..split])
+                .expect("first")
+                .into_iter()
+                .chain(parser.push(&text[split..]).expect("second"))
+                .chain(parser.finish().expect("finish"))
+                .collect::<Vec<_>>();
+            let calls = parts
+                .into_iter()
+                .filter_map(|p| {
+                    if let super::ToolStreamPart::Call { call, .. } = p {
+                        Some(call)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(
+                    calls[0]["function"]["arguments"].as_str().expect("args")
+                )
+                .expect("JSON"),
+                json!({"path":"123","count":2,"flag":true,"items":[1,2]})
+            );
+        }
+        for invalid in [
+            "<function=inspect><parameter=x>1</parameter><parameter=x>2</parameter></function>",
+            "<function=inspect><parameter=count>bad</parameter></function>",
+            "<function=inspect>unexpected</function>",
+        ] {
+            assert!(super::parse_tool_payload(
+                invalid,
+                oid_runtime::ToolFormat::XmlFunction,
+                &definitions
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn leading_bare_and_fenced_json_calls_are_bounded_and_prose_is_preserved() {
+        for text in [
+            "{\"name\":\"inspect\",\"arguments\":{\"path\":\"123\"}}",
+            "```json\n{\"name\":\"inspect\",\"arguments\":{\"path\":\"123\"}}\n```",
+        ] {
+            for split in 0..=text.len() {
+                let mut parser = super::ToolCallStreamParser::new("test".to_owned());
+                let mut parts = parser.push(&text[..split]).expect("part one");
+                parts.extend(parser.push(&text[split..]).expect("part two"));
+                parts.extend(parser.finish().expect("finish"));
+                let calls = parts
+                    .iter()
+                    .filter(|p| matches!(p, super::ToolStreamPart::Call { .. }))
+                    .count();
+                assert_eq!(calls, 1);
+            }
+        }
+        let text = "Here is an example: ```json\n{\"name\":\"inspect\",\"arguments\":{}}\n```";
+        assert!(super::parse_tool_calls(text, "test")
+            .expect("prose")
+            .is_none());
+        let mut parser = super::ToolCallStreamParser::new("test".to_owned());
+        assert!(parser
+            .push(&format!(
+                "```json\n{}",
+                "x".repeat(super::MAX_TOOL_CALL_BYTES)
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn reasoning_is_removed_before_tool_proposals_are_parsed() {
+        let profile = loaded_profile_fixture();
+        let mut reason = super::reasoning_parser(Some(&profile), Some(false));
+        let mut pending = None;
+        let text="<think><tool_call>{\"name\":\"do_not_run\",\"arguments\":{}}</tool_call></think><tool_call>{\"name\":\"inspect\",\"arguments\":{}}</tool_call>";
+        let (message, thought) = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Token(text.to_owned())),
+            &mut reason,
+            &mut pending,
+        );
+        assert!(thought.contains("do_not_run"));
+        let oid_runtime::GenerationMessage::Token(content) = message.expect("token") else {
+            panic!("expected token")
+        };
+        let calls = super::parse_tool_calls_selected(&content, "test", Some(&profile), None)
+            .expect("parse")
+            .expect("calls");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "inspect");
+        let mut reason = super::reasoning_parser(Some(&profile), Some(false));
+        let _ = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Token("<thi".to_owned())),
+            &mut reason,
+            &mut pending,
+        );
+        let result = oid_runtime::GenerationResult {
+            request_id: "r".to_owned(),
+            generation_id: "g".to_owned(),
+            text: String::new(),
+            statistics: oid_runtime::GenerationStatistics::default(),
+        };
+        let (tail, _) = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Completed(result)),
+            &mut reason,
+            &mut pending,
+        );
+        assert!(matches!(tail,Ok(oid_runtime::GenerationMessage::Token(ref t)) if t=="<thi"));
+        assert!(pending.is_some());
     }
 
     #[test]

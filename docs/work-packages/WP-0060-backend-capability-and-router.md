@@ -37,3 +37,27 @@ breaking remain open in this WP.
 ## Dependencies
 
 WP-0023, WP-0058, WP-0059; ADR-0003, ADR-0007, ADR-0011.
+
+## Loaded profile and output-format slice — 2026-10-31
+
+Implemented an immutable backend-neutral loaded-model profile, populated from
+native artifact/tokenizer/template/decoder/projector observations. Native
+profiles are cached separately from the inference mutex and removed on unload;
+API discovery remains read-only and reports unknown until actual load. Existing
+backend implementations can return unknown without inventing support.
+
+Native cache policy follows observed recurrent/hybrid versus attention support.
+Text generation respects tokenizer-declared BOS insertion exactly once; public
+literal tokenization is unchanged. Template-selected JSON and function/parameter
+tool protocols drive both generation instructions and streaming/nonstream
+parsing. Leading reasoning is split before tools, with separate chat transport
+fields and explicit supported-control checks. Unsupported tool formats and
+unimplemented pooled embedding execution are not promoted from declarations.
+
+Unit fixtures cover schema-preserving function parameters, duplicate/malformed
+payloads, arbitrary chunk boundaries, Unicode, reasoning/tool isolation and
+unsupported declarations. Native fixtures cover profile lookup while the
+inference lock is held, unload invalidation and metadata-driven BOS behavior.
+Live acceptance is `scripts/test-talvik-model-profiles.py`. This slice does not
+implement automatic multi-provider routing, complete arbitrary Jinja rendering,
+pooled embedding execution or cross-model admitted cache retention.

@@ -1056,6 +1056,10 @@ impl RuntimeService for MarinaRuntime {
         self.backends.embeddings(request)
     }
 
+    fn model_profile(&self, model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        self.backends.model_profile(model_id)
+    }
+
     fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
         self.backends.tool_support(model_id)
     }

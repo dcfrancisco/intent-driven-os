@@ -131,3 +131,53 @@ Partial rendering must match both the full rendered text and its token prefix;
 otherwise the optional optimization is skipped. Template rewriting/merging and
 unknown boundaries never justify guessing cache compatibility. This does not
 imply that every template, tool format or model architecture is supported.
+
+## Loaded model profiles and output formats
+
+`GET /v1/models` includes an additive `runtime_profile` for resident models.
+Unloaded/unknown models return `null`; discovery never loads weights. The native
+adapter caches immutable artifact/backend facts independently of its inference
+lock: architecture, training context limit (not a RAM-fit guarantee), decoder and
+template support, initialized vision projector, tokenizer BOS behavior, safe
+cache strategy, declared tools and selected output parsers. Profile data contains
+no native handles, prompts, template bodies or credentials. Unload removes it.
+
+`POST /api/show` separates loaded supported `capabilities` from registry
+`declared_capabilities`, and exposes the same `runtime_profile`. Declaring a
+capability is insufficient to advertise an executable parser or modality. The
+current native adapter does not implement pooled/encoder embedding admission and
+extraction: it reports embedding declarations separately, does not advertise
+embedding execution, and returns an explicit unsupported error rather than an
+unqualified vector. Existing mock/other backend contracts are unchanged.
+
+Tools select JSON-in-tool_call or function/parameter-in-tool_call handling from
+the loaded template, independent of filenames. Generation instructions follow
+that selection. Function parameters retain schema-declared string types and
+parse numbers, booleans, arrays and objects according to their declared types.
+Leading standalone bare/fenced JSON name-and-arguments objects are accepted as
+bounded call candidates; later code examples inside answer prose remain text.
+The function parser also accepts JSON calls emitted under the previous adapter
+instructions. Streaming and nonstream responses use the same selected parser;
+malformed, oversized, duplicate and unsupported payloads fail explicitly. These
+are tool proposals as data; the daemon never executes them.
+
+Recognized leading think sections are parsed before tool proposals. Thinking
+text cannot produce a tool call. Chat Completions exposes it in
+`message.reasoning_content` or streamed `delta.reasoning_content`; Ollama Chat
+uses `message.thinking`. Answer content excludes the reasoning transport tags.
+Literal markers later in ordinary answer content remain text. Token usage remains
+the model's full usage, including reasoning; reasoning-token counts are not
+fabricated. Partial marker text is flushed on completion. Reasoning-only output
+at an exhausted token budget remains a valid length-limited completion.
+
+For supported templates, `chat_template_kwargs.enable_thinking` and Ollama Chat
+`think` accept booleans. Explicit unsupported controls return 501 instead of
+being ignored. A daemon default applies only where the adapter implements the
+switch; it cannot turn off an always-reasoning model. Legacy Completions and
+Responses retain their existing text behavior; the new reasoning fields apply
+to the two chat APIs. Output-format support is not model answer-quality or full
+Jinja/tools-template qualification.
+
+`scripts/test-talvik-model-profiles.py` qualifies loaded discovery, selected tool
+formats, reasoning in streaming/nonstream Chat Completions, Ollama thinking
+controls and nonblocking profile inspection during its own cancellable request.

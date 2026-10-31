@@ -290,6 +290,20 @@ mod ffi {
             name: *const c_char,
         ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
+        pub fn llama_model_meta_val_str(
+            model: *const c_void,
+            key: *const c_char,
+            buf: *mut c_char,
+            buf_size: usize,
+        ) -> i32;
+        pub fn llama_model_n_ctx_train(model: *const c_void) -> i32;
+        pub fn llama_model_has_decoder(model: *const c_void) -> bool;
+        pub fn llama_vocab_get_add_bos(vocab: *const c_void) -> bool;
+        pub fn llama_vocab_bos(vocab: *const c_void) -> i32;
+        #[cfg(test)]
+        pub fn llama_vocab_get_text(vocab: *const c_void, token: i32) -> *const c_char;
+        pub fn llama_vocab_get_attr(vocab: *const c_void, token: i32) -> i32;
+
         pub fn llama_model_n_embd(model: *const c_void) -> i32;
         pub fn ggml_backend_dev_count() -> usize;
         pub fn ggml_backend_dev_get(index: usize) -> *mut c_void;
@@ -617,6 +631,7 @@ pub fn system_info() -> Option<String> {
 /// A loaded native model handle.
 #[derive(Debug)]
 pub struct NativeModel {
+    profile: oid_model_runner::ModelProfile,
     #[cfg(native_llama_cpp)]
     context: Mutex<Option<PersistentContext>>,
     #[cfg(native_mtmd)]
@@ -1117,23 +1132,16 @@ fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
 unsafe impl Send for NativeModel {}
 
 impl NativeModel {
-    /// Report whether the embedded chat template advertises tool handling.
+    /// Immutable artifact and serving support facts observed during load.
+    #[must_use]
+    pub const fn profile(&self) -> &oid_model_runner::ModelProfile {
+        &self.profile
+    }
+
+    /// Report usable tool handling, requiring an implemented output parser.
     #[must_use]
     pub fn supports_tools(&self) -> bool {
-        #[cfg(native_llama_cpp)]
-        unsafe {
-            let template =
-                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
-            if template.is_null() {
-                return false;
-            }
-            let template = CStr::from_ptr(template).to_string_lossy();
-            template.contains("custom_tools") || template.contains("tool_calls")
-        }
-        #[cfg(not(native_llama_cpp))]
-        {
-            false
-        }
+        self.profile.tool_format.is_some()
     }
 
     /// Model memory reported by llama.cpp.
@@ -1177,6 +1185,17 @@ impl NativeModel {
     /// llama.cpp reports a tokenization failure.
     pub fn tokenize(&self, text: &str) -> Result<Vec<i32>, String> {
         self.tokenize_with_special(text, false)
+    }
+
+    #[cfg(native_llama_cpp)]
+    fn tokenize_generation(&self, text: &str) -> Result<Vec<i32>, String> {
+        let mut tokens = self.tokenize_with_special(text, true)?;
+        let bos =
+            unsafe { ffi::llama_vocab_bos(ffi::llama_model_get_vocab(self.pointer.cast_const())) };
+        if self.profile.tokenizer_adds_bos && bos >= 0 && tokens.first() != Some(&bos) {
+            tokens.insert(0, bos);
+        }
+        Ok(tokens)
     }
 
     fn tokenize_with_special(&self, text: &str, parse_special: bool) -> Result<Vec<i32>, String> {
@@ -1231,6 +1250,11 @@ impl NativeModel {
     /// Returns an error when the embedding context cannot be created or the
     /// native engine cannot produce an embedding vector.
     pub fn embedding(&self, text: &str, context_size: u32) -> Result<Vec<f32>, String> {
+        if !self.profile.embedding {
+            return Err(
+                "the native adapter does not implement this model's embedding mode".to_owned(),
+            );
+        }
         #[cfg(native_llama_cpp)]
         unsafe {
             let mut tokens = self.tokenize(text)?;
@@ -1323,12 +1347,12 @@ impl NativeModel {
                         return Ok(None);
                     }
                     let entry = if role == "__talvik_tools" {
-                        (
-                            "system".to_owned(),
-                            format!(
-                                "You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. Emit each call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{\"argument_name\":\"argument_value\"}}}}</tool_call>. Match argument names and types to the selected tool schema and include every required property. Never use an empty arguments object when required properties exist. The arguments must be valid JSON. Tools: {content}"
-                            ),
-                        )
+                        let format = match self.profile.tool_format {
+                            Some(oid_model_runner::ToolFormat::XmlJson) => "Emit each call as <tool_call>{\"name\":\"tool_name\",\"arguments\":{\"argument_name\":\"argument_value\"}}</tool_call>. The arguments must be valid JSON.",
+                            Some(oid_model_runner::ToolFormat::XmlFunction) => "Emit each call as <tool_call>\n<function=tool_name>\n<parameter=argument_name>\nargument_value\n</parameter>\n</function>\n</tool_call>. Repeat parameter blocks for every argument. Emit literal text for string parameters and valid JSON for numbers, booleans, arrays or objects, matching the schema.",
+                            None => return Err("the loaded model has no supported tool output format".to_owned()),
+                        };
+                        ("system".to_owned(), format!("You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. {format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Tools: {content}"))
                     } else if role == "__talvik_tool_choice" {
                         let instruction = match content {
                             "single" => {
@@ -1568,7 +1592,7 @@ impl NativeModel {
             #[cfg(native_mtmd)]
             let mut multimodal_bitmaps = None;
             if images.is_empty() {
-                prompt_tokens = self.tokenize_with_special(&formatted_prompt, true)?;
+                prompt_tokens = self.tokenize_generation(&formatted_prompt)?;
                 prompt_count = prompt_tokens.len();
             } else {
                 #[cfg(not(native_mtmd))]
@@ -1642,16 +1666,13 @@ impl NativeModel {
                 return Err("prompt exceeds context size".to_owned());
             }
             let recurrent = images.is_empty()
-                && unsafe {
-                    ffi::llama_model_is_recurrent(self.pointer.cast_const())
-                        || ffi::llama_model_is_hybrid(self.pointer.cast_const())
-                };
+                && self.profile.cache == oid_model_runner::CacheStrategy::Recurrent;
             let mut checkpoint_positions = Vec::new();
             if recurrent && prompt_tokens.len() > 1 {
                 if let Some(prefix_text) = formatted.cache_prefix {
                     // A failed optimization must not reject an otherwise valid
                     // request. Exact token validation also handles BPE merges.
-                    if let Ok(prefix) = self.tokenize_with_special(&prefix_text, true) {
+                    if let Ok(prefix) = self.tokenize_generation(&prefix_text) {
                         if let Some(position) =
                             verified_checkpoint_position(&prefix, &prompt_tokens)
                         {
@@ -2127,6 +2148,82 @@ mod tests {
             None
         );
         std::mem::forget(cached);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires TALVIK_TEST_PROFILE_GGUF for metadata/tokenizer qualification"]
+    fn loaded_profile_applies_tokenizer_metadata_without_duplicate_bos() {
+        let path = std::env::var("TALVIK_TEST_PROFILE_GGUF").expect("GGUF fixture");
+        super::initialize().expect("initialize");
+        let model = super::load_model(&path, None, super::cpu_load_options()).expect("load");
+        assert_ne!(model.profile().architecture, "unknown");
+        assert!(model.profile().completion);
+        assert!(model.profile().chat);
+        assert!(model.profile().context_length > 0);
+        let rendered = model.format_prompt("Reply OK.").expect("format");
+        let tokens = model
+            .tokenize_generation(&rendered.text)
+            .expect("generation tokens");
+        let literal = model
+            .tokenize_with_special(&rendered.text, true)
+            .expect("literal tokens");
+        let bos = unsafe {
+            super::ffi::llama_vocab_bos(super::ffi::llama_model_get_vocab(
+                model.pointer.cast_const(),
+            ))
+        };
+        if model.profile().tokenizer_adds_bos {
+            assert_eq!(tokens.first(), Some(&bos));
+            assert_eq!(tokens.iter().filter(|t| **t == bos).count(), 1);
+            let bos_text = unsafe {
+                std::ffi::CStr::from_ptr(super::ffi::llama_vocab_get_text(
+                    super::ffi::llama_model_get_vocab(model.pointer.cast_const()),
+                    bos,
+                ))
+            }
+            .to_string_lossy();
+            let explicit = model
+                .tokenize_generation(&format!("{bos_text}Reply OK."))
+                .expect("explicit BOS");
+            assert_eq!(explicit.first(), Some(&bos));
+            assert_eq!(explicit.iter().filter(|t| **t == bos).count(), 1);
+        } else {
+            assert_eq!(tokens, literal);
+        }
+        drop(model);
+        super::shutdown();
+    }
+
+    #[test]
+    fn template_output_formats_require_a_supported_protocol() {
+        use oid_model_runner::{ReasoningFormat, ToolFormat};
+        assert_eq!(
+            super::output_formats("tools tool_calls unknown", false),
+            (true, None, None, false)
+        );
+        assert_eq!(
+            super::output_formats("tools <tool_call>{name:arguments}</tool_call>", false).1,
+            Some(ToolFormat::XmlJson)
+        );
+        assert_eq!(
+            super::output_formats(
+                "tools <tool_call><function=f><parameter=x></parameter></function></tool_call>",
+                false
+            )
+            .1,
+            Some(ToolFormat::XmlFunction)
+        );
+        assert_eq!(
+            super::output_formats("plain chat", true).2,
+            Some(ReasoningFormat::ThinkTags)
+        );
+        assert!(!super::output_formats("enable_thinking without marker", true).3);
+        assert!(super::output_formats("enable_thinking <think></think>", false).3);
+        assert_eq!(
+            super::output_formats("plain chat", false),
+            (false, None, None, false)
+        );
     }
 
     #[test]
@@ -2836,6 +2933,130 @@ mod tests {
     }
 }
 
+#[cfg(native_llama_cpp)]
+fn model_metadata(pointer: *const c_void, key: &CStr) -> Option<String> {
+    let required =
+        unsafe { ffi::llama_model_meta_val_str(pointer, key.as_ptr(), std::ptr::null_mut(), 0) };
+    let size = usize::try_from(required).ok()?.checked_add(1)?;
+    if size > 1_048_576 {
+        return None;
+    }
+    let mut buffer = vec![0_u8; size];
+    let written = unsafe {
+        ffi::llama_model_meta_val_str(pointer, key.as_ptr(), buffer.as_mut_ptr().cast(), size)
+    };
+    if written != required {
+        return None;
+    }
+    buffer.truncate(size - 1);
+    String::from_utf8(buffer).ok()
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn output_formats(
+    template: &str,
+    think_tokens: bool,
+) -> (
+    bool,
+    Option<oid_model_runner::ToolFormat>,
+    Option<oid_model_runner::ReasoningFormat>,
+    bool,
+) {
+    let declared = template.contains("tools") || template.contains("tool_call");
+    let xml = declared && template.contains("<tool_call>") && template.contains("</tool_call>");
+    let reasoning = think_tokens || (template.contains("<think>") && template.contains("</think>"));
+    (
+        declared,
+        xml.then_some(
+            if template.contains("<function=") && template.contains("<parameter=") {
+                oid_model_runner::ToolFormat::XmlFunction
+            } else {
+                oid_model_runner::ToolFormat::XmlJson
+            },
+        ),
+        reasoning.then_some(oid_model_runner::ReasoningFormat::ThinkTags),
+        reasoning && template.contains("enable_thinking") && template.contains("<think>"),
+    )
+}
+
+#[cfg(native_llama_cpp)]
+fn inspect_loaded_profile(pointer: *const c_void, vision: bool) -> oid_model_runner::ModelProfile {
+    use oid_model_runner::{CacheStrategy, ModelProfile};
+    let architecture =
+        model_metadata(pointer, c"general.architecture").unwrap_or_else(|| "unknown".to_owned());
+    let template_pointer = unsafe { ffi::llama_model_chat_template(pointer, std::ptr::null()) };
+    let template = if template_pointer.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(template_pointer) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    let rendered = if template_pointer.is_null() {
+        None
+    } else {
+        render_template_messages(
+            unsafe { CStr::from_ptr(template_pointer) },
+            &[("user".to_owned(), "Hello".to_owned())],
+            true,
+        )
+        .ok()
+    };
+    let vocab = unsafe { ffi::llama_model_get_vocab(pointer) };
+    let special_token = |text: &CStr| {
+        let mut token = [0_i32; 1];
+        let count = unsafe {
+            ffi::llama_tokenize(
+                vocab,
+                text.as_ptr(),
+                i32::try_from(text.to_bytes().len()).unwrap_or(i32::MAX),
+                token.as_mut_ptr(),
+                1,
+                false,
+                true,
+            )
+        };
+        count == 1
+            && unsafe { ffi::llama_vocab_get_attr(vocab, token[0]) & ((1 << 3) | (1 << 4)) != 0 }
+    };
+    let (tools_declared, tool_format, reasoning_format, thinking_control) = output_formats(
+        &template,
+        special_token(c"<think>") && special_token(c"</think>"),
+    );
+    let completion = unsafe { ffi::llama_model_has_decoder(pointer) };
+    let recurrent =
+        unsafe { ffi::llama_model_is_recurrent(pointer) || ffi::llama_model_is_hybrid(pointer) };
+    let pooling_key = CString::new(format!("{architecture}.pooling_type")).ok();
+    ModelProfile {
+        architecture,
+        context_length: u32::try_from(unsafe { ffi::llama_model_n_ctx_train(pointer) })
+            .unwrap_or(0),
+        completion,
+        chat: completion && rendered.is_some(),
+        // Pooled/encoder embedding admission and extraction are not yet
+        // implemented by this adapter; report declaration separately.
+        embedding: false,
+        embedding_declared: pooling_key
+            .as_ref()
+            .and_then(|key| model_metadata(pointer, key))
+            .is_some(),
+        vision,
+        cache: if recurrent {
+            CacheStrategy::Recurrent
+        } else if completion {
+            CacheStrategy::Attention
+        } else {
+            CacheStrategy::Disabled
+        },
+        tokenizer_adds_bos: unsafe { ffi::llama_vocab_get_add_bos(vocab) },
+        tools_declared,
+        tool_format: tool_format.filter(|_| completion && rendered.is_some()),
+        reasoning_format,
+        thinking_control,
+        reasoning_prefilled: rendered.is_some_and(|text| text.trim_end().ends_with("<think>")),
+    }
+}
+
 impl Drop for NativeModel {
     fn drop(&mut self) {
         #[cfg(native_mtmd)]
@@ -2926,7 +3147,13 @@ pub fn load_model(
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
         let device = selected.map(|index| available[index].name.clone());
+        #[cfg(native_mtmd)]
+        let vision = mtmd.is_some();
+        #[cfg(not(native_mtmd))]
+        let vision = false;
+        let profile = inspect_loaded_profile(pointer.cast_const(), vision);
         Ok(NativeModel {
+            profile,
             context: Mutex::new(None),
             #[cfg(native_mtmd)]
             mtmd,

@@ -343,6 +343,11 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
         Ok(crate::backends::EmbeddingsResult { values })
     }
+    fn model_profile(&self, model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        let id = oid_model_runner::ModelId::new(model_id.to_owned()).ok()?;
+        self.runner.model_profile(&id).ok().flatten()
+    }
+
     fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
         let model_id = match oid_model_runner::ModelId::new(model_id.to_owned()) {
             Ok(model_id) => model_id,
@@ -357,9 +362,9 @@ impl Backend for LlamaCppAdapter {
             Ok(supported) => crate::backends::ToolSupport {
                 supported,
                 reason: if supported {
-                    "the selected GGUF chat template advertises tool calls".to_owned()
+                    "the loaded profile selects a supported tool parser".to_owned()
                 } else {
-                    "the selected GGUF chat template does not advertise tool calls".to_owned()
+                    "the loaded model has no supported tool output format".to_owned()
                 },
             },
             Err(error) => crate::backends::ToolSupport {

@@ -350,6 +350,7 @@ name = "oid-llama-cpp-sys"
 version = "0.1.0"
 dependencies = [
  "image",
+ "oid-model-runner",
 ]
 
 [[package]]

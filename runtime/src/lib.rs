@@ -36,3 +36,8 @@ pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
 pub use service::{MarinaRuntime, ResourcePolicy};
+
+// Shared serving facts contain no engine-native handles.
+pub use oid_model_runner::{CacheStrategy, ModelProfile, ReasoningFormat, ToolFormat};
+
+pub use oid_model_runner::output::{ParsedText, ReasoningStreamParser};
