@@ -12,8 +12,8 @@ daemon; the local 32K setup uses 28,672 input and 2,048 output tokens. Set
 `modelOptions.chat_template_kwargs.enable_thinking` to `false` for interactive
 latency when the loaded profile reports thinking control.
 
-Copy the agent file into VS Code's user prompts directory and choose
-**Talvik Coding**. Existing model names and ports can be substituted.
+Copy the agent files into VS Code's user prompts directory and choose
+**Talvik Coding** or the read-only **Talvik Plan** preset. Existing model names and ports can be substituted.
 Use the secret picker for API credentials; keep tokens out of configuration
 examples and source control.
 
