@@ -176,3 +176,20 @@ each advertised modality.
 
 The sequence is dependency order, not a claim that later modalities are
 available now.
+
+### IDE prefill streaming, 2026-10-31
+
+Admitted Chat Completions streams now send HTTP headers and an assistant-role
+chunk before waiting for backend tokens, including requests with tools. During
+an idle backend wait, SSE comments are flushed every five seconds. These are
+transport keep-alives, not generated content, usage, or completion signals.
+Request validation and admission still fail before headers; later model-output
+failures use SSE error events without a success sentinel. Tool arguments are
+still withheld until the existing bounded parser and validation accept them.
+
+The macOS Intel IDE payload contained 59 tools and roughly 22,000 prompt tokens.
+A focused optional VS Code agent is supplied in
+`docs/examples/vscode/talvik-coding.agent.md` so users can explicitly choose a
+smaller tool set on CPU hardware. It preserves normal editor tool approvals.
+This is a client configuration option; Talvik does not silently discard schemas
+or truncate requests. Full built-in Agent latency remains separately qualified.

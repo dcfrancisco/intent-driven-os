@@ -3397,7 +3397,12 @@ fn generate(
     stream.set_read_timeout(Some(Duration::from_millis(1)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let defer_stream_headers = streaming && tool_definitions.is_some();
+    // Admit and validate before starting SSE, then acknowledge chat requests
+    // immediately. Tool output still passes the bounded parser and validation;
+    // delaying the HTTP headers until output made CPU prefill look hung to IDEs.
+    let defer_stream_headers = streaming
+        && tool_definitions.is_some()
+        && endpoint != OpenAiGenerationEndpoint::ChatCompletions;
     let stream_tool_calls = streaming
         && endpoint == OpenAiGenerationEndpoint::ChatCompletions
         && tool_definitions.is_some();
@@ -3418,6 +3423,9 @@ fn generate(
         )?;
         stream.flush()?;
         stream_headers_sent = true;
+        if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
+            write_chat_stream_role(stream, &request_id, created, model)?;
+        }
         if endpoint == OpenAiGenerationEndpoint::Responses {
             if let Err(error) = write_responses_stream_start(
                 stream,
@@ -3447,6 +3455,7 @@ fn generate(
     let mut pending_completion = None;
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
+    let mut last_keepalive = Instant::now();
     loop {
         if peer_disconnected(stream)? {
             generation.cancel();
@@ -3469,6 +3478,16 @@ fn generate(
         if matches!(message, Err(std::sync::mpsc::RecvTimeoutError::Timeout))
             && deadline.is_none_or(|end| Instant::now() < end)
         {
+            if streaming
+                && stream_headers_sent
+                && last_keepalive.elapsed() >= Duration::from_secs(5)
+            {
+                // SSE comments are ignored by OpenAI clients. They keep a long
+                // prefill connection live without inventing content or usage.
+                stream.write_all(b": keep-alive\n\n")?;
+                stream.flush()?;
+                last_keepalive = Instant::now();
+            }
             continue;
         }
         let (message, thought) =
@@ -4266,6 +4285,23 @@ fn completion_termination_reason(termination: GenerationTermination) -> &'static
     }
 }
 
+fn write_chat_stream_role(
+    stream: &mut impl Write,
+    request_id: &str,
+    created: u64,
+    model: &str,
+) -> std::io::Result<()> {
+    let event = json!({
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": Value::Null}]
+    });
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
 /// Wait for the backend worker to publish its terminal result after a timeout.
 ///
 /// Returning a timeout response before this point can leave the single
@@ -4491,6 +4527,23 @@ mod tests {
     };
     use base64::Engine as _;
     use serde_json::json;
+
+    #[test]
+    fn chat_stream_acknowledges_role_without_fabricating_output_or_completion() {
+        let mut bytes = Vec::new();
+        super::write_chat_stream_role(&mut bytes, "request-1", 123, "local-model").unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.ends_with("\n\n"));
+        let event: serde_json::Value =
+            serde_json::from_str(text.trim().strip_prefix("data: ").unwrap()).unwrap();
+        assert_eq!(event["id"], "request-1");
+        assert_eq!(
+            event["choices"][0]["delta"],
+            json!({"role": "assistant", "content": ""})
+        );
+        assert!(event["choices"][0]["finish_reason"].is_null());
+        assert!(event.get("usage").is_none());
+    }
 
     #[test]
     fn request_ownership_cannot_be_overwritten_by_another_client() {
