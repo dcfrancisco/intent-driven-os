@@ -50,7 +50,7 @@ Talvik is the model provider; the coding assistant owns workspace tools.
 | Relocatable release install | Real archive, no developer library paths, status, uninstall | Passed locally; smoke harness clears host runner configuration and uses isolated state |
 | One state directory | CLI and HTTP use the same daemon, registry, and model pairings | Passed: canonical registry/socket migration and CLI status use the same daemon |
 | Workspace validation | Formatting and all workspace tests | Passed locally; see the build qualification report for totals |
-| Strict Clippy | Same strict command as release CI | Blocked by existing HTTP function shape/ownership lint and test assertion cleanup; no RC claim |
+| Strict Clippy | Same strict command as release CI | Passed locally after ownership/assertion cleanup; final combined-build results recorded in the qualification report |
 | Release identity | Clean source commit matches CLI, daemon, and HTTP identity | Record against the final archive in the build qualification report |
 
 ## RC promotion gates
@@ -93,3 +93,20 @@ The local host uses Rust 1.99 while release CI specifies 1.82. Strict Clippy
 still reports HTTP helper ownership/size/argument lints and some test assertion
 lints. The preview does not waive these as RC promotion requirements. The
 release workflow, including other OS/architectures, has not been run remotely.
+
+## API recovery stabilization follow-up
+
+A live pre-token disconnect reproduced an occupied generation after twelve
+seconds. HTTP waiting now polls disconnection while awaiting model output,
+bounds socket writes and cancels/relinquishes ownership on every transport exit.
+The same guard covers the Ollama generation edge. Duplicate request IDs cannot
+overwrite another caller’s ownership. Invalid prompt/context errors retain their
+type through the backend boundary and return 400 rather than 500; unknown
+models return 404 instead of a generic lifecycle/admission response.
+
+`scripts/test-talvik-api-recovery.py` supplies fourteen live recovery cases. The
+first native candidate passed all fourteen; final-build requalification is
+recorded separately. Official Python SDK discovery and all six text generation
+shapes passed (Chat Completions, legacy Completions and Responses, streaming and
+non-streaming). See `docs/TALVIK-API-CONTRACT.md` for the bounded surface and
+transport/deadline limitations. These results do not waive IDE or platform gates.

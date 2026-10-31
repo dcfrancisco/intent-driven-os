@@ -300,7 +300,12 @@ impl Backend for LlamaCppAdapter {
                 }
                 Ok(GenerationEvent::Error(error)) => {
                     self.forget_cancellation(&request.request_id);
-                    return Err(RuntimeError::NativeBackend(error.to_string()));
+                    return Err(match error {
+                        oid_model_runner::ModelRunnerError::InvalidRequest(message) => {
+                            RuntimeError::InvalidRequest(message)
+                        }
+                        error => RuntimeError::NativeBackend(error.to_string()),
+                    });
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {

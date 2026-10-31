@@ -497,9 +497,12 @@ impl ModelRunner for LlamaCppModelRunner {
                     }));
                 }
                 Err(error) => {
-                    let _ = sender.send(GenerationEvent::Error(ModelRunnerError::BackendFailure(
-                        error,
-                    )));
+                    let error = if error == "prompt exceeds context size" {
+                        ModelRunnerError::InvalidRequest(error)
+                    } else {
+                        ModelRunnerError::BackendFailure(error)
+                    };
+                    let _ = sender.send(GenerationEvent::Error(error));
                 }
             }
         });

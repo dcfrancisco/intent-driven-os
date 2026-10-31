@@ -82,6 +82,9 @@ corresponding startup action.
 
 ## Native HTTP API
 
+See the [Talvik API contract](../docs/TALVIK-API-CONTRACT.md) for the qualified
+route subset, stream formats, errors, recovery limits and executable checks.
+
 The native HTTP server is disabled unless explicitly configured. Enable a
 loopback listener with:
 

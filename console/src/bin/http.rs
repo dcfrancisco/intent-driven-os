@@ -181,12 +181,12 @@ impl Readiness {
 
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
-    listener: TcpListener,
+    listener: &TcpListener,
     runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
     default_model_id: Option<&String>,
     readiness: &Arc<Readiness>,
-) -> std::io::Result<()> {
+) {
     let default_model_id = default_model_id.cloned();
     let owners = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     for connection in listener.incoming() {
@@ -212,7 +212,6 @@ pub fn serve(
             Err(error) => eprintln!("Marina HTTP accept failed: {error}"),
         }
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -355,9 +354,8 @@ fn handle(
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_ollama_scope_error(&mut stream, auth::MODELS_READ);
             }
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             ollama_show(&mut stream, runtime, &request)
         }
@@ -366,9 +364,8 @@ fn handle(
                 return respond_ollama_scope_error(&mut stream, auth::INFERENCE);
             }
             let legacy = path == "/api/embeddings";
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             ollama_embeddings(&mut stream, runtime, &request, legacy)
         }
@@ -381,9 +378,8 @@ fn handle(
             } else {
                 OllamaGenerationEndpoint::Generate
             };
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             generate_ollama(&mut stream, runtime, &request, &identity, owners, endpoint)
         }
@@ -391,9 +387,8 @@ fn handle(
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
-            let request = match parse_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             embeddings(&mut stream, runtime, &request)
         }
@@ -401,9 +396,8 @@ fn handle(
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
-            let request = match parse_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             let endpoint = if path == "/v1/completions" {
                 OpenAiGenerationEndpoint::Completions
@@ -509,7 +503,7 @@ fn embeddings(
         return respond_error(stream, 400, "input must contain non-empty text".to_owned());
     }
     if let Err(error) = runtime.model_load(model) {
-        return respond_error(stream, 409, error.to_string());
+        return respond_error(stream, runtime_error_status(&error), error.to_string());
     }
     let mut data = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
@@ -861,6 +855,13 @@ fn generate_ollama(
         Ok(created_at) => created_at,
         Err(error) => return respond_ollama_error(stream, 500, error.to_string()),
     };
+    if !reserve_owner(owners, &request_id, &identity.principal) {
+        return respond_ollama_error(
+            stream,
+            409,
+            "request_id is already in use or ownership registry unavailable".to_owned(),
+        );
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
@@ -870,11 +871,18 @@ fn generate_ollama(
         structured_output: structured_output.clone(),
     }) {
         Ok(generation) => generation,
-        Err(error) => return respond_ollama_error(stream, 429, error.to_string()),
+        Err(error) => {
+            finish_owner(owners, &request_id);
+            return respond_ollama_error(stream, runtime_error_status(&error), error.to_string());
+        }
     };
-    if let Ok(mut owners) = owners.lock() {
-        owners.insert(request_id.clone(), identity.principal.clone());
-    }
+    let _lease = HttpGenerationLease {
+        generation: &generation,
+        owners,
+        request_id: &request_id,
+    };
+    stream.set_read_timeout(Some(Duration::from_millis(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(true);
     if streaming {
         write!(
@@ -889,7 +897,16 @@ fn generate_ollama(
     let mut streamed_tool_calls = Vec::new();
     let mut output = String::new();
     loop {
-        match generation.recv() {
+        if peer_disconnected(stream)? {
+            generation.cancel();
+            let _ = drain_cancelled_generation(&generation);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "inference client disconnected",
+            ));
+        }
+        match generation.recv_timeout(Duration::from_millis(100)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(GenerationMessage::Token(token)) => {
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
@@ -901,7 +918,6 @@ fn generate_ollama(
                                     "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return write_ndjson_line(stream, &json!({"error": message}));
                         }
                     };
@@ -916,7 +932,6 @@ fn generate_ollama(
                                         "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return write_ndjson_line(
                                     stream,
                                     &json!({"error": "model returned an undeclared tool name"}),
@@ -925,7 +940,7 @@ fn generate_ollama(
                             streamed_tool_calls.push(call.clone());
                         }
                         if let Err(error) =
-                            write_ollama_tool_stream_part(stream, model, &created_at, part)
+                            write_ollama_tool_stream_part(stream, model, &created_at, &part)
                         {
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
@@ -933,7 +948,6 @@ fn generate_ollama(
                                     "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return Err(error);
                         }
                     }
@@ -958,13 +972,11 @@ fn generate_ollama(
                     if let Err(error) = write_ndjson_line(stream, &chunk) {
                         generation.cancel();
                         let _ = drain_cancelled_generation(&generation);
-                        finish_owner(owners, &request_id);
                         return Err(error);
                     }
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
-                finish_owner(owners, &request_id);
                 if let Some(structured_output) = structured_output.as_ref() {
                     if let Err(message) = structured_output.validate_output(&output) {
                         if streaming {
@@ -992,7 +1004,7 @@ fn generate_ollama(
                             }
                             streamed_tool_calls.push(call.clone());
                         }
-                        write_ollama_tool_stream_part(stream, model, &created_at, part)?;
+                        write_ollama_tool_stream_part(stream, model, &created_at, &part)?;
                     }
                     (!streamed_tool_calls.is_empty()).then(|| {
                         streamed_tool_calls
@@ -1065,7 +1077,6 @@ fn generate_ollama(
                 return respond_json(stream, 200, terminal);
             }
             Ok(GenerationMessage::Cancelled(result)) => {
-                finish_owner(owners, &request_id);
                 let mut terminal = match endpoint {
                     OllamaGenerationEndpoint::Chat => json!({
                         "model": model,
@@ -1094,14 +1105,16 @@ fn generate_ollama(
                 return respond_json(stream, 200, terminal);
             }
             Ok(GenerationMessage::Failed(error)) => {
-                finish_owner(owners, &request_id);
                 if streaming {
                     return write_ndjson_line(stream, &json!({"error": error.to_string()}));
                 }
-                return respond_ollama_error(stream, 500, error.to_string());
+                return respond_ollama_error(
+                    stream,
+                    runtime_error_status(&error),
+                    error.to_string(),
+                );
             }
             Err(error) => {
-                finish_owner(owners, &request_id);
                 if streaming {
                     return write_ndjson_line(
                         stream,
@@ -1385,10 +1398,10 @@ fn write_openai_tool_stream_part(
     request_id: &str,
     created: u64,
     model: &str,
-    part: ToolStreamPart,
+    part: &ToolStreamPart,
     headers_sent: &mut bool,
 ) -> std::io::Result<()> {
-    let Some(delta) = openai_tool_stream_delta(&part, !*headers_sent) else {
+    let Some(delta) = openai_tool_stream_delta(part, !*headers_sent) else {
         return Ok(());
     };
     if !*headers_sent {
@@ -1496,7 +1509,10 @@ fn respond_model_output_error(
 }
 
 fn responses_sse_frame(event_type: &str, sequence_number: u64, payload: Value) -> String {
-    let mut event = payload.as_object().cloned().unwrap_or_default();
+    let mut event = match payload {
+        Value::Object(event) => event,
+        _ => serde_json::Map::new(),
+    };
     event.insert("type".to_owned(), json!(event_type));
     event.insert("sequence_number".to_owned(), json!(sequence_number));
     format!("event: {event_type}\ndata: {}\n\n", Value::Object(event))
@@ -1528,6 +1544,8 @@ fn responses_output_message(request_id: &str, status: &str, text: &str) -> Value
     })
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn responses_object(
     request_id: &str,
     created: u64,
@@ -1541,30 +1559,33 @@ fn responses_object(
     error: Value,
     incomplete_details: Value,
 ) -> Value {
-    json!({
+    let mut response = json!({
         "id": format!("resp_{request_id}"),
         "object": "response",
         "created_at": created,
         "status": status,
         "background": false,
-        "error": error,
-        "incomplete_details": incomplete_details,
         "instructions": body.get("instructions").cloned().unwrap_or(Value::Null),
         "max_output_tokens": body.get("max_output_tokens").cloned().unwrap_or(Value::Null),
         "model": model,
-        "output": output,
         "parallel_tool_calls": false,
         "previous_response_id": Value::Null,
         "temperature": temperature,
         "text": {"format": {"type": "text"}},
         "top_p": top_p,
         "truncation": "disabled",
-        "usage": usage,
         "metadata": body.get("metadata").cloned().unwrap_or_else(|| json!({})),
         "store": false
-    })
+    });
+    response["output"] = Value::Array(output);
+    response["usage"] = usage;
+    response["error"] = error;
+    response["incomplete_details"] = incomplete_details;
+    response
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn write_responses_stream_start(
     stream: &mut TcpStream,
     sequence_number: &mut u64,
@@ -1629,6 +1650,8 @@ fn write_responses_stream_start(
     )
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn write_responses_stream_failure(
     stream: &mut TcpStream,
     sequence_number: &mut u64,
@@ -1676,9 +1699,9 @@ fn write_ollama_tool_stream_part(
     stream: &mut TcpStream,
     model: &str,
     created_at: &str,
-    part: ToolStreamPart,
+    part: &ToolStreamPart,
 ) -> std::io::Result<()> {
-    let Some(chunk) = ollama_tool_stream_chunk(model, created_at, &part) else {
+    let Some(chunk) = ollama_tool_stream_chunk(model, created_at, part) else {
         return Ok(());
     };
     write_ndjson_line(stream, &chunk)
@@ -2076,6 +2099,8 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
     Ok(flatten_content(&parts))
 }
 
+// Validate the complete protocol object together so incompatible fields cannot bypass checks.
+#[allow(clippy::too_many_lines)]
 fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
     let Some(messages) = body.get("messages") else {
         let prompt = body
@@ -2515,6 +2540,8 @@ fn parse_ollama_format(value: Option<&Value>) -> Result<Option<StructuredOutput>
     Ok(Some(output))
 }
 
+// Validate the complete protocol object together so incompatible fields cannot bypass checks.
+#[allow(clippy::too_many_lines)]
 fn validate_generation_request(
     body: &Value,
     endpoint: OpenAiGenerationEndpoint,
@@ -2939,7 +2966,7 @@ fn generate(
         .map(|metadata| matches!(metadata.status, oid_runtime::ModelStatus::Loaded));
     let load_started = Instant::now();
     if let Err(error) = runtime.model_load(model) {
-        return respond_error(stream, 409, error.to_string());
+        return respond_error(stream, runtime_error_status(&error), error.to_string());
     }
     let model_load_time_ms = was_resident
         .filter(|resident| !resident)
@@ -2967,6 +2994,13 @@ fn generate(
             );
         }
     }
+    if !reserve_owner(owners, &request_id, &identity.principal) {
+        return respond_error(
+            stream,
+            409,
+            "request_id is already in use or ownership registry unavailable".to_owned(),
+        );
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
@@ -2976,11 +3010,20 @@ fn generate(
         structured_output: structured_output.clone(),
     }) {
         Ok(stream_result) => stream_result,
-        Err(error) => return respond_error(stream, 429, error.to_string()),
+        Err(error) => {
+            finish_owner(owners, &request_id);
+            return respond_error(stream, runtime_error_status(&error), error.to_string());
+        }
     };
-    if let Ok(mut owners) = owners.lock() {
-        owners.insert(request_id.clone(), identity.principal.clone());
-    }
+    let _lease = HttpGenerationLease {
+        generation: &generation,
+        owners,
+        request_id: &request_id,
+    };
+    // Bound dead/slow clients as well as the backend wait. The request body is
+    // fully consumed before these settings are applied.
+    stream.set_read_timeout(Some(Duration::from_millis(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let defer_stream_headers = streaming && tool_definitions.is_some();
     let stream_tool_calls = streaming
@@ -3012,7 +3055,6 @@ fn generate(
                 if !drain_cancelled_generation(&generation) {
                     eprintln!("Talvik HTTP generation cleanup timed out request_id={request_id}");
                 }
-                finish_owner(owners, &request_id);
                 return Err(error);
             }
         }
@@ -3020,21 +3062,26 @@ fn generate(
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
     loop {
-        let message = deadline.map_or_else(
-            || {
-                generation
-                    .recv()
-                    .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
-            },
-            |deadline| {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                } else {
-                    generation.recv_timeout(remaining)
-                }
-            },
-        );
+        if peer_disconnected(stream)? {
+            generation.cancel();
+            if !drain_cancelled_generation(&generation) {
+                eprintln!("Talvik HTTP disconnect cleanup timed out request_id={request_id}");
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "inference client disconnected",
+            ));
+        }
+        let wait = deadline.map_or(Duration::from_millis(100), |end| {
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100))
+        });
+        let message = generation.recv_timeout(wait);
+        if matches!(message, Err(std::sync::mpsc::RecvTimeoutError::Timeout))
+            && deadline.is_none_or(|end| Instant::now() < end)
+        {
+            continue;
+        }
         match message {
             Ok(GenerationMessage::Token(token)) => {
                 if let Some(parser) = tool_parser.as_mut() {
@@ -3047,7 +3094,6 @@ fn generate(
                                     "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return write_openai_stream_error(
                                 stream,
                                 stream_headers_sent,
@@ -3078,7 +3124,6 @@ fn generate(
                                         "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return write_openai_stream_error(
                                     stream,
                                     stream_headers_sent,
@@ -3093,7 +3138,7 @@ fn generate(
                             &request_id,
                             created,
                             model,
-                            part,
+                            &part,
                             &mut stream_headers_sent,
                         ) {
                             generation.cancel();
@@ -3102,7 +3147,6 @@ fn generate(
                                     "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return Err(error);
                         }
                     }
@@ -3143,7 +3187,6 @@ fn generate(
                                         "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return Err(error);
                             }
                             continue;
@@ -3154,7 +3197,6 @@ fn generate(
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation completed request_id={} model={} termination={:?} generated_tokens={}",
                     request_id,
@@ -3229,7 +3271,7 @@ fn generate(
                                 &request_id,
                                 created,
                                 model,
-                                part,
+                                &part,
                                 &mut stream_headers_sent,
                             )?;
                         }
@@ -3510,7 +3552,6 @@ fn generate(
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation cancelled request_id={} model={} generated_tokens={}",
                     request_id, model, result.statistics.generated_tokens
@@ -3607,7 +3648,6 @@ fn generate(
                 );
             }
             Ok(GenerationMessage::Failed(error)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation failed request_id={request_id} model={model} error={error}"
                 );
@@ -3630,17 +3670,20 @@ fn generate(
                     return write_openai_stream_failure(
                         stream,
                         stream_headers_sent,
-                        500,
-                        "server_error",
+                        runtime_error_status(&error),
+                        if runtime_error_status(&error) == 400 {
+                            "invalid_request_error"
+                        } else {
+                            "server_error"
+                        },
                         "generation_failed",
                         &error.to_string(),
                     );
                 }
-                return respond_error(stream, 500, error.to_string());
+                return respond_error(stream, runtime_error_status(&error), error.to_string());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
-                finish_owner(owners, &request_id);
                 eprintln!("Talvik HTTP generation timed_out request_id={request_id} model={model}");
                 if drain_cancelled_generation(&generation) {
                     if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
@@ -3703,7 +3746,6 @@ fn generate(
                 );
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                finish_owner(owners, &request_id);
                 if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
                     return write_responses_stream_failure(
                         stream,
@@ -3835,6 +3877,82 @@ fn drain_cancelled_generation(generation: &GenerationStream) -> bool {
     }
 }
 
+// A transport error must never leave an unobserved request consuming inference.
+struct HttpGenerationLease<'a> {
+    generation: &'a GenerationStream,
+    owners: &'a Arc<Mutex<HashMap<String, String>>>,
+    request_id: &'a str,
+}
+
+impl Drop for HttpGenerationLease<'_> {
+    fn drop(&mut self) {
+        self.generation.cancel();
+        finish_owner(self.owners, self.request_id);
+    }
+}
+
+fn peer_disconnected(stream: &TcpStream) -> std::io::Result<bool> {
+    match stream.peek(&mut [0_u8; 1]) {
+        Ok(0) => Ok(true),
+        Ok(_) => Ok(false),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn runtime_error_status(error: &oid_shared::RuntimeError) -> u16 {
+    use oid_shared::RuntimeError;
+    match error {
+        RuntimeError::InvalidRequest(_) => 400,
+        RuntimeError::ModelNotFound(_) => 404,
+        RuntimeError::ResourceAdmission {
+            retryable: true, ..
+        } => 429,
+        RuntimeError::ResourceAdmission {
+            retryable: false, ..
+        }
+        | RuntimeError::NativeBackendUnavailable(_) => 503,
+        RuntimeError::NotImplemented(_) => 501,
+        RuntimeError::ModelLifecycle(_) => 409,
+        _ => 500,
+    }
+}
+
+fn reserve_owner(
+    owners: &Arc<Mutex<HashMap<String, String>>>,
+    request_id: &str,
+    principal: &str,
+) -> bool {
+    let Ok(mut owners) = owners.lock() else {
+        return false;
+    };
+    if let std::collections::hash_map::Entry::Vacant(entry) = owners.entry(request_id.to_owned()) {
+        entry.insert(principal.to_owned());
+        true
+    } else {
+        false
+    }
+}
+
 fn finish_owner(owners: &Arc<Mutex<HashMap<String, String>>>, request_id: &str) {
     if let Ok(mut owners) = owners.lock() {
         owners.remove(request_id);
@@ -3956,6 +4074,80 @@ mod tests {
     };
     use base64::Engine as _;
     use serde_json::json;
+
+    #[test]
+    fn request_ownership_cannot_be_overwritten_by_another_client() {
+        use std::sync::{Arc, Mutex};
+        let owners = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        assert!(super::reserve_owner(&owners, "same-id", "alice"));
+        assert!(!super::reserve_owner(&owners, "same-id", "bob"));
+        assert_eq!(owners.lock().unwrap().get("same-id").unwrap(), "alice");
+        super::finish_owner(&owners, "same-id");
+        assert!(super::reserve_owner(&owners, "same-id", "bob"));
+    }
+
+    #[test]
+    fn runtime_errors_have_actionable_http_statuses() {
+        use oid_shared::RuntimeError;
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::InvalidRequest("context overflow".into())),
+            400
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::ModelNotFound("missing".into())),
+            404
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::ResourceAdmission {
+                message: "queue full".into(),
+                retryable: true
+            }),
+            429
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::NativeBackend("failure".into())),
+            500
+        );
+    }
+
+    #[test]
+    fn transport_probe_distinguishes_idle_peer_from_closed_peer() {
+        use std::net::{TcpListener, TcpStream};
+        use std::time::Duration;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        assert!(!super::peer_disconnected(&server).unwrap());
+        drop(client);
+        assert!(super::peer_disconnected(&server).unwrap());
+    }
+
+    #[test]
+    fn transport_lease_cancels_and_removes_owner_on_early_return() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc, Mutex,
+        };
+        let (_sender, receiver) = mpsc::channel();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let generation = super::GenerationStream::from_parts(receiver, cancellation.clone());
+        let owners = Arc::new(Mutex::new(std::collections::HashMap::from([(
+            "test".to_owned(),
+            "owner".to_owned(),
+        )])));
+        {
+            let _lease = super::HttpGenerationLease {
+                generation: &generation,
+                owners: &owners,
+                request_id: "test",
+            };
+        }
+        assert!(cancellation.load(Ordering::SeqCst));
+        assert_eq!(owners.lock().unwrap().len(), 0);
+    }
 
     #[test]
     fn rejects_oversized_http_bodies() {

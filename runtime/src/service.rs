@@ -1104,6 +1104,17 @@ impl RuntimeService for MarinaRuntime {
                 let mut queue = self.pending_generations.lock().map_err(|_| {
                     RuntimeError::ModelLifecycle("generation queue unavailable".to_owned())
                 })?;
+                if active
+                    .as_ref()
+                    .is_some_and(|(id, _, _)| id == &request.request_id)
+                    || queue
+                        .iter()
+                        .any(|pending| pending.request.request_id == request.request_id)
+                {
+                    return Err(RuntimeError::InvalidRequest(
+                        "duplicate active or queued request_id".to_owned(),
+                    ));
+                }
                 if queue.len() >= self.resource_policy.queue_capacity {
                     return Err(RuntimeError::ResourceAdmission {
                         message: "generation queue is full while another request is active"
@@ -1921,6 +1932,14 @@ mod tests {
             .generate(request("queued"))
             .expect("queue one request");
         assert!(matches!(
+            runtime.generate(request("active")),
+            Err(oid_shared::RuntimeError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            runtime.generate(request("queued")),
+            Err(oid_shared::RuntimeError::InvalidRequest(_))
+        ));
+        assert!(matches!(
             runtime.generate(request("overflow")),
             Err(oid_shared::RuntimeError::ResourceAdmission { .. })
         ));
@@ -2201,7 +2220,7 @@ mod tests {
             ModelStatus::Registered
         );
         assert_eq!(runtime.model_list()[0].status, ModelStatus::Registered);
-        assert!(runtime.snapshot().loaded_models.is_empty());
+        assert_eq!(runtime.snapshot().loaded_models, Vec::<String>::new());
         std::fs::remove_dir_all(root).expect("remove test data");
     }
 
@@ -2323,7 +2342,7 @@ mod tests {
         runtime.model_unload("alpha").expect("unload alpha");
         assert_eq!(runtime.snapshot().loaded_models, vec!["beta".to_owned()]);
         runtime.model_unload("beta").expect("unload beta");
-        assert!(runtime.snapshot().loaded_models.is_empty());
+        assert_eq!(runtime.snapshot().loaded_models, Vec::<String>::new());
         std::fs::remove_dir_all(root).expect("remove test data");
     }
 }

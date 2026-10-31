@@ -1091,7 +1091,7 @@ mod tests {
             receiver.try_iter().next(),
             Some(RuntimeEvent::ModelRegistered(_))
         ));
-        assert!(registry.list().is_empty());
+        assert_eq!(registry.list(), Vec::new());
     }
 
     #[test]
@@ -1216,7 +1216,7 @@ mod tests {
         let discovered = ModelDiscovery::new(vec![directory.clone()])
             .discover(&registry, "llama.cpp")
             .expect("discover model directory");
-        assert!(discovered.is_empty());
+        assert_eq!(discovered, Vec::new());
         assert_eq!(registry.list().len(), 1);
         std::fs::remove_dir_all(directory).expect("remove discovery directory");
     }
@@ -1235,10 +1235,12 @@ mod tests {
         alias.location = location.clone();
         registry.register(alias).expect("register alias");
         let discovery = ModelDiscovery::new(vec![directory.clone()]);
-        assert!(discovery
-            .discover(&registry, "llama.cpp")
-            .expect("discover")
-            .is_empty());
+        assert_eq!(
+            discovery
+                .discover(&registry, "llama.cpp")
+                .expect("discover"),
+            Vec::new()
+        );
         assert_eq!(registry.list().len(), 1);
 
         let mut stub = model();

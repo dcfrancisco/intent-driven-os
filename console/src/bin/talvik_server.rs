@@ -61,15 +61,13 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
         let http_default_model_id = default_model_id.clone();
         let http_readiness = Arc::clone(&readiness);
         thread::spawn(move || {
-            if let Err(error) = http::serve(
-                http_listener,
+            http::serve(
+                &http_listener,
                 &http_runtime,
                 authentication_enabled,
                 http_default_model_id.as_ref(),
                 &http_readiness,
-            ) {
-                eprintln!("Model runtime HTTP server failed: {error}");
-            }
+            );
         });
         eprintln!("Model runtime HTTP listening on {address}");
     }
