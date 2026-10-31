@@ -228,3 +228,8 @@ Chat Completions stream errors now use a data-only JSON error frame. Copilot's
 custom-endpoint client attempted to parse the old `event: error` line as JSON.
 Typed Responses events retain their endpoint-specific format. Failure streams
 still terminate without a success sentinel.
+
+Lazy JSON constraints are enabled only when reasoning is absent or explicitly
+disabled by a supported template control. Leading thought output is also
+excluded from the trigger. Reasoning-enabled tool output keeps the existing
+edge validation, so thought examples cannot activate output grammar.

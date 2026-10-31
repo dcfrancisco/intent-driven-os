@@ -1536,7 +1536,10 @@ impl NativeModel {
                 .collect::<Vec<_>>();
             render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
                 |mut prompt| {
-                    prompt.constrain_json_tools = constrain_json_tools;
+                    // Never constrain hidden reasoning as if it were a tool call.
+                    let reasoning_disabled = self.profile.reasoning_format.is_none()
+                        || (self.profile.thinking_control && enable_thinking == Some(false));
+                    prompt.constrain_json_tools = constrain_json_tools && reasoning_disabled;
                     prompt
                 },
             )

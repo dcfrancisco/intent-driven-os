@@ -18,7 +18,7 @@ ws ::= [ \t\n\r]{0,20}
 "#;
 
 const TRIGGERS: [&str; 3] = [
-    r"^[\s\S]*?(<tool_call>[\s\S]*)",
+    r"^(?![ \t\r\n]*<think>)[\s\S]*?(<tool_call>[\s\S]*)",
     r"^[ \t\r\n]*(```(?:json)?[ \t\r\n]*\{[\s\S]*)",
     r"^[ \t\r\n]*(\{[\s\S]*)",
 ];
@@ -96,6 +96,16 @@ mod tests {
         crate::initialize().expect("initialize");
         let model = crate::load_model(&path, None, crate::cpu_load_options()).expect("load");
         let vocabulary = unsafe { crate::ffi::llama_model_get_vocab(model.pointer.cast_const()) };
+        if model.profile().tool_format == Some(oid_model_runner::ToolFormat::XmlJson) {
+            for thinking in [false, true] {
+                let prompt = format!("\u{001e}__talvik_template\nenable_thinking={thinking}\u{001e}__talvik_tools\n[]\u{001e}user\nRead a file.");
+                let formatted = model.format_prompt(&prompt).unwrap();
+                let expected = model.profile().reasoning_format.is_none()
+                    || (model.profile().thinking_control && !thinking);
+                assert_eq!(formatted.constrain_json_tools, expected);
+            }
+        }
+
         let comma = model.tokenize(",").unwrap();
         let quote = model.tokenize("\"").unwrap();
         assert_eq!(comma.len(), 1);
@@ -167,6 +177,22 @@ mod tests {
         );
         unsafe {
             crate::ffi::llama_sampler_free(prose);
+        }
+        let thought = unsafe { super::init(vocabulary) };
+        for token in model
+            .tokenize("<think>Example <tool_call>{not JSON")
+            .unwrap()
+        {
+            unsafe {
+                llama_sampler_accept(thought, token);
+            }
+        }
+        assert_eq!(
+            unsafe { allowed(thought, &[comma[0], quote[0]]) },
+            [true, true]
+        );
+        unsafe {
+            crate::ffi::llama_sampler_free(thought);
         }
 
         for (start, close) in [
