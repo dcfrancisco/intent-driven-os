@@ -35,3 +35,4 @@ ADRs capture decisions that materially affect the project’s architecture, secu
 - [ADR-0032 — Talvik Ollama-Compatible Model Runner API](0032-talvik-ollama-model-runner-api.md)
 - [ADR-0033 — Talvik Local Vision Input](0033-talvik-local-vision-input.md)
 - [ADR-0034 — Gemma 4 E4B-it as Talvik's Default Model](0034-talvik-gemma-4-default-model.md)
+- [ADR-0035 — Execute Embedded Chat Templates](0035-native-embedded-chat-templates.md)

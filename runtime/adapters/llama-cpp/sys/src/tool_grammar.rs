@@ -98,7 +98,8 @@ mod tests {
         let vocabulary = unsafe { crate::ffi::llama_model_get_vocab(model.pointer.cast_const()) };
         if model.profile().tool_format == Some(oid_model_runner::ToolFormat::XmlJson) {
             for thinking in [false, true] {
-                let prompt = format!("\u{001e}__talvik_template\nenable_thinking={thinking}\u{001e}__talvik_tools\n[]\u{001e}user\nRead a file.");
+                let tools = serde_json::json!([{"type":"function","function":{"name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}}]);
+                let prompt = format!("\u{001e}__talvik_template\nenable_thinking={thinking}\u{001e}__talvik_tools\n{tools}\u{001e}user\nRead a file.");
                 let formatted = model.format_prompt(&prompt).unwrap();
                 let expected = model.profile().reasoning_format.is_none()
                     || (model.profile().thinking_control && !thinking);

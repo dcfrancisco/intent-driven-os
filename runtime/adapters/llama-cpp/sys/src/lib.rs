@@ -20,6 +20,8 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering;
 #[cfg(native_llama_cpp)]
 use std::sync::Mutex;
+#[cfg(native_chat_template)]
+mod chat_template;
 #[cfg(native_llama_cpp)]
 mod tool_grammar;
 
@@ -304,6 +306,8 @@ mod ffi {
         pub fn llama_model_has_decoder(model: *const c_void) -> bool;
         pub fn llama_vocab_get_add_bos(vocab: *const c_void) -> bool;
         pub fn llama_vocab_bos(vocab: *const c_void) -> i32;
+        #[cfg(native_chat_template)]
+        pub fn llama_vocab_eos(vocab: *const c_void) -> i32;
         #[cfg(test)]
         pub fn llama_vocab_get_text(vocab: *const c_void, token: i32) -> *const c_char;
         pub fn llama_vocab_get_attr(vocab: *const c_void, token: i32) -> i32;
@@ -852,82 +856,6 @@ fn classify_native_device(device_type: i32, backend_name: &str) -> Option<Native
     }
 }
 
-#[cfg(any(native_llama_cpp, test))]
-fn render_tool_history(
-    content: &str,
-    format: Option<oid_model_runner::ToolFormat>,
-) -> Result<String, String> {
-    use oid_model_runner::ToolFormat;
-    use std::fmt::Write as _;
-    let history: serde_json::Value =
-        serde_json::from_str(content).map_err(|e| format!("invalid tool history: {e}"))?;
-    let calls = history["calls"]
-        .as_array()
-        .filter(|calls| !calls.is_empty())
-        .ok_or("tool history requires calls")?;
-    let mut text = history["content"].as_str().unwrap_or("").to_owned();
-    let escape = |value: &str| {
-        value
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    for call in calls {
-        let function = &call["function"];
-        let name = function["name"]
-            .as_str()
-            .ok_or("tool history requires a function name")?;
-        let arguments = match &function["arguments"] {
-            serde_json::Value::String(value) => serde_json::from_str(value)
-                .map_err(|e| format!("invalid tool history arguments: {e}"))?,
-            value => value.clone(),
-        };
-        let arguments = arguments
-            .as_object()
-            .ok_or("tool history arguments must be an object")?;
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        if let Some(id) = call["id"].as_str() {
-            writeln!(text, "Tool call ID: {}", serde_json::json!(id)).map_err(|e| e.to_string())?;
-        }
-        match format {
-            Some(ToolFormat::XmlJson) => {
-                let payload = serde_json::json!({"name": name, "arguments": arguments});
-                write!(text, "<tool_call>{payload}</tool_call>").map_err(|e| e.to_string())?;
-            }
-            Some(ToolFormat::XmlFunction) => {
-                let valid_name = |value: &str| {
-                    !value.is_empty()
-                        && value
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
-                };
-                if !valid_name(name) || arguments.keys().any(|key| !valid_name(key)) {
-                    return Err(
-                        "tool history has an unsupported function or parameter name".to_owned()
-                    );
-                }
-                write!(text, "<tool_call>\n<function={name}>\n").map_err(|e| e.to_string())?;
-                for (key, value) in arguments {
-                    let value = value
-                        .as_str()
-                        .map_or_else(|| value.to_string(), str::to_owned);
-                    write!(
-                        text,
-                        "<parameter={key}>\n{}\n</parameter>\n",
-                        escape(&value)
-                    )
-                    .map_err(|e| e.to_string())?;
-                }
-                text.push_str("</function>\n</tool_call>");
-            }
-            None => return Err("the loaded model has no supported tool history format".to_owned()),
-        }
-    }
-    Ok(text)
-}
-
 #[cfg(native_mtmd)]
 struct OwnedMtmdBitmaps(Vec<*mut c_void>);
 
@@ -1235,115 +1163,6 @@ fn render_chat_prompt(
     })
 }
 
-// The C role/content formatter does not execute the Jinja tools branch.
-// Select the declaration envelope from template markers, never a model name.
-#[cfg(any(native_llama_cpp, test))]
-fn tool_declarations(template: &str, content: &str) -> Result<String, String> {
-    if template.contains("<tools>")
-        && template.contains("</tools>")
-        && template.contains("<tool_call>")
-        && template.contains("tojson")
-    {
-        let tools: Vec<serde_json::Value> = serde_json::from_str(content)
-            .map_err(|error| format!("invalid tool definitions: {error}"))?;
-        let signatures = tools
-            .iter()
-            .map(serde_json::Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(format!("# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{signatures}\n</tools>"))
-    } else {
-        Ok(format!("Tools: {content}"))
-    }
-}
-
-#[cfg(any(native_llama_cpp, test))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ToolSystemOrder {
-    Separate,
-    ClientFirst,
-    ToolsFirst,
-}
-
-// These supported templates declare their order around the tools branch.
-// Unknown templates retain the existing role layout; no model names are used.
-#[cfg(any(native_llama_cpp, test))]
-fn tool_system_order(template: &str) -> ToolSystemOrder {
-    if !template.contains("<tools>")
-        || !template.contains("</tools>")
-        || !template.contains("tojson")
-    {
-        return ToolSystemOrder::Separate;
-    }
-    let tools = template.find("# Tools");
-    let client = [
-        "messages[0].role",
-        "messages[0]['role']",
-        "messages[0][\"role\"]",
-    ]
-    .into_iter()
-    .filter_map(|marker| template.find(marker))
-    .min();
-    match (client, tools) {
-        (Some(client), Some(tools)) if client < tools => ToolSystemOrder::ClientFirst,
-        (Some(_), Some(_)) => ToolSystemOrder::ToolsFirst,
-        _ => ToolSystemOrder::Separate,
-    }
-}
-
-// Combine only the initial metadata/system prefix; never move history.
-#[cfg(any(native_llama_cpp, test))]
-fn merge_tool_system_prefix(
-    entries: Vec<(String, String)>,
-    order: ToolSystemOrder,
-) -> Vec<(String, String)> {
-    if order == ToolSystemOrder::Separate {
-        return entries
-            .into_iter()
-            .map(|(role, text)| {
-                let role = if matches!(role.as_str(), "__talvik_tools" | "__talvik_tool_choice") {
-                    "system".to_owned()
-                } else {
-                    role
-                };
-                (role, text)
-            })
-            .collect();
-    }
-    let prefix_len = entries
-        .iter()
-        .take_while(|(role, _)| {
-            matches!(
-                role.as_str(),
-                "system" | "__talvik_tools" | "__talvik_tool_choice"
-            )
-        })
-        .count();
-    if !entries[..prefix_len]
-        .iter()
-        .any(|(role, _)| role == "__talvik_tools")
-    {
-        return entries;
-    }
-    let mut parts = Vec::new();
-    let roles = match order {
-        ToolSystemOrder::ClientFirst => ["system", "__talvik_tools", "__talvik_tool_choice"],
-        ToolSystemOrder::ToolsFirst => ["__talvik_tools", "system", "__talvik_tool_choice"],
-        ToolSystemOrder::Separate => unreachable!("handled above"),
-    };
-    for role in roles {
-        parts.extend(
-            entries[..prefix_len]
-                .iter()
-                .filter(|(entry_role, _)| entry_role == role)
-                .map(|(_, text)| text.as_str()),
-        );
-    }
-    let mut merged = vec![("system".to_owned(), parts.join("\n\n"))];
-    merged.extend(entries.into_iter().skip(prefix_len));
-    merged
-}
-
 #[cfg(any(native_llama_cpp, test))]
 fn verified_checkpoint_position(prefix: &[i32], prompt: &[i32]) -> Option<usize> {
     // BPE tokenization can merge at a text boundary. Text-prefix matching alone
@@ -1565,110 +1384,70 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
-    #[allow(clippy::too_many_lines)]
     fn format_prompt(&self, prompt: &str) -> Result<FormattedPrompt, String> {
-        unsafe {
-            let template =
-                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
-            if template.is_null() {
-                return Ok(FormattedPrompt {
-                    text: prompt.to_owned(),
-                    cache_prefix: None,
-                    constrain_json_tools: false,
-                });
-            }
-            // HTTP multi-turn requests use a private record separator so the
-            // backend-neutral public contract remains plain text while the
-            // native adapter can still pass distinct role/content messages to
-            // the embedded GGUF chat template.
-            let parsed = prompt
-                .strip_prefix('\u{001e}')
-                .map(|conversation| {
-                    conversation
-                        .split('\u{001e}')
-                        .filter(|record| !record.is_empty())
-                        .map(|record| {
-                            record
-                                .split_once('\n')
-                                .ok_or_else(|| "invalid structured chat prompt".to_owned())
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
-            let entries = parsed.unwrap_or_else(|| vec![("user", prompt)]);
-            let mut enable_thinking = None;
-            let mut constrain_json_tools = false;
-            let entries = entries
-                .into_iter()
-                .map(|(role, content)| {
-                    if role == "__talvik_template" {
-                        let value = content
-                            .strip_prefix("enable_thinking=")
-                            .ok_or_else(|| "invalid chat template option".to_owned())?
-                            .parse::<bool>()
-                            .map_err(|_| "invalid chat template option".to_owned())?;
-                        enable_thinking = Some(value);
-                        return Ok(None);
-                    }
-                    let entry = if role == "__talvik_tools" {
-                        constrain_json_tools = self.profile.tool_format == Some(oid_model_runner::ToolFormat::XmlJson);
-                        let format = match self.profile.tool_format {
-                            Some(oid_model_runner::ToolFormat::XmlJson) => "Emit each call as <tool_call>{\"name\":\"tool_name\",\"arguments\":{\"argument_name\":\"argument_value\"}}</tool_call>. The arguments must be valid JSON.",
-                            Some(oid_model_runner::ToolFormat::XmlFunction) => "Emit each call as <tool_call>\n<function=tool_name>\n<parameter=argument_name>\nargument_value\n</parameter>\n</function>\n</tool_call>. Repeat parameter blocks for every argument. Emit literal text for string parameters and valid JSON for numbers, booleans, arrays or objects, matching the schema.",
-                            None => return Err("the loaded model has no supported tool output format".to_owned()),
-                        };
-                        let declarations = tool_declarations(&CStr::from_ptr(template).to_string_lossy(), content)?;
-                        ("__talvik_tools".to_owned(), format!("{declarations}\n\n{format} Match argument names and types to the selected tool schema and include every required property. Never omit required arguments. Do not invoke tools just because they are available. When tool use is optional, answer self-contained questions directly without tools. When the user's request requires an external action, invoke an available tool that performs it; narration does not execute an action. Do not end with a promise to perform an action instead of calling the tool. Respect the user's requested scope, including exclusions such as no tests or no edits. Use tool results already present in the conversation to answer; do not repeat completed calls unless new data is needed. Never invent tool results or claim execution without a corresponding result."))
-                    } else if role == "__talvik_tool_calls" {
-                        ("assistant".to_owned(), render_tool_history(content, self.profile.tool_format)?)
-                    } else if role == "tool" && self.profile.tool_format.is_some()
-                        && CStr::from_ptr(template).to_bytes().windows(b"<tool_response>".len()).any(|part| part == b"<tool_response>")
-                        && CStr::from_ptr(template).to_bytes().windows(b"</tool_response>".len()).any(|part| part == b"</tool_response>") {
-                        // The role/content C API does not implement the full
-                        // Jinja tool branch. Honor its declared response wrapper.
-                        ("user".to_owned(), format!("<tool_response>\n{content}\n</tool_response>"))
-                    } else if role == "__talvik_tool_choice" {
-                        let instruction = match content {
-                            "single" => {
-                                "Do not make more than one tool call in this response."
-                                    .to_owned()
-                            }
-                            "required" => {
-                                "A tool call is required for this response. You must call one of the listed tools and must not answer in prose."
-                                    .to_owned()
-                            }
-                            name if name.starts_with("function:") => format!(
-                                "You must call the listed function {:?} exactly once and must not call another function or answer in prose.",
-                                &name["function:".len()..]
-                            ),
-                            _ => return Err("invalid tool-choice prompt directive".to_owned()),
-                        };
-                        ("__talvik_tool_choice".to_owned(), instruction)
-                    } else {
-                        (role.to_owned(), content.to_owned())
-                    };
-                    Ok(Some(entry))
-                })
-                .collect::<Result<Vec<_>, String>>()?
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>();
-            let order = tool_system_order(&CStr::from_ptr(template).to_string_lossy());
-            let entries = merge_tool_system_prefix(entries, order);
-            render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
-                |mut prompt| {
-                    // Never constrain hidden reasoning as if it were a tool call.
-                    let reasoning_disabled = self.profile.reasoning_format.is_none()
-                        || (self.profile.thinking_control && enable_thinking == Some(false));
-                    prompt.constrain_json_tools = constrain_json_tools && reasoning_disabled;
-                    prompt
-                },
-            )
+        let template =
+            unsafe { ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null()) };
+        if template.is_null() {
+            return Ok(FormattedPrompt {
+                text: prompt.to_owned(),
+                cache_prefix: None,
+                constrain_json_tools: false,
+            });
         }
+        let template = unsafe { CStr::from_ptr(template) };
+        #[cfg(native_chat_template)]
+        if template
+            .to_bytes()
+            .windows(2)
+            .any(|part| part == b"{%" || part == b"{{")
+        {
+            return chat_template::format(self, prompt, template);
+        }
+        // Legacy named C formatters remain available for plain chat only.
+        // Tool formatting must execute the artifact's actual template.
+        let mut thinking = None;
+        let mut entries = Vec::new();
+        if let Some(records) = prompt.strip_prefix('\u{001e}') {
+            for record in records
+                .split('\u{001e}')
+                .filter(|record| !record.is_empty())
+            {
+                let (role, content) = record
+                    .split_once('\n')
+                    .ok_or("invalid structured chat prompt")?;
+                if role == "__talvik_template" {
+                    thinking = Some(
+                        content
+                            .strip_prefix("enable_thinking=")
+                            .ok_or("invalid template option")?
+                            .parse::<bool>()
+                            .map_err(|_| "invalid thinking option")?,
+                    );
+                } else if role.starts_with("__talvik_tool") {
+                    return Err(
+                        "tool use requires the native embedded-template renderer".to_owned()
+                    );
+                } else {
+                    entries.push((role.to_owned(), content.to_owned()));
+                }
+            }
+        } else {
+            entries.push(("user".to_owned(), prompt.to_owned()));
+        }
+        render_chat_prompt(template, &entries, thinking)
     }
 
     #[cfg(native_llama_cpp)]
     unsafe fn token_piece(vocabulary: *const c_void, token: i32) -> Result<Vec<u8>, String> {
+        unsafe { Self::token_piece_with_special(vocabulary, token, false) }
+    }
+
+    #[cfg(native_llama_cpp)]
+    unsafe fn token_piece_with_special(
+        vocabulary: *const c_void,
+        token: i32,
+        special: bool,
+    ) -> Result<Vec<u8>, String> {
         let mut capacity = 64_i32;
         loop {
             let mut text = vec![
@@ -1676,8 +1455,14 @@ impl NativeModel {
                 usize::try_from(capacity)
                     .map_err(|_| "token text is too large".to_owned())?
             ];
-            let length =
-                ffi::llama_token_to_piece(vocabulary, token, text.as_mut_ptr(), capacity, 0, false);
+            let length = ffi::llama_token_to_piece(
+                vocabulary,
+                token,
+                text.as_mut_ptr(),
+                capacity,
+                0,
+                special,
+            );
             if length < 0 {
                 capacity = length
                     .checked_neg()
@@ -2424,23 +2209,6 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn tool_history_uses_the_selected_protocol_and_preserves_content_and_ids() {
-        use oid_model_runner::ToolFormat;
-        let history = serde_json::json!({"content":"Inspecting.","calls":[{"id":"call_123","function":{"name":"read_file","arguments":"{\"path\":\"a<世界>\",\"count\":2}"}}]}).to_string();
-        let json = super::render_tool_history(&history, Some(ToolFormat::XmlJson)).unwrap();
-        assert!(json.starts_with("Inspecting.\nTool call ID: \"call_123\""));
-        assert!(json.contains("<tool_call>{"));
-        assert!(!json.contains("<tool_calls>"));
-        assert!(json.contains("a<世界>"));
-        let function = super::render_tool_history(&history, Some(ToolFormat::XmlFunction)).unwrap();
-        assert!(function.contains("<function=read_file>"));
-        assert!(function.contains("<parameter=count>\n2\n</parameter>"));
-        assert!(function.contains("a&lt;世界&gt;"));
-        assert!(super::render_tool_history(&history, None).is_err());
-        assert!(super::render_tool_history("{}", Some(ToolFormat::XmlJson)).is_err());
-    }
-
-    #[test]
     fn text_context_capacity_reserves_output_and_bounded_growth_headroom() {
         assert_eq!(super::text_context_capacity(32768, 9288, 2048), 16384);
         assert_eq!(super::text_context_capacity(32768, 6032, 2048), 16384);
@@ -2612,101 +2380,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tool_declarations_honor_template_envelopes_without_changing_schemas() {
-        let tools = r#"[{"type":"function","function":{"name":"run_in_terminal","parameters":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}}]"#;
-        let native =
-            super::tool_declarations("<tools></tools> <tool_call> tool | tojson", tools).unwrap();
-        let signatures = native
-            .split("<tools>\n")
-            .nth(1)
-            .unwrap()
-            .split("\n</tools>")
-            .next()
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(signatures).unwrap(),
-            serde_json::from_str::<serde_json::Value>(tools).unwrap()[0]
-        );
-        assert_eq!(
-            super::tool_declarations("<tool_call> <function=", tools).unwrap(),
-            format!("Tools: {tools}")
-        );
-        assert!(super::tool_declarations("<tools></tools> <tool_call> tojson", "bad").is_err());
-    }
-
-    #[test]
-    fn tool_system_prefix_matches_declared_order_without_moving_history() {
-        let pairs = |values: &[(&str, &str)]| -> Vec<(String, String)> {
-            values
-                .iter()
-                .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
-                .collect()
-        };
-        let input = pairs(&[
-            ("__talvik_tool_choice", "Required"),
-            ("__talvik_tools", "Tools"),
-            ("system", "Client"),
-            ("user", "Build"),
-            ("system", "Later"),
-        ]);
-        let merged =
-            super::merge_tool_system_prefix(input.clone(), super::ToolSystemOrder::ClientFirst);
-        assert_eq!(
-            super::merge_tool_system_prefix(input.clone(), super::ToolSystemOrder::Separate),
-            pairs(&[
-                ("system", "Required"),
-                ("system", "Tools"),
-                ("system", "Client"),
-                ("user", "Build"),
-                ("system", "Later")
-            ])
-        );
-        assert_eq!(
-            merged,
-            pairs(&[
-                ("system", "Client\n\nTools\n\nRequired"),
-                ("user", "Build"),
-                ("system", "Later")
-            ])
-        );
-        assert_eq!(
-            super::merge_tool_system_prefix(input, super::ToolSystemOrder::ToolsFirst),
-            pairs(&[
-                ("system", "Tools\n\nClient\n\nRequired"),
-                ("user", "Build"),
-                ("system", "Later")
-            ])
-        );
-        let plain = pairs(&[("system", "A"), ("system", "B"), ("user", "C")]);
-        assert_eq!(
-            super::merge_tool_system_prefix(plain.clone(), super::ToolSystemOrder::ClientFirst),
-            plain
-        );
-    }
-
-    #[test]
-    fn tool_system_order_is_declared_by_template_structure() {
-        use super::ToolSystemOrder::{ClientFirst, Separate, ToolsFirst};
-        assert_eq!(
-            super::tool_system_order("messages[0].role # Tools <tools></tools> tojson"),
-            ClientFirst
-        );
-        assert_eq!(
-            super::tool_system_order("# Tools <tools></tools> tojson messages[0].role"),
-            ToolsFirst
-        );
-        assert_eq!(
-            super::tool_system_order("messages[0]['role'] # Tools <tools></tools> tojson"),
-            ClientFirst
-        );
-        assert_eq!(
-            super::tool_system_order("# Tools <tools></tools> tojson"),
-            Separate
-        );
-        assert_eq!(super::tool_system_order("plain chatml"), Separate);
-    }
-
     #[cfg(native_llama_cpp)]
     #[test]
     #[ignore = "requires MARINA_TEST_GGUF for embedded template qualification"]
@@ -2714,25 +2387,27 @@ mod tests {
         let path = std::env::var("MARINA_TEST_GGUF").expect("GGUF fixture");
         super::initialize().unwrap();
         let model = super::load_model(&path, None, super::cpu_load_options()).unwrap();
-        let template = unsafe {
-            std::ffi::CStr::from_ptr(super::ffi::llama_model_chat_template(
-                model.pointer.cast_const(),
-                std::ptr::null(),
-            ))
-        }
-        .to_string_lossy();
-        let order = super::tool_system_order(&template);
-        assert_ne!(
-            order,
-            super::ToolSystemOrder::Separate,
-            "fixture must declare a supported tool layout"
-        );
-        let prompt = "\u{001e}__talvik_tools\n[]\u{001e}system\nCLIENT_SCOPE_MARKER\u{001e}user\nRead a file.";
+        let expected_order = std::env::var("TALVIK_TEST_TOOL_ORDER")
+            .expect("client-first or tools-first fixture expectation");
+        assert!(matches!(
+            expected_order.as_str(),
+            "client-first" | "tools-first"
+        ));
+        let prompt = "\u{001e}__talvik_tools\n[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}]\u{001e}system\nCLIENT_SCOPE_MARKER\u{001e}user\nRead a file.";
         let rendered = model.format_prompt(prompt).unwrap();
+        #[cfg(native_chat_template)]
+        {
+            assert!(!rendered.text.contains("<parameter=argument_name>"));
+            assert!(!rendered.text.contains("\"argument_name\""));
+            assert!(rendered
+                .cache_prefix
+                .as_ref()
+                .is_some_and(|prefix| rendered.text.starts_with(prefix)));
+        }
         assert_eq!(rendered.text.matches("<|im_start|>system\n").count(), 1);
         let client = rendered.text.find("CLIENT_SCOPE_MARKER").unwrap();
         let tools = rendered.text.find("# Tools").unwrap();
-        assert_eq!(client < tools, order == super::ToolSystemOrder::ClientFirst);
+        assert_eq!(client < tools, expected_order == "client-first");
     }
 
     #[test]
@@ -3002,7 +2677,7 @@ mod tests {
         let mut answer = String::new();
         model
             .generate_stream_with_grammar_and_images(
-                "What color is the square? Answer with one color. <__media__>",
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nWhat color is the square? Answer with one color. <__media__>",
                 512,
                 32,
                 0.0,
@@ -3023,7 +2698,7 @@ mod tests {
 
         let cancellation = std::sync::atomic::AtomicBool::new(false);
         let cancelled_generation = model.generate_stream_with_grammar_and_images(
-            "Describe every object in the image in detail. <__media__>",
+            "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nDescribe every object in the image in detail. <__media__>",
             512,
             256,
             0.0,
@@ -3044,7 +2719,7 @@ mod tests {
         let mut recovered = String::new();
         model
             .generate_stream_with_grammar_and_images(
-                "What color is the square? Answer with one color. <__media__>",
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nWhat color is the square? Answer with one color. <__media__>",
                 512,
                 32,
                 0.0,
@@ -3624,6 +3299,20 @@ fn inspect_loaded_profile(pointer: *const c_void, vision: bool) -> oid_model_run
             .to_string_lossy()
             .into_owned()
     };
+    #[cfg(native_chat_template)]
+    let rendered = if template_pointer.is_null() {
+        None
+    } else if template.contains("{%") || template.contains("{{") {
+        chat_template::probe(pointer, &template).ok()
+    } else {
+        render_template_messages(
+            unsafe { CStr::from_ptr(template_pointer) },
+            &[("user".to_owned(), "Hello".to_owned())],
+            true,
+        )
+        .ok()
+    };
+    #[cfg(not(native_chat_template))]
     let rendered = if template_pointer.is_null() {
         None
     } else {
@@ -3655,6 +3344,11 @@ fn inspect_loaded_profile(pointer: *const c_void, vision: bool) -> oid_model_run
         &template,
         special_token(c"<think>") && special_token(c"</think>"),
     );
+    #[cfg(native_chat_template)]
+    let tool_template_supported =
+        tool_format.is_some() && chat_template::probe_tools(pointer, &template).is_ok();
+    #[cfg(not(native_chat_template))]
+    let tool_template_supported = false;
     let completion = unsafe { ffi::llama_model_has_decoder(pointer) };
     let recurrent =
         unsafe { ffi::llama_model_is_recurrent(pointer) || ffi::llama_model_is_hybrid(pointer) };
@@ -3682,7 +3376,8 @@ fn inspect_loaded_profile(pointer: *const c_void, vision: bool) -> oid_model_run
         },
         tokenizer_adds_bos: unsafe { ffi::llama_vocab_get_add_bos(vocab) },
         tools_declared,
-        tool_format: tool_format.filter(|_| completion && rendered.is_some()),
+        tool_format: tool_format
+            .filter(|_| completion && rendered.is_some() && tool_template_supported),
         reasoning_format,
         thinking_control,
         reasoning_prefilled: rendered.is_some_and(|text| text.trim_end().ends_with("<think>")),

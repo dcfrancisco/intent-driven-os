@@ -9,7 +9,7 @@ OUTPUT="${3:?output .tar.gz required}"
 for binary in talvik talvikd; do
   [[ -x "$BIN_DIR/$binary" ]] || { echo "missing executable: $BIN_DIR/$binary" >&2; exit 1; }
 done
-for component in llama ggml ggml-base ggml-cpu mtmd; do
+for component in llama ggml ggml-base ggml-cpu mtmd oid-chat-template; do
   [[ -n "$(find "$LIB_DIR" -maxdepth 1 -type f -name "lib${component}.*" -print -quit)" ]] || {
     echo "incomplete native payload: lib${component}" >&2; exit 1;
   }
@@ -19,7 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/talvik/bin" "$WORK/talvik/lib" "$(dirname "$OUTPUT")"
 cp "$BIN_DIR/talvik" "$BIN_DIR/talvikd" "$WORK/talvik/bin/"
 find "$LIB_DIR" -maxdepth 1 \( -type f -o -type l \) \
-  \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' \) \
+  \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' -o -name 'liboid-chat-template.*' \) \
   -exec cp -a {} "$WORK/talvik/lib/" \;
 cp "$ROOT/scripts/install-model-runner.sh" "$ROOT/scripts/install-talvik-macos.sh" "$WORK/talvik/"
 cp "$ROOT/packaging/talvik/talvikd.plist.in" "$ROOT/LICENSE" "$WORK/talvik/"

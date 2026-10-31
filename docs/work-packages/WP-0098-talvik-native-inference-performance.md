@@ -304,3 +304,14 @@ message. Layout detection now follows the relative locations of the initial
 system-role test and tools heading in supported templates. Unknown layouts
 keep the fallback. Native fixtures check the actual embedded Qwen3 and Qwen3.5
 templates, not only synthetic snippets. No model identifiers enter the adapter.
+
+### Embedded Jinja execution supersedes manual tool formatting
+
+ADR-0035 replaces the earlier declaration/order heuristics with execution of
+the full GGUF template using the pinned native Jinja engine. HTTP tool results
+are carried as structured records with original content and IDs. Historical
+argument strings become JSON objects for templates that iterate parameters.
+A native tool-template probe gates supported tools; the C formatter remains a
+plain-chat fallback. Native schema/history examples are no longer synthesized.
+Model bindings are qualification choices in the client presets, not backend
+branches. Short API probes and full IDE acceptance remain separate evidence.

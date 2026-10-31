@@ -2466,6 +2466,23 @@ fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
                 continue;
             }
         }
+        if role == "tool" {
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool message content must be a string".to_owned())?;
+            let mut result = json!({"content":content});
+            for key in ["name", "tool_call_id"] {
+                if let Some(value) = message.get(key) {
+                    result[key] = value.clone();
+                }
+            }
+            push_text_part(
+                &mut parts,
+                &format!("\u{001e}__talvik_tool_result\n{result}"),
+            );
+            continue;
+        }
         push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
         if role == "assistant" {
             let content = message
@@ -2477,23 +2494,7 @@ fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
             let content = message
                 .get("content")
                 .ok_or_else(|| "message content is required".to_owned())?;
-            if role == "tool" {
-                let content = content
-                    .as_str()
-                    .ok_or_else(|| "tool message content must be a string".to_owned())?;
-                let name = message
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool");
-                let call_id = message
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .map_or_else(String::new, |id| format!(" (tool_call_id: {id})"));
-                push_text_part(
-                    &mut parts,
-                    &format!("Tool result for {name}{call_id}: {content}"),
-                );
-            } else if let Some(content) = content.as_str() {
+            if let Some(content) = content.as_str() {
                 push_text_part(&mut parts, content);
             } else if let Some(content) = content.as_array() {
                 for part in content {
@@ -5323,10 +5324,12 @@ mod tests {
             {"role":"tool","tool_call_id":"call_123","name":"get_weather","content":"sunny"}
         ]});
         let prompt = build_chat_prompt(&body).expect("chat prompt");
-        assert!(prompt.contains("tool_call_id: call_123"));
-        assert!(prompt.contains("Tool result for get_weather"));
+        assert!(prompt.contains("\"tool_call_id\":\"call_123\""));
+        assert!(prompt.contains("\u{001e}__talvik_tool_result\n"));
+        assert!(prompt.contains("\"content\":\"sunny\""));
         assert!(prompt.contains("\u{001e}__talvik_tool_calls\n"));
         assert!(!prompt.contains("<tool_calls>"));
+        assert!(!prompt.contains("Tool result for"));
     }
 
     #[test]

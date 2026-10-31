@@ -78,8 +78,10 @@ find "$LLAMA_CPP_BUILD/bin" -maxdepth 1 \
   \( -name '*.dylib' -o -name '*.so' -o -name '*.so.*' \) \
   -exec cp -a {} "$LLAMA_CPP_INSTALL_DIR" \;
 
+LLAMA_CPP_ROOT="$LLAMA_CPP_ROOT" LLAMA_CPP_INSTALL_DIR="$LLAMA_CPP_INSTALL_DIR" TALVIK_CHAT_TEMPLATE_BUILD="$LLAMA_CPP_BUILD/chat-template" CMAKE_COMMAND="$cmake_command" bash "$(dirname "$0")/setup-chat-template.sh"
+
 echo
 echo "Talvik native llama.cpp is installed for $OS_NAME/$MACHINE_ARCH ($ACCELERATOR) at:"
 echo "$LLAMA_CPP_INSTALL_DIR"
 echo "Build Talvik with:"
-echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo build --release -p oid-console --bin talvik --bin talvikd"
+echo "LLAMA_CPP_LIB_DIR=$LLAMA_CPP_INSTALL_DIR LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 LLAMA_CPP_CHAT_TEMPLATE_REQUIRED=1 DYLD_LIBRARY_PATH=$LLAMA_CPP_INSTALL_DIR cargo build --release -p oid-console --bin talvik --bin talvikd"
