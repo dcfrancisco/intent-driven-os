@@ -132,7 +132,11 @@ fn respond(mut stream: Stream) -> io::Result<()> {
         ),
         Some("model_list") => writeln!(stream, "END"),
         Some("model_load" | "model_unload") => writeln!(stream, "OK"),
-        Some("model_pull") => writeln!(stream, "ERROR\tmock daemon does not pull models"),
+        Some("model_pull") => writeln!(
+            stream,
+            "ERROR\tmock daemon does not pull models; received {:?}",
+            request.trim_end()
+        ),
         Some("tokenize") => writeln!(stream, "OK tokenize\t0"),
         Some("cancel") => writeln!(stream, "OK cancelled"),
         Some("generate_v2" | "generate_v3") => {

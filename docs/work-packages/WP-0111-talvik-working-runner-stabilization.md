@@ -131,3 +131,12 @@ default-model auto-load was disabled. Health/readiness now derives inference
 availability from actual resident models rather than the one-time bootstrap
 flag. Manual load/unload transitions and memory-budget recovery are exercised by
 `scripts/test-talvik-resource-profile.py`.
+
+### CLI import argument correction, 2026-10-31
+
+The import command checked `--help` by consuming the first positional argument,
+then passed the remaining arguments to the importer. Normal imports therefore
+lost their source path/URL. The help check now peeks without consuming it. An
+IPC integration test runs the real client and verifies that source, model ID,
+and checksum reach the daemon. A checksum-pinned official Qwen GGUF import
+completed successfully using the corrected client.

@@ -81,7 +81,7 @@ fn print_version(json_output: bool) -> Result<(), serde_json::Error> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1).collect::<Vec<_>>();
     let (json_output, plain) = global_options(&mut arguments);
-    let mut args = arguments.into_iter();
+    let mut args = arguments.into_iter().peekable();
     let Some(command) = args.next() else {
         println!("{HELP}");
         return Ok(());
@@ -102,7 +102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             request_formatted("model_list", json_output, "models")?;
         }
         "import" => {
-            if args.next().as_deref() == Some("--help") {
+            if args.peek().map(String::as_str) == Some("--help") {
                 println!("Usage: talvik import <source> [model-id] [sha256]");
             } else {
                 import(args, json_output)?;
