@@ -1,5 +1,7 @@
 # Talvik Model Runtime
 
+Current implementation and qualification: [reports](reports/README.md), [2026-11-01 status](reports/TALVIK-STATUS-2026-11-01.md), and [manual qualification runbook](reports/TALVIK-QUALIFICATION-RUNBOOK.md). Source support, installed release and full IDE acceptance are separate states.
+
 Talvik is the provisional product identity for the repository's standalone,
 local-first model runtime. It is real runtime infrastructure: the service owns
 model discovery, import, load/unload, inference, streaming, cancellation,

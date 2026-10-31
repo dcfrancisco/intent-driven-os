@@ -1,0 +1,7 @@
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /var/folders/5b/v_dwksxn1mj6mh8d_cxsn0w40000gn/T/talvik-chat-template-build
+[ 11%] Building CXX object CMakeFiles/oid-chat-template.dir/chat-template.cpp.o
+[ 22%] Linking CXX shared library liboid-chat-template.dylib
+[100%] Built target oid-chat-template
+-- Installing: /Users/abigailbangasan/.marina/lib/./liboid-chat-template.dylib

@@ -1,0 +1,58 @@
+{
+  "source_commit": "a480958d52cc7ab53cc842a9748258a0155a05ae",
+  "installed_commit": "a480958d52cc7ab53cc842a9748258a0155a05ae",
+  "strict_clippy": "passed",
+  "format_and_diff": "passed",
+  "release_build": "passed",
+  "live_checks": "feature_acceptance_passed_final_idle_checks_interrupted_by_new_user_request",
+  "workspace": {
+    "passed": 273,
+    "failed": 0,
+    "ignored": 8
+  },
+  "native_text": {
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_adapter": {
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_recurrent": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_vision": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_profile": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0
+  },
+  "native_api": {
+    "passed": 5,
+    "failed": 0
+  },
+  "model_profiles": {
+    "passed": 8,
+    "failed": 0
+  },
+  "recovery": {
+    "passed_before_interruption": 8,
+    "complete": false,
+    "remaining_cases": 6
+  },
+  "prompt_cache": "pending_idle",
+  "live_sdk": "pending_idle",
+  "sdk_schema": {
+    "passed": 2,
+    "sdk_version": "2.48.0",
+    "live_http": false
+  }
+}

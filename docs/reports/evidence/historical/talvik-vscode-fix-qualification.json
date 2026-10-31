@@ -1,0 +1,178 @@
+{
+  "date": "2026-11-01",
+  "git_sha": "37d44a1c319a60166d62259b55842460eab4abfb",
+  "branch": "feature/qwen-coding-assistants",
+  "push": "confirmed: 512990d..37d44a1",
+  "workspace_tests": {
+    "build": "37d44a1",
+    "passed": 278,
+    "failed": 0,
+    "ignored_native": 9
+  },
+  "strict_clippy": "passed including final headroom adjustment",
+  "headroom_native_fixture": {
+    "passed": true,
+    "seconds": 48.02
+  },
+  "native_api_suite": {
+    "build": "c92a0bc",
+    "passed": 5,
+    "total": 5,
+    "report": "talvik-sampler-native-api.json"
+  },
+  "generated_code": {
+    "passed": true,
+    "function": "clamp",
+    "cases_passed": 6,
+    "execution": "AST-restricted pure function with min/max only"
+  },
+  "sse_start": {
+    "status": 200,
+    "headers_seconds": 0.016,
+    "role_seconds": 0.017,
+    "keepalive_seconds": 5.082,
+    "cancel_status": 202,
+    "passed": true
+  },
+  "cpu_comparison": [
+    {
+      "model": "qwen2.5-coder-3b-instruct-q4_k_m",
+      "prompt_tokens": 501,
+      "before_prompt_ms": 14184,
+      "after_prompt_ms": 12232,
+      "reduction_percent": 13.8,
+      "same_output": true,
+      "cache_hit_before": false,
+      "cache_hit_after": false
+    },
+    {
+      "model": "qwen3.5-4b-Q4_K_M",
+      "prompt_tokens": 585,
+      "before_prompt_ms": 34716,
+      "after_prompt_ms": 28214,
+      "reduction_percent": 18.7,
+      "same_output": true,
+      "cache_hit_before": false,
+      "cache_hit_after": false
+    }
+  ],
+  "benchmark_limits": "One serial before/after pair per model; cold caches, identical prompts/options, context 4096. Before weights resident; after includes loading, so compare prompt times separately. Not an Ollama parity claim.",
+  "sdk_streaming": {
+    "sdk_version": "2.48.0",
+    "stream_passed": true,
+    "content": " READY",
+    "role_chunk": "assistant",
+    "usage_present": true,
+    "wall_seconds": 3.08
+  },
+  "sdk_error": {
+    "passed": true,
+    "exception_type": "APIError",
+    "error_code": "generation_timeout",
+    "role_received": true,
+    "seconds": 2.782
+  },
+  "ide": {
+    "ask": {
+      "model": "qwen2.5-coder-1.5b-instruct-q4_k_m",
+      "completed": true,
+      "prompt_tokens": 656,
+      "prefill_seconds": 7.04
+    },
+    "plan_before_headroom": {
+      "build": "f9b75f3",
+      "completed": true,
+      "tools": [
+        "read_file",
+        "grep_search"
+      ],
+      "first_request_seconds": 185.354,
+      "continuation_seconds": 258.802,
+      "allocation_grew": true
+    },
+    "plan_after_headroom": {
+      "build": "37d44a1",
+      "completed": true,
+      "first_request_seconds": 224.525,
+      "continuation_seconds": 74.263,
+      "tools": [
+        "read_file",
+        "file_search"
+      ],
+      "initial_prompt_tokens": 6034,
+      "continuation_prompt_tokens": 6349,
+      "allocated_tokens": 16384,
+      "allocation_rebuilt_for_continuation": false,
+      "total_backend_seconds": 298.788,
+      "saved_session": {
+        "marker": "Talvik headroom Plan verification",
+        "found": true,
+        "session_id": "8543cb6c-e4ef-4827-ac80-bf9d8097c354",
+        "completion_recorded": true,
+        "timings": {
+          "firstProgress": 209094,
+          "totalElapsed": 299860
+        },
+        "completed_reads": 1,
+        "tool_ids": [
+          "copilot_findFiles",
+          "copilot_readFile"
+        ],
+        "has_text": true,
+        "heading_matches": false,
+        "three_numbered_steps": true,
+        "no_visible_control_tags": true
+      }
+    },
+    "coding_after_grammar": {
+      "build": "37d44a1",
+      "completed": true,
+      "first_request_seconds": 276.563,
+      "continuation_seconds": 24.413,
+      "tools": [
+        "read_file"
+      ],
+      "initial_prompt_tokens": 9320,
+      "continuation_prompt_tokens": 9477,
+      "saved_session": {
+        "marker": "Talvik verified Agent round trip",
+        "found": true,
+        "session_id": "75afcbae-a8b8-4945-9732-f0bc2b50b2d8",
+        "completion_recorded": true,
+        "timings": {
+          "firstProgress": 287457,
+          "totalElapsed": 301838
+        },
+        "completed_reads": 1,
+        "tool_ids": [
+          "copilot_readFile"
+        ],
+        "has_text": true,
+        "heading_matches": true,
+        "three_numbered_steps": false,
+        "no_visible_control_tags": true
+      }
+    },
+    "build_request": {
+      "completed_response": true,
+      "elapsed_seconds": 329.747,
+      "terminal_tool_invocations": 0,
+      "build_executed": false,
+      "acceptance": "failed: narration only",
+      "preset_followup_commit": "672c550",
+      "preset_fix_live_verified": false
+    },
+    "user_build_failure": {
+      "model": "qwen3-1.7b-q4_k_m",
+      "mode": "Talvik Coding",
+      "completed_transport": true,
+      "elapsed_seconds": 329.747,
+      "terminal_invocations": 0,
+      "outcome": "failed task: prose promised a build, no command executed",
+      "instructions": "saved request used the older cached Coding instructions; updated action instructions were not included",
+      "qualification": "Read-only tool checks do not qualify build/edit/terminal reliability"
+    }
+  },
+  "release_status": "stabilization milestone; cold CPU latency and broader IDE/platform qualification block RC",
+  "recurring_tests": "paused"
+}

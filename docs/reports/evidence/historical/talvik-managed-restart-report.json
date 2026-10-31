@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "old_pid": 3646,
+  "new_pid": 6474,
+  "ready_after_seconds": 2.83,
+  "subsequent_completion": true,
+  "build": {
+    "component": "talvikd",
+    "dirty": false,
+    "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  }
+}

@@ -1,5 +1,7 @@
 # ADR-0035: Execute Embedded Chat Templates
 
+Implementation and qualification evidence: [2026-11-01 report](../reports/TALVIK-STATUS-2026-11-01.md), [native logs and provenance](../reports/evidence/manifest.json). Commit `5d5925b` implements this decision; live IDE qualification is a separate pending gate.
+
 - Status: Accepted
 - Date: 2026-11-01
 - Related: ADR-0025, ADR-0026, ADR-0031, ADR-0033; WP-0098

@@ -1,0 +1,31 @@
+{
+  "model": "qwen3-1.7b-q4_k_m",
+  "tool_call": {
+    "function": {
+      "arguments": "{\"path\":\"/tmp/check.txt\"}",
+      "name": "read_file"
+    },
+    "id": "call_http-79182-1793461732549292000_0",
+    "type": "function"
+  },
+  "first_call_seconds": 6.099,
+  "continuation": {
+    "content": "The content of /tmp/check.txt is: TALVIK_AGENT_OK.",
+    "role": "assistant"
+  },
+  "continuation_metrics": {
+    "cache_hit": true,
+    "context_tokens": 325,
+    "generation_time_ms": 1526,
+    "inference_time_ms": 4612,
+    "latency_ms": 4612,
+    "model_load_time_ms": null,
+    "prompt_eval_time_ms": 3086,
+    "prompt_evaluation_time_ms": 3086,
+    "prompt_tokens_per_second": 100.1296176279974,
+    "reused_prompt_tokens": 3,
+    "time_to_first_token_ms": 3086,
+    "tokens_per_second": 10.48037197617442
+  },
+  "passed": true
+}

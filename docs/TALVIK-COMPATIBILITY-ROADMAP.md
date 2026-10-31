@@ -1,5 +1,7 @@
 # Talvik Compatibility and Differentiation Roadmap
 
+Status update, 2026-11-01: [current report](reports/TALVIK-STATUS-2026-11-01.md). Native embedded Jinja execution is committed in `5d5925b`; full VS Code build execution, current full-request latency parity and cross-platform RC gates remain open. The implementation slice below records the earlier roadmap baseline, not a replacement for current per-build evidence.
+
 Date: 2026-10-29
 
 ## Product target

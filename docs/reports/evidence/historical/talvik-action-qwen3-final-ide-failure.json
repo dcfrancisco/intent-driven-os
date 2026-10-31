@@ -1,0 +1,1 @@
+{"session_id": "f6240518-9785-4613-a8d4-8f3244470d49", "model": "customendpoint/Talvik/qwen3-1.7b-q4_k_m", "complete": true, "timings": {"firstProgress": 282225, "totalElapsed": 356675}, "tool_ids": [], "terminals": [], "concise_preset_loaded": true, "passed": false}

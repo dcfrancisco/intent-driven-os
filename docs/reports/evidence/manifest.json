@@ -1,0 +1,582 @@
+{
+  "captured_date": "2026-11-01",
+  "timezone": "Asia/Manila",
+  "note": "Historical evidence is not requalification of 5d5925b. Credentials were redacted; hashes identify the stored sanitized copies. Logs preserve failures and warnings. Native unit log predates removal of superseded synthetic tests; use workspace totals for the final non-ignored suite.",
+  "files": [
+    {
+      "path": "evidence/historical/cpu-prompt-apple-blas.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "cb68c8ac2af534f8b6ef3cfad9225b482f49686b1cb54ad30c2c7c1eabc901ac"
+    },
+    {
+      "path": "evidence/historical/cpu-prompt-baseline.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "ea35c6f6b419d23734767034f6de5ac34ecf78dc67e64552708c8cca431517c6"
+    },
+    {
+      "path": "evidence/historical/cpu-prompt-benchmark-request.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e67b1c0dedf69b94457d119a3c92d8e914d10c20c9161bea98ee4a31b634ec5e"
+    },
+    {
+      "path": "evidence/historical/native-library-change.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "d4d8f41abbe4c20a7fe9fa66a8c0645b4661064952b85851cc2765978fc832f0"
+    },
+    {
+      "path": "evidence/historical/oid-console-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "905e5bf75c45ed371cae21aaf638013aa43ef79fe2cfb199b99308cfaa3cf2e7"
+    },
+    {
+      "path": "evidence/historical/oid-console-final-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "c9d55a8240f9a036ab784f34d174f973f058efd9380fc04585a37ff38e53620a"
+    },
+    {
+      "path": "evidence/historical/oid-console-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "622d90946dfb0f0337abe8f56cf91ccf136a190f5bc80348b1f70265b47b4739"
+    },
+    {
+      "path": "evidence/historical/oid-console-terminal-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "def38f6d037f72557a7ae254f302d0ffa25f053958731aa7226a997e3f045ca4"
+    },
+    {
+      "path": "evidence/historical/oid-console-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9df84049753402368f11c136c6ba63be6c0ccb0ce75c70f3834bfb7daaa547cf"
+    },
+    {
+      "path": "evidence/historical/talvik-action-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "53197f79110dafe53336d5d207400b0aa26e8caf42f5adb9bcfafd66e82cd672"
+    },
+    {
+      "path": "evidence/historical/talvik-action-first-ide-build.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9cdac52b0ba8eb3724c758e49bfda42c67fed6e71a7cc5eff18ac3eac74a0034"
+    },
+    {
+      "path": "evidence/historical/talvik-action-installed-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "70a8bb21d47076c15ec91cb749010be782bdd88015525bce3ee2a7837376f96c"
+    },
+    {
+      "path": "evidence/historical/talvik-action-native-api-final.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "4ea4a02d381fbc2fba5e897250fe133159de0bf4b3952a9342eeb735b09afd16"
+    },
+    {
+      "path": "evidence/historical/talvik-action-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "68540004256d8dc0e66364b05187dddbdf631af8374386ce258a8890cb3a4905"
+    },
+    {
+      "path": "evidence/historical/talvik-action-order-rejected-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "8c0bf02dcf1050400551f9c5eac75043e12f7941534a2ae8ef071a9d1c82e3ff"
+    },
+    {
+      "path": "evidence/historical/talvik-action-qwen3-final-ide-failure.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "336ef56f72d92f2d2522b078d04c56e10041f923a4d91c2a31d4f0b691431f6f"
+    },
+    {
+      "path": "evidence/historical/talvik-action-qwen35-selection.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "76ec2b55d647aa68166933798e440202df370737c024910a7c790462bcc90155"
+    },
+    {
+      "path": "evidence/historical/talvik-action-release-build.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "6723bfd6cd1e208d37dd2afa0b0a60b88a7f270eba791d7eed9ea64bcd254679"
+    },
+    {
+      "path": "evidence/historical/talvik-action-selection-first-pass.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "519ad3a88a383f66094d0663c1283f1f6567e11976a1b31627ebb8cc072f0103"
+    },
+    {
+      "path": "evidence/historical/talvik-action-selection-regression-final.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "37a66c09f394de38dda11191beab912cace7e0f20219ab5632945f761baa5d3b"
+    },
+    {
+      "path": "evidence/historical/talvik-action-selection-regression.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "0ea936cbada8205adb6541e6b1f3a02dd7334b74e686b492d049afe92d7aee7e"
+    },
+    {
+      "path": "evidence/historical/talvik-action-unit-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "d12d3479bf9e2fc527e58e569e79d0018fa7528181f32932dd92908d823ff64d"
+    },
+    {
+      "path": "evidence/historical/talvik-action-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "c109afc2ebd7ec677ff3a3df095b1e8f342d92d5d6d80d35e00d226a2486493b"
+    },
+    {
+      "path": "evidence/historical/talvik-adaptation-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "f3b5de93da1fd6e5ab9bedc1f8ac4627ae6bc40f24f7b091cbd26a847c3d6655"
+    },
+    {
+      "path": "evidence/historical/talvik-adaptation-prompt-cache.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b9acf313a5517b7da03c3e65a3e9fa5860a9dbe47c8fb7ebdb47157a29970a04"
+    },
+    {
+      "path": "evidence/historical/talvik-adaptation-recovery.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9cea17653c882a0cd390740195f849906c97213b253932c1663114067663146b"
+    },
+    {
+      "path": "evidence/historical/talvik-api-build-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "a9b34df303548bf49c502720717c247a1254d2016f9713e911b7c64bcd1a0b1f"
+    },
+    {
+      "path": "evidence/historical/talvik-api-rc-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e1f55644bf7e6be8020d2178c8d4e72c3f74ab05657e40b8f56acd76047fcb9e"
+    },
+    {
+      "path": "evidence/historical/talvik-api-recovery-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "dcb62a5a6dd0422140b3361d148789e51c728bc4316eae136f175c6ff50cce47"
+    },
+    {
+      "path": "evidence/historical/talvik-api-recovery.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "4f6a6a685694f79949f2625f9241985f163f1939248e62961e7ecbe625ab25f6"
+    },
+    {
+      "path": "evidence/historical/talvik-archive-smoke.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b42597649b9bf4b58c259c495e0597ff105815e3ac193fdf1bba7a84d8d36b6c"
+    },
+    {
+      "path": "evidence/historical/talvik-attention-prefix-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9cff3373e7d62b4129ce02a5298523d78af5d72d63ec74e8971dddd925bca1d4"
+    },
+    {
+      "path": "evidence/historical/talvik-build-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "f777328dd0cd23849a98d10c52036c880f93a98431a4ddde0385662a14ad4e3f"
+    },
+    {
+      "path": "evidence/historical/talvik-build-tool-selection.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b81d40d9440627bb26a4a58a391bcd196a0ef4ec8d011f5231ddbc6914ba0763"
+    },
+    {
+      "path": "evidence/historical/talvik-checkpoint-api-benchmark.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e1108157d0af9971e553fb603b54810de1abcd95b99141e8e972c553388f7dc1"
+    },
+    {
+      "path": "evidence/historical/talvik-checkpoint-api-benchmark.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b32ef7ace39a92d21a52096ac7f80d70808b6b472f6a64788510ef2cfc5625e3"
+    },
+    {
+      "path": "evidence/historical/talvik-cli-client-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "0ec62d43c62ad101064f67ba2fbccb15937c3c6cb83c21a6dd8319f3d86dfd58"
+    },
+    {
+      "path": "evidence/historical/talvik-cli-console-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "52f113135d8fc52cc5f93e497c17471ff6a186179c27fcfd6490766cd48fd0b4"
+    },
+    {
+      "path": "evidence/historical/talvik-cli-terminal-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "05733e1bc533248678f5e872f83e33291d069c20994eece50be617ac7cbc6627"
+    },
+    {
+      "path": "evidence/historical/talvik-cli-ui-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "2c7097c6a9577ac8397d2349a5ce892f07b08c44b8f125184411275c884de270"
+    },
+    {
+      "path": "evidence/historical/talvik-coder-format-diagnostic.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b3d76d97122b872b5a16b67e95d940daf572113a0a1cba9bed9c54e748c3a0ac"
+    },
+    {
+      "path": "evidence/historical/talvik-device-after.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "b20d4eb4ea6f88eb9f34b6503faba5acf9815ee19aee1610b4f8964d733dc51d"
+    },
+    {
+      "path": "evidence/historical/talvik-device-before.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "21a03f939a82ad87fbe0a5db8b1de3322bdc3b4933770f3c299c26953bc288ff"
+    },
+    {
+      "path": "evidence/historical/talvik-final-api-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "74eab88920a64599d7b24921c20d80fab4d51f5d5177985d303bd71e81209068"
+    },
+    {
+      "path": "evidence/historical/talvik-generated-code-check.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "49e21ae51fa7fb4327239c95be6c767d5d5f604835a33679f2f321c5457b1db7"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-agent-check.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "7749bdce7b17da78b8f23ca748d19ba904b12fc11c6148000849dceb250c0932"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-coding-verified.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e08ab4c9685599375bac6be2af2d63f1682cdb774bfdd0a316176072f780f6d2"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-payload-profile.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "63c7579ff2ac3461629c3f4602142ea398775142efebf3c12eaf9e93929c8586"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-payload-profile.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "56c381c77a1d8dc1db9ed8ce0297ac1e85b269c5bdd35e99617b35598270c591"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-plan-headroom.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "a7600a763dd72fbd1f238169e84cdf07f3d309476ee35fb4d3a42052660e9544"
+    },
+    {
+      "path": "evidence/historical/talvik-ide-sse-start.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "1d88843fe36545a49afd6fd15290926322a84755bfc7ca7499fd03f54bb2ee13"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-baseline.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "3300eb73c262b41ba93149ba747d83f932b450ed711379eff0eda160e675c007"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-final-prompt-cache.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "ec656c8c1108b6fb4deb874696cec0a2ca9c2d037630728b35719c6d8d14a9cb"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-installed-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "098bccb533c4227488187ef1b86de8f6ae9a50b235e849b0c1a415a8c0bdee32"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "1814d815d566ee9d312b0a135fa55aab19658cc5121684b80331be52212b4a83"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "31fcb4699fcfff22c6657b56db9c4e53d5ea68429d351f15bc0fc1ff14dc2d36"
+    },
+    {
+      "path": "evidence/historical/talvik-latency-recovery.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "6219b933a4dff16c21200abb787c23e1f0ef0c929f03b6783d0701ad4e0099be"
+    },
+    {
+      "path": "evidence/historical/talvik-loaded-profiles-installed-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e674ef7f777a1e29fd43f7197d3858dd241a5a462489873f2ba6ee23c8993e2a"
+    },
+    {
+      "path": "evidence/historical/talvik-loaded-profiles-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "ffbe2f0f224d317b16267dabe14be21b778f435167f900fd509cf6f9ba7d8d30"
+    },
+    {
+      "path": "evidence/historical/talvik-managed-restart-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "0b052ed8019bcd5513388797d0d09a69edd6c1d8f0ab27618f00118adad5eb44"
+    },
+    {
+      "path": "evidence/historical/talvik-memory-latency-bench.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "c1a88558bdd80665b6d880cfe6de7e0ff46afbebc1221b97613fe68e286a87c6"
+    },
+    {
+      "path": "evidence/historical/talvik-milestone-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "828617abe2cfde3c60eba6da512799dd87634cc556f00e903fbf5d8c1eb28890"
+    },
+    {
+      "path": "evidence/historical/talvik-model-adaptation-installed-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "e0f6dce3674d35d74f2f99a42f1ac248318214a287a98acf19b2ff12e2ab4984"
+    },
+    {
+      "path": "evidence/historical/talvik-model-adaptation-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "76e3eeec34102272088162098a8f60c7b57bfea1c690483128284e139d72cca4"
+    },
+    {
+      "path": "evidence/historical/talvik-ollama-same-model-comparison.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "3fb46df384d732cec49e849c312fe6d34b15db8fd931d3caf1705e2617c39379"
+    },
+    {
+      "path": "evidence/historical/talvik-openai-sdk.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "4b8f0ed47735de514413f41950764caff59c2b5b746161332eb33c2503240ee1"
+    },
+    {
+      "path": "evidence/historical/talvik-profiles-acceptance.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9714384ae7bc794a8f58e6ab1c10dd2d07bff2aebfeed2fc48912b37ebdc2f99"
+    },
+    {
+      "path": "evidence/historical/talvik-profiles-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "66821e8b912274e286b4d23305450d6ab79c0c17cc2c3442d5c4910a18ac3ac3"
+    },
+    {
+      "path": "evidence/historical/talvik-profiles-recovery-interrupted.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "dc9adc42356bb23c02c379a7b9e8b2d77aa5cdfdcdc3729052c82827a98fdfbf"
+    },
+    {
+      "path": "evidence/historical/talvik-profiles-recovery.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9af0b46c7ea8ca6cba9c1d41d8c7a19e1c3a15374558124579edc90f4e58d5b7"
+    },
+    {
+      "path": "evidence/historical/talvik-profiles-sdk-schema.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "29dd14a557f93745d1a24bf38be74c637cada31cc110e9f8f27f5f97b1807d11"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-cli-terminal.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "8e53aa8c5c0887a05e60f34ca3fdb635220ac7e3d041e6e75afa598a41acf5c9"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-console-terminal.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "cad36b0bc2c634b20d82b142b9898fb02c716df6320f63abf1f390c3a9e9b981"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-install-smoke.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "bdeb5da9af496a60848c85932659ec7377614bfcb794d9ea37cd5201e492bf78"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-native-api-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "476c95e75697d8d8ea81d5293b00406c7e57db52638beef56bbea6c09fc73143"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-native-api.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "23360d283236e8708cb001f75261e1d80e6195bb952b8197531646b170d86632"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-native-fixtures.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "5ff6e0d8b02b51451432ca7c69d0a937147df116af9e35ef3eef0873c2d80a34"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-release-build.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "d738cdb6fe3f9ed825b47e5d9ee2b0f7b1f29b6947563597689d7dac68eac309"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-strict-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "c170500dc5ce6eb5de0977a3bc0642ae2928834a4da095d7f68f4d4d993dd769"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-vision-fixture.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "39b70eaa1d158df2f989314de03a8e62695b143e8ab8452a6feb1989842cf594"
+    },
+    {
+      "path": "evidence/historical/talvik-rc-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "cdc3e6c086dc02e89d86ff9977737284cdde584532a5d9cdd2eb2bdc8e765141"
+    },
+    {
+      "path": "evidence/historical/talvik-recurrent-cache-fixture.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "396f638590db52ae0196b8cd09f84d304d437cdf5ad6614f1f8f1e9aa6fc9096"
+    },
+    {
+      "path": "evidence/historical/talvik-report-snapshot.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "172f2e896e280fd4dffa7aa934b5c05b3695852b43186e1ef3a44de7addb056d"
+    },
+    {
+      "path": "evidence/historical/talvik-resource-profile-daemon.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "859a478e8ba487dca84c6b5b708860f324c0051e83c35fa59924137bdfb7dfd4"
+    },
+    {
+      "path": "evidence/historical/talvik-resource-profile-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "38b4481f889bdca8b108a175c17405834cd87499ea4c15f110913f366a4abcef"
+    },
+    {
+      "path": "evidence/historical/talvik-resource-profile.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "96a3b356bc7a4e9d6eb08b4347499dd17e01bab5e00e66244fe4a13640f871ca"
+    },
+    {
+      "path": "evidence/historical/talvik-sampler-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "42f4ab28685fdfcb56797c41d809dd2b93e7e72a980246e1fb3dc33631d25454"
+    },
+    {
+      "path": "evidence/historical/talvik-small-coder-tool-check.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "dddc70d44372d5be9fcf82e798d33749dba5c72079961bef85b35863c13362b8"
+    },
+    {
+      "path": "evidence/historical/talvik-strict-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "a3020e5e5383ecd9e83b52610261d7a11b5c99584685f38f1ba67275725286c2"
+    },
+    {
+      "path": "evidence/historical/talvik-test-report.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "906ebd8d002214c838872c546288d1c2308c2936ffb98cd783ea0cba1d0c7dd3"
+    },
+    {
+      "path": "evidence/historical/talvik-thread-benchmark-native.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "deef4016196f86860dea5d9fdbf91a329d42a0fdbfa15cbeba1cec5a673c339f"
+    },
+    {
+      "path": "evidence/historical/talvik-ui-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "aa101c5d20dbb69d7e534c8a6f9658b6914523c9de9aec217bd42c8f2f54a0c3"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-final-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "0612f7062fcfa21817f9f4912b9d98a9dce8a63918be2621d0629f81982134ea"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-fix-qualification.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "a49e28880db4b716608c07cd9047b39354561e3d6f45dba5a4c19b3af441a4dd"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-grammar-native.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "1c771407009b7ddcce271837e6ca721f175ecaddbddd7bc02ce25a7c050d792a"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-headroom-clippy.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "a9795dabd7bd907ebd260188e68b0ed206bb710a0f8e15657fb3440052622cfe"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-headroom-native.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "9ca34237111c27a53ea57fd95218fc2f7dcc1216b53277db1bb165b65e02d42a"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-installed-identity.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "d839cfa58226a6eb025e1b06a5b9b673db938be90bf74d218f62bd94a8b43c6a"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-native-api.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "6e5ba210e45d2b7d9da91fea7ae303d06e565f8b412c8eeeded039d273d7d59d"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-release-build.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "5b1ceae0d40fb9762cf20aeb3293068480142f7b61aef111406ca3bd6cb1aaec"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-sdk-error.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "31a01bef4771f4e9604dd6acb11e5828144a163763a824be422772a1bb8c8f22"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-sdk-live.json",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "62201b8cdf7d2ef03ad563db07373f9373bdb28ff0d91bfcc15358548ab3c31f"
+    },
+    {
+      "path": "evidence/historical/talvik-vscode-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "5579ec12cb30f5fe5f7862e6ee54a76c67122a583750fe08fad228b3d89ae88b"
+    },
+    {
+      "path": "evidence/historical/talvik-workspace-tests.log",
+      "origin": "local qualification artifacts; original build identity applies",
+      "sha256": "c9403f53caf5109e805aa956193b8dc685c94dd3c59b78f4b4aafd2d6f6de36c"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-attention-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "c9373e412ea6e0705cf9826f91f1a417465296c23d74645eb27ee42992a88e05"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-bos-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "3d913297e1ab597744a757d5bda886988e4644e043c8c3e492362d46a43cf6b9"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-clippy.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "173081df396aa0eba6eb0a45eaa2ffcea3b23b5541645b5ddb1fec0192b89538"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-grammar-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "228e26b0e316bd5b423676fde17b9e2074e8dbdd0ea08c682a6b16e1884a47ef"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-native-build.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "5441f318ee65798178b57b923dd7b99433101c9bd4f49ec710cd2e09d4b7ecfb"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-qwen3-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "c4844efca9a78fb39271e4e1ed28cd92eed226799236e2f4e18f339d4077505a"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-qwen35-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "ac1675d385cbb29e40e715c9909d3fb3841ce12741ea0e01c03f7c043eccb654"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-recurrent-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "cfe80943466b8f178373c0eb30ca814690a066a80eb13fe060ac0b82ac189646"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-unit.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "4aa1b6f2fa16d4b8ac34b34f68ea17d90696b8f918599080ffcaa5d55f225a9c"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-vision-native.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "f91c4847c5bf8e6c9d040e83ce6227e4fe68b8c2e03cb2acfd5d9df85f67e569"
+    },
+    {
+      "path": "evidence/native-jinja/talvik-jinja-workspace.log",
+      "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
+      "sha256": "df5aaa00dcca9b7566a04f0b20695833b7eb287a7b707a912464d742e040014b"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "kind": "selection-only; no command executed",
+  "model": "qwen3-1.7b-q4_k_m",
+  "seconds": 10.272,
+  "message": {
+    "content": null,
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"command\":\"mvn clean install\",\"explanation\":\"Building the project using Maven to compile, package, and install the code into the local repository.\",\"isBackground\":false}",
+          "name": "run_in_terminal"
+        },
+        "id": "call_http-91097-1793482988936304000_0",
+        "type": "function"
+      }
+    ]
+  },
+  "finish_reason": "tool_calls",
+  "metrics": {
+    "cache_hit": false,
+    "context_tokens": 448,
+    "generation_time_ms": 6389,
+    "inference_time_ms": 10246,
+    "latency_ms": 10247,
+    "model_load_time_ms": null,
+    "prompt_eval_time_ms": 3856,
+    "prompt_evaluation_time_ms": 3856,
+    "prompt_tokens_per_second": 104.51244813278008,
+    "reused_prompt_tokens": 0,
+    "time_to_first_token_ms": 3858,
+    "tokens_per_second": 7.042350857656925
+  },
+  "selected_terminal_tool": true,
+  "build_only_scope_passed": false,
+  "scope_failure": "Selected mvn clean install; did not honor the requested build-only/no-tests scope"
+}

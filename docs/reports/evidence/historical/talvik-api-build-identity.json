@@ -1,0 +1,56 @@
+{
+  "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+  "source_clean": true,
+  "client": {
+    "component": "talvik",
+    "dirty": false,
+    "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "daemon": {
+    "component": "talvikd",
+    "dirty": false,
+    "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "http": {
+    "component": "talvikd",
+    "dirty": false,
+    "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "archive": {
+    "component": "talvikd",
+    "dirty": false,
+    "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "archive_sha256": "c68d0cfa8ff17c0a9bc6b7480ac4b04fe3390fea06d1d600aded1a07465deef2",
+  "installed_binary_sha256": {
+    "talvik": "1ac6d875d1c34992578aebc65d7127ab8fb520f325681cdcca2805554690242d",
+    "talvikd": "c3f318708e83c52652c2260570710124e095ff938c0b603b38849916bfca3e16",
+    "oid-console": "f16dfb05c57019a85307190ee9cebd7343a0fd127377fb2d415ec398b3cb3d1e",
+    "oid-marina-chat": "5ae3570f2c3f6c21cf1834c692d950af9b6aa91c1adae8aaa1555212607bc8b1"
+  },
+  "managed_daemon_pids": [
+    6474
+  ],
+  "archive_has_no_models_or_tokens": true,
+  "compiler": "rustc 1.88.0 (6b00bc388 2025-06-23)"
+}

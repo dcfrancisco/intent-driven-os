@@ -1,0 +1,52 @@
+{
+  "source_commit": "6f3f9bdb4c3813716928476c4fca011fe5851eab",
+  "installed_commit": "6f3f9bdb4c3813716928476c4fca011fe5851eab",
+  "installation": "installed_clean_release",
+  "vision_fixture": "passed",
+  "live_api_checks": "passed",
+  "workspace": {
+    "passed": 266,
+    "failed": 0,
+    "ignored": 6
+  },
+  "text-fixtures": {
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0
+  },
+  "grammar-fixture": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0
+  },
+  "recurrent-fixture": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0
+  },
+  "strict_clippy": "passed",
+  "format_and_diff": "passed",
+  "clean_release_build": "passed",
+  "native-api": {
+    "passed": 5,
+    "failed": 0
+  },
+  "recovery": {
+    "passed": 14,
+    "failed": 0
+  },
+  "vision-fixture": {
+    "passed": 1,
+    "failed": 0
+  },
+  "prompt-cache": "running",
+  "prompt_cache": {
+    "passed": 4,
+    "failed": 0
+  },
+  "final_service": {
+    "active_requests": 0,
+    "pending_requests": 0,
+    "ready": true
+  }
+}

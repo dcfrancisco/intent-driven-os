@@ -1,0 +1,44 @@
+{
+  "version": {
+    "component": "talvik",
+    "dirty": false,
+    "git_sha": "37d44a1c319a60166d62259b55842460eab4abfb",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "installed_binaries": [
+    {
+      "binary": "talvikd",
+      "sha256": "ce9c4090c49db078fd645de3e22f9309bfaecf432f327fb700f9d8bc961bf582",
+      "matches_release": true
+    },
+    {
+      "binary": "talvik",
+      "sha256": "74077ac6b94c37f4403d9d4301b3e9e2a1b3a27089731f3f99d92066e42e4531",
+      "matches_release": true
+    },
+    {
+      "binary": "oid-console",
+      "sha256": "dda6f60b760ede001858ec1014b88bdd8d5c4dbbb0f5976715e588b55b1358f9",
+      "matches_release": true
+    },
+    {
+      "binary": "oid-marina-chat",
+      "sha256": "ad8dd60827987b303d6509bf3a5beaefe5a78c3fff3464a335e1b39c5a72c445",
+      "matches_release": true
+    }
+  ],
+  "native_backend": "CPU; real CPU device selected, auxiliary BLAS excluded from device selection",
+  "ready": {
+    "inference_ready": true,
+    "status": "ready"
+  },
+  "active_requests": 0,
+  "pending_requests": 0,
+  "daemon_pids": [
+    "91097"
+  ]
+}

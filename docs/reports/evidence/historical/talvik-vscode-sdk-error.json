@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "exception_type": "APIError",
+  "error_code": "generation_timeout",
+  "role_received": true,
+  "seconds": 2.782
+}

@@ -1,5 +1,7 @@
 # Work Packages
 
+Current Talvik qualification and next gates: [reports index](../reports/README.md) and [2026-11-01 status](../reports/TALVIK-STATUS-2026-11-01.md).
+
 Work Packages (WPs) turn architectural decisions into reviewable bodies of design work. They are documentation and planning units; a WP does not authorize implementation outside its stated scope.
 
 ## Initial sequence

@@ -1,5 +1,11 @@
 # WP-0098: Talvik Native Inference Performance and Worker Isolation
 
+## Current qualification checkpoint — 2026-11-01
+
+Implementation `5d5925b` is committed and pushed. The installed CLI still identifies `6d323e7`; the integrated new release and actual IDE build-only acceptance are pending. The native template change passed 279 workspace tests (10 ignored), focused strict Clippy and seven real-model fixture invocations, including both tool-template layouts. These are not full IDE or cross-platform RC qualification. Recurring soak testing has been deleted; continue manually.
+
+See the [current report](../reports/TALVIK-STATUS-2026-11-01.md), [evidence inventory](../reports/evidence/manifest.json), and [qualification runbook](../reports/TALVIK-QUALIFICATION-RUNBOOK.md). Entries below preserve implementation history; manual tool-order/declaration heuristics were superseded by ADR-0035. The current checkpoint marker method also supersedes the earlier partial-conversation renderer description. Worker process isolation, cold IDE latency and admitted cross-model cache retention remain open.
+
 ## Purpose
 
 Make interactive local inference responsive and bounded without changing the

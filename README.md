@@ -1,5 +1,7 @@
 # Open Intelligence Desktop (OID)
 
+Current Talvik implementation, test evidence and RC blockers are recorded in the [reports index](docs/reports/README.md). The [2026-11-01 status](docs/reports/TALVIK-STATUS-2026-11-01.md) distinguishes committed source from installed binaries and live IDE acceptance.
+
 OID is a Linux-first AI desktop/OS. The long-term product lets a user prompt
 the computer to inspect its state, make a plan, operate through bounded skills,
 verify the result, and recover safely when something fails.
@@ -66,42 +68,47 @@ See the [Talvik compatibility roadmap](docs/TALVIK-COMPATIBILITY-ROADMAP.md)
 for the declared OpenAI/Ollama targets, remaining build gates, and
 differentiating runtime work.
 
-The directory must contain the native `libllama` library. If it is not set or
-does not contain a usable library, the backend reports unavailable.
+The directory must contain the matching native llama.cpp libraries. Tool-template
+execution also requires the private `oid-chat-template` library built by the
+platform setup helpers. If the core native library is missing, the backend
+reports unavailable; missing template/parser support must not be advertised as
+working tools. See [ADR-0035](docs/adr/0035-native-embedded-chat-templates.md).
 
 ## IDE access
 
-Create a local Talvik access token:
-
-```bash
-TOKEN="$($HOME/.marina/bin/talvik auth token create ide 2>/dev/null)"
-```
-
-Start Talvik and the dependency-free IDE bridge:
-
-```bash
-$HOME/.marina/bin/talvikd
-python3 scripts/marina-openai-proxy.py
-```
-
-Configure an OpenAI-compatible IDE with:
+Use Talvik's native HTTP API for IDE access. It shares model state, scheduling
+and authentication with the local client. Configure an OpenAI-compatible IDE
+with:
 
 ```text
 Base URL: http://127.0.0.1:11435/v1
-API key:  the printed Talvik token
+Chat Completions URL, when requested: http://127.0.0.1:11435/v1/chat/completions
+API key: a private local Talvik access token
 ```
 
-The bridge supports `/v1/models`, `/v1/chat/completions`,
-`/v1/completions`, bearer authentication, multi-turn text messages, and SSE
-stream responses. The token authorizes access to Talvik; it is not a remote
-provider API key. Remote BYOK provider credentials are not implemented yet.
+Create a local token with `talvik auth token create ide` and store it through
+the IDE's secret picker. Do not commit it. The token authorizes local Talvik
+access; it is not a remote provider credential.
 
-Talvik also has a native HTTP API. Enable it explicitly on loopback with
-`TALVIK_HTTP_ADDR=127.0.0.1:11434 talvikd` on Linux/macOS; Windows uses
-`127.0.0.1:11435` because its local IPC transport uses `127.0.0.1:11434`.
-The HTTP API uses the same runtime service as the local transport and requires
-a bearer credential by default. The Python bridge is kept for migration and
-compatibility testing, not as the production service boundary.
+If Talvik is already managed by a service manager, use that instance and its
+configured HTTP address. Do not start a second daemon or the Python proxy on
+the same port. For a new foreground setup with no running instance:
+
+```bash
+TALVIK_HTTP_ADDR=127.0.0.1:11435 "$HOME/.marina/bin/talvikd"
+```
+
+The native API includes `/v1/models`, Chat Completions, other declared inference
+routes, bearer authentication and SSE streaming. See the exact supported
+subset in [OpenAI compatibility](docs/TALVIK-OPENAI-COMPATIBILITY.md); endpoint
+availability is not full compatibility or Agent qualification. The Python
+bridge is retained for migration/testing and is not required for native HTTP.
+
+Use the [VS Code presets](docs/examples/vscode/README.md) for the local Coding
+and read-only Plan configurations. A tool-capable model returns calls; VS Code
+executes them under its own approval flow and sends results back. Talvik does
+not execute IDE commands. The [current report](docs/reports/TALVIK-STATUS-2026-11-01.md)
+records the pending full IDE acceptance and latency gates.
 
 ## GitHub releases
 

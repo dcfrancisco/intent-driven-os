@@ -1,0 +1,5 @@
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+   Compiling oid-console v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/console)
+   Compiling oid-llama-cpp-adapter v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp)
+   Compiling oid-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime)
+    Finished `release` profile [optimized] target(s) in 18.57s

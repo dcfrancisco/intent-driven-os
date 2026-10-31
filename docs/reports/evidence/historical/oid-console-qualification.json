@@ -1,0 +1,32 @@
+{
+  "source_commit": "383a063662f0815b541b94fa68f1ab5b28fbd380",
+  "installed_binary": "/Users/abigailbangasan/.marina/bin/oid-console",
+  "platform": "Intel macOS",
+  "daemon_restarted": false,
+  "workspace_tests": {
+    "passed": 258,
+    "failed": 0,
+    "ignored": 5
+  },
+  "final_console_tests": {
+    "passed": 133,
+    "failed": 0
+  },
+  "installed_terminal_tests": {
+    "passed": 7,
+    "failed": 0
+  },
+  "strict_oid_console_clippy": "passed",
+  "format_check": "passed",
+  "preview": "Actual installed console session connected to the local daemon, rendered from its terminal output.",
+  "ui": [
+    "dot prompt",
+    "quiet header",
+    "single pinned state/model footer",
+    "width-aware input and footer",
+    "Unicode editing",
+    "native command terminal handoff",
+    "terminal restoration on normal/handled exits",
+    "plain/dumb/no-color support"
+  ]
+}
