@@ -238,3 +238,16 @@ or Vulkan registry. No backend becomes qualified from discovery alone. Tests
 cover BLAS/CPU accelerator rejection and CPU/GPU classification. Performance
 must be compared on identical prompts and weights; BLAS library presence alone
 is not evidence of faster inference.
+
+### Attention prefix reuse correction, 2026-10-31
+
+Attention models now reuse the longest exact token prefix, including changed
+or shortened prompts, rather than requiring the entire previous prompt to be
+a prefix of the next request. At least the final input token is re-evaluated
+for fresh logits. Native sequence trimming and maximum-position validation
+remain mandatory; failure clears state. No additional contexts or cache
+buffers are retained. Recurrent models remain checkpoint-only, and disabled
+caching never reuses state. Tests cover divergent, shorter, extended, unrelated
+and context-mismatched inputs, plus native cold/warm output equality and
+reset/cancellation recovery. This does not prevent another model or a short
+utility request from replacing the single retained context.

@@ -542,11 +542,15 @@ fn compatible_prompt_reuse_len(
     cached: &PersistentContext,
     prompt_tokens: &[i32],
     context_size: u32,
+    strategy: oid_model_runner::CacheStrategy,
 ) -> Option<usize> {
-    if cached.context_size != context_size || prompt_tokens.len() < 2 {
+    if strategy == oid_model_runner::CacheStrategy::Disabled
+        || cached.context_size != context_size
+        || prompt_tokens.len() < 2
+    {
         return None;
     }
-    if !cached.checkpoints.is_empty() {
+    if strategy == oid_model_runner::CacheStrategy::Recurrent {
         return cached
             .checkpoints
             .iter()
@@ -557,9 +561,17 @@ fn compatible_prompt_reuse_len(
             .map(|checkpoint| checkpoint.tokens.len())
             .max();
     }
-    (cached.prompt_tokens.len() <= prompt_tokens.len()
-        && cached.prompt_tokens == prompt_tokens[..cached.prompt_tokens.len()])
-        .then(|| cached.prompt_tokens.len().saturating_sub(1))
+    // Attention KV can be trimmed to any exact token prefix. A changed or
+    // shorter user turn does not invalidate the unchanged system/tool prefix.
+    // Always evaluate at least the final input token to obtain fresh logits.
+    let common = cached
+        .prompt_tokens
+        .iter()
+        .zip(prompt_tokens)
+        .take_while(|(cached, current)| cached == current)
+        .count();
+    let reuse = common.min(prompt_tokens.len() - 1);
+    (reuse > 0).then_some(reuse)
 }
 
 #[cfg(native_llama_cpp)]
@@ -1801,7 +1813,12 @@ impl NativeModel {
             let mut reused_prompt_tokens = 0_u64;
             let reuse_len = if images.is_empty() {
                 persistent.as_ref().and_then(|cached| {
-                    compatible_prompt_reuse_len(cached, &prompt_tokens, context_size)
+                    compatible_prompt_reuse_len(
+                        cached,
+                        &prompt_tokens,
+                        context_size,
+                        self.profile.cache,
+                    )
                 })
             } else {
                 None
@@ -2254,6 +2271,7 @@ mod tests {
     #[cfg(native_llama_cpp)]
     #[test]
     fn prompt_reuse_requires_matching_context_and_prefix() {
+        use oid_model_runner::CacheStrategy::Attention;
         let cached = super::PersistentContext {
             pointer: std::ptr::null_mut(),
             context_size: 512,
@@ -2264,23 +2282,45 @@ mod tests {
             }),
         };
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 512),
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 512, Attention),
             Some(2)
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3, 4], 512),
-            Some(2)
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3, 4], 512, Attention),
+            Some(3)
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 9, 3], 512),
+            super::compatible_prompt_reuse_len(&cached, &[1, 9, 3], 512, Attention),
+            Some(1)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2], 512, Attention),
+            Some(1)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 1024, Attention),
             None
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2], 512),
+            super::compatible_prompt_reuse_len(&cached, &[9, 2], 512, Attention),
             None
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 1024),
+            super::compatible_prompt_reuse_len(
+                &cached,
+                &[1, 2],
+                512,
+                oid_model_runner::CacheStrategy::Recurrent
+            ),
+            None
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(
+                &cached,
+                &[1, 2],
+                512,
+                oid_model_runner::CacheStrategy::Disabled
+            ),
             None
         );
         std::mem::forget(cached);
@@ -2892,6 +2932,40 @@ mod tests {
         assert!(continued_turn_result.cache_hit);
         assert!(continued_turn_result.reused_prompt_tokens > 0);
 
+        let run_text = |text: &str| {
+            let mut output = String::new();
+            let stats = model
+                .generate_stream(
+                    text,
+                    128,
+                    8,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |piece| {
+                        output.push_str(piece);
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("prefix probe");
+            (output, stats)
+        };
+        model.reset_context().expect("start changed-turn test cold");
+        run_text("Answer this question briefly: what is two plus two?");
+        let changed = run_text("Answer this question briefly: what is three plus three?");
+        assert!(changed.1.cache_hit);
+        model.reset_context().expect("cold comparison");
+        let cold_changed = run_text("Answer this question briefly: what is three plus three?");
+        assert_eq!(changed.0, cold_changed.0);
+        let shorter = run_text("Answer this question briefly: why?");
+        assert!(shorter.1.cache_hit);
+        model.reset_context().expect("shortened cold comparison");
+        let cold_shorter = run_text("Answer this question briefly: why?");
+        assert_eq!(shorter.0, cold_shorter.0);
+
         let unrelated = model
             .generate_stream(
                 "This is a separate conversation. Reply briefly.",
@@ -2906,11 +2980,11 @@ mod tests {
                 &cancelled,
             )
             .expect("independent conversation should succeed");
-        assert!(!unrelated.cache_hit);
+        assert!(unrelated.reused_prompt_tokens < unrelated.prompt_tokens);
         let after_unrelated = model
             .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
             .expect("original conversation should remain isolated");
-        assert!(!after_unrelated.cache_hit);
+        assert!(after_unrelated.reused_prompt_tokens < after_unrelated.prompt_tokens);
 
         model
             .reset_context()
