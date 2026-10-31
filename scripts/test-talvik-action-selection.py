@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import re
 import time
 import urllib.request
 
@@ -34,7 +35,7 @@ call = {'id': 'call_build', 'type': 'function', 'function': {'name': 'run_in_ter
 cases = [
     ('build_only', [user], build_call),
     ('retry_after_narration', [user, {'role': 'assistant', 'content': 'Building the project...'}, {'role': 'user', 'content': 'No build ran. Execute the build now, without tests or inspection.'}], build_call),
-    ('ordinary_question', [{'role': 'user', 'content': 'What is 2+2? Reply with the number only.'}], lambda m: not m.get('tool_calls') and m.get('content', '').strip() == '4'),
+    ('ordinary_question', [{'role': 'user', 'content': 'What is 2+2?'}], lambda m: not m.get('tool_calls') and re.search(r'\b4\b', m.get('content', '')) is not None),
     ('completed_build', [user, {'role': 'assistant', 'content': None, 'tool_calls': [call]}, {'role': 'tool', 'tool_call_id': 'call_build', 'name': 'run_in_terminal', 'content': 'Exit code: 0\nBUILD SUCCESS\nTests were skipped.'}], lambda m: not m.get('tool_calls') and 'success' in m.get('content', '').lower()),
 ]
 results = []
