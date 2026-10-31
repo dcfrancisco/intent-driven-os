@@ -1586,7 +1586,7 @@ fn write_openai_stream_failure(
 
 fn openai_stream_error_frame(error_type: &str, code: &str, message: &str) -> String {
     let error = openai_error(error_type, code, message);
-    format!("event: error\ndata: {error}\n\n")
+    format!("data: {error}\n\n")
 }
 
 fn openai_model_output_error(code: &str, message: &str) -> Value {
@@ -5387,7 +5387,11 @@ mod tests {
             "incomplete_tool_call",
             "model ended early",
         );
-        assert!(frame.starts_with("event: error\n"));
+        assert!(frame.starts_with("data: "));
+        assert!(!frame.contains("event:"));
+        let payload: serde_json::Value =
+            serde_json::from_str(frame.trim().strip_prefix("data: ").unwrap()).unwrap();
+        assert_eq!(payload["error"]["type"], "model_output_error");
         assert!(frame.contains("\"code\":\"incomplete_tool_call\""));
         assert!(!frame.contains("[DONE]"));
     }

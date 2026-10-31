@@ -211,3 +211,20 @@ For templates declaring both `<tool_response>` markers and a supported tool
 format, tool results now use that response wrapper under a user role. The
 role/content-only native C renderer otherwise misses the full Jinja tool
 branch and emits a literal tool role. Other templates retain their tool role.
+
+### Lazy JSON tool syntax constraints, 2026-10-31
+
+A real 9,288-token Copilot Agent request on Qwen3 1.7B emitted malformed JSON
+after passing the smaller API fixture. JSON-style tool profiles now activate a
+native lazy grammar when tagged, leading fenced-JSON, or leading bare-object
+call output begins. Ordinary prose stays unconstrained. The grammar requires
+valid JSON and matching wrapper delimiters; it does not select a function,
+repair arguments, or replace the existing declaration and choice checks.
+Function/parameter tool profiles retain their separate parser. Native tests
+mask a missing-comma token, require the closing wrapper, and verify prose is
+unrestricted across all supported JSON entry forms.
+
+Chat Completions stream errors now use a data-only JSON error frame. Copilot's
+custom-endpoint client attempted to parse the old `event: error` line as JSON.
+Typed Responses events retain their endpoint-specific format. Failure streams
+still terminate without a success sentinel.

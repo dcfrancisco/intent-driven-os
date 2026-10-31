@@ -251,3 +251,15 @@ caching never reuses state. Tests cover divergent, shorter, extended, unrelated
 and context-mismatched inputs, plus native cold/warm output equality and
 reset/cancellation recovery. This does not prevent another model or a short
 utility request from replacing the single retained context.
+
+### Demand-sized text context allocation, 2026-10-31
+
+The real Qwen3 1.7B IDE request allocated 3,584 MiB of KV memory at a 32K
+context despite a 9,288-token input and 2,048-token output budget. Text contexts
+now allocate power-of-two capacity sufficient for prompt plus permitted output,
+bounded by the caller's logical limit. Retained larger allocations are reused;
+capacity growth rebuilds before decoding. Logical limits and cache keys remain
+unchanged. Multimodal requests retain their previously qualified full allocation
+until their position accounting has separate sizing qualification. Native tests
+cover allocation bounds, growth, cold/warm output equality and shorter-turn
+reuse. No additional idle contexts are retained.

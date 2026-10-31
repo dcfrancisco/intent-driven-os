@@ -20,6 +20,9 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering;
 #[cfg(native_llama_cpp)]
 use std::sync::Mutex;
+#[cfg(native_llama_cpp)]
+mod tool_grammar;
+
 use std::time::Duration;
 #[cfg(native_llama_cpp)]
 use std::time::Instant;
@@ -146,6 +149,7 @@ struct Batch {
 struct PersistentContext {
     pointer: *mut c_void,
     context_size: u32,
+    allocated_context_size: u32,
     prompt_tokens: Vec<i32>,
     checkpoints: Vec<PromptCheckpoint>,
     relay: Box<CancellationRelay>,
@@ -355,10 +359,21 @@ mod ffi {
             grammar_str: *const c_char,
             grammar_root: *const c_char,
         ) -> *mut c_void;
+        pub fn llama_sampler_init_grammar_lazy_patterns(
+            vocab: *const c_void,
+            grammar_str: *const c_char,
+            grammar_root: *const c_char,
+            trigger_patterns: *const *const c_char,
+            num_trigger_patterns: usize,
+            trigger_tokens: *const i32,
+            num_trigger_tokens: usize,
+        ) -> *mut c_void;
+        pub fn llama_vocab_n_tokens(vocab: *const c_void) -> i32;
         pub fn llama_sampler_init_top_k(k: i32) -> *mut c_void;
         pub fn llama_sampler_init_top_p(p: f32, min_keep: usize) -> *mut c_void;
         pub fn llama_sampler_init_temp(t: f32) -> *mut c_void;
         pub fn llama_sampler_init_penalties(
+            n_vocab: i32,
             penalty_last_n: i32,
             penalty_repeat: f32,
             penalty_freq: f32,
@@ -535,6 +550,20 @@ fn inference_threads() -> i32 {
             std::thread::available_parallelism()
                 .map_or(0, |count| i32::try_from(count.get()).unwrap_or(i32::MAX))
         })
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn text_context_capacity(limit: u32, prompt_tokens: usize, max_tokens: u32) -> u32 {
+    let needed = u32::try_from(prompt_tokens)
+        .unwrap_or(u32::MAX)
+        .saturating_add(max_tokens)
+        .min(limit)
+        .max(512)
+        .min(limit);
+    needed
+        .checked_next_power_of_two()
+        .unwrap_or(limit)
+        .min(limit)
 }
 
 #[cfg(native_llama_cpp)]
@@ -1097,6 +1126,7 @@ impl EndMarkerFilter {
 struct FormattedPrompt {
     text: String,
     cache_prefix: Option<String>,
+    constrain_json_tools: bool,
 }
 
 #[cfg(native_llama_cpp)]
@@ -1189,7 +1219,11 @@ fn render_chat_prompt(
         .filter(|position| *position > 0)
         .and_then(|position| render_template_messages(template, &entries[..position], false).ok())
         .filter(|prefix| !prefix.is_empty() && text.starts_with(prefix));
-    Ok(FormattedPrompt { text, cache_prefix })
+    Ok(FormattedPrompt {
+        text,
+        cache_prefix,
+        constrain_json_tools: false,
+    })
 }
 
 #[cfg(any(native_llama_cpp, test))]
@@ -1422,6 +1456,7 @@ impl NativeModel {
                 return Ok(FormattedPrompt {
                     text: prompt.to_owned(),
                     cache_prefix: None,
+                    constrain_json_tools: false,
                 });
             }
             // HTTP multi-turn requests use a private record separator so the
@@ -1444,6 +1479,7 @@ impl NativeModel {
                 .transpose()?;
             let entries = parsed.unwrap_or_else(|| vec![("user", prompt)]);
             let mut enable_thinking = None;
+            let mut constrain_json_tools = false;
             let entries = entries
                 .into_iter()
                 .map(|(role, content)| {
@@ -1457,6 +1493,7 @@ impl NativeModel {
                         return Ok(None);
                     }
                     let entry = if role == "__talvik_tools" {
+                        constrain_json_tools = self.profile.tool_format == Some(oid_model_runner::ToolFormat::XmlJson);
                         let format = match self.profile.tool_format {
                             Some(oid_model_runner::ToolFormat::XmlJson) => "Emit each call as <tool_call>{\"name\":\"tool_name\",\"arguments\":{\"argument_name\":\"argument_value\"}}</tool_call>. The arguments must be valid JSON.",
                             Some(oid_model_runner::ToolFormat::XmlFunction) => "Emit each call as <tool_call>\n<function=tool_name>\n<parameter=argument_name>\nargument_value\n</parameter>\n</function>\n</tool_call>. Repeat parameter blocks for every argument. Emit literal text for string parameters and valid JSON for numbers, booleans, arrays or objects, matching the schema.",
@@ -1497,7 +1534,12 @@ impl NativeModel {
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>();
-            render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking)
+            render_chat_prompt(CStr::from_ptr(template), &entries, enable_thinking).map(
+                |mut prompt| {
+                    prompt.constrain_json_tools = constrain_json_tools;
+                    prompt
+                },
+            )
         }
     }
 
@@ -1701,6 +1743,7 @@ impl NativeModel {
                 return Err("generation cancelled".to_owned());
             }
             let formatted = self.format_prompt(prompt)?;
+            let constrain_json_tools = grammar.is_none() && formatted.constrain_json_tools;
             let formatted_prompt = formatted.text;
             #[allow(unused_assignments)]
             let mut prompt_tokens = Vec::new();
@@ -1804,7 +1847,16 @@ impl NativeModel {
             }
             let trace_prefill = std::env::var("TALVIK_TRACE_PREFILL")
                 .is_ok_and(|value| matches!(value.as_str(), "1" | "true"));
-            let physical_batch = context_size.min(512);
+            // Preserve the advertised logical limit while avoiding unused KV
+            // allocation. Power-of-two headroom keeps nearby turns reusable;
+            // requests that outgrow the retained capacity rebuild safely.
+            // Multimodal position accounting retains its qualified full limit.
+            let allocated_context_size = if images.is_empty() {
+                text_context_capacity(context_size, prompt_count, max_tokens)
+            } else {
+                context_size
+            };
+            let physical_batch = allocated_context_size.min(512);
             let mut persistent = self
                 .context
                 .lock()
@@ -1812,14 +1864,17 @@ impl NativeModel {
             let mut cache_hit = false;
             let mut reused_prompt_tokens = 0_u64;
             let reuse_len = if images.is_empty() {
-                persistent.as_ref().and_then(|cached| {
-                    compatible_prompt_reuse_len(
-                        cached,
-                        &prompt_tokens,
-                        context_size,
-                        self.profile.cache,
-                    )
-                })
+                persistent
+                    .as_ref()
+                    .filter(|cached| cached.allocated_context_size >= allocated_context_size)
+                    .and_then(|cached| {
+                        compatible_prompt_reuse_len(
+                            cached,
+                            &prompt_tokens,
+                            context_size,
+                            self.profile.cache,
+                        )
+                    })
             } else {
                 None
             };
@@ -1886,7 +1941,7 @@ impl NativeModel {
                     drop(cached);
                 }
                 let mut context_params = ContextParams {
-                    n_ctx: context_size,
+                    n_ctx: allocated_context_size,
                     // Keep graph reservation bounded. Prompts larger than this
                     // physical batch are decoded incrementally below.
                     n_batch: physical_batch,
@@ -1906,9 +1961,11 @@ impl NativeModel {
                 if pointer.is_null() {
                     return Err("llama.cpp could not create a context".to_owned());
                 }
+                eprintln!("llama.cpp context allocation requested_tokens={context_size} allocated_tokens={allocated_context_size}");
                 persistent.replace(PersistentContext {
                     pointer,
                     context_size,
+                    allocated_context_size,
                     prompt_tokens: Vec::new(),
                     checkpoints: Vec::new(),
                     relay,
@@ -1938,7 +1995,11 @@ impl NativeModel {
                 invalidate_context(&mut persistent);
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
+            let vocabulary = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
             let mut samplers = Vec::with_capacity(6);
+            if constrain_json_tools {
+                samplers.push(unsafe { tool_grammar::init(vocabulary) });
+            }
             if let Some(grammar_source) = grammar_source.as_ref() {
                 let vocabulary = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
                 samplers.push(unsafe {
@@ -1957,7 +2018,13 @@ impl NativeModel {
                     // runaway repeated fragments while leaving frequency and
                     // presence penalties disabled unless they become part of
                     // the public request contract.
-                    ffi::llama_sampler_init_penalties(64, 1.1, 0.0, 0.0),
+                    ffi::llama_sampler_init_penalties(
+                        ffi::llama_vocab_n_tokens(vocabulary),
+                        64,
+                        1.1,
+                        0.0,
+                        0.0,
+                    ),
                     ffi::llama_sampler_init_temp(temperature),
                     ffi::llama_sampler_init_dist(seed),
                 ]
@@ -2248,6 +2315,19 @@ mod tests {
     }
 
     #[test]
+    fn text_context_capacity_reserves_output_and_bounded_growth_headroom() {
+        assert_eq!(super::text_context_capacity(32768, 9288, 2048), 16384);
+        assert_eq!(super::text_context_capacity(32768, 12, 16), 512);
+        assert_eq!(super::text_context_capacity(128, 20, 8), 128);
+        assert_eq!(super::text_context_capacity(5000, 4900, 2048), 5000);
+        assert_eq!(
+            super::text_context_capacity(32768, usize::MAX, u32::MAX),
+            32768
+        );
+        assert_eq!(super::text_context_capacity(0, 0, 0), 0);
+    }
+
+    #[test]
     fn auxiliary_accelerators_are_not_cpu_or_gpu_runners() {
         use super::{classify_native_device as classify, NativeBackend};
         assert_eq!(classify(3, "blas"), None);
@@ -2275,6 +2355,7 @@ mod tests {
         let cached = super::PersistentContext {
             pointer: std::ptr::null_mut(),
             context_size: 512,
+            allocated_context_size: 512,
             prompt_tokens: vec![1, 2, 3],
             checkpoints: Vec::new(),
             relay: Box::new(super::CancellationRelay {
@@ -3012,6 +3093,68 @@ mod tests {
             .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
             .expect("inference should recover after cancellation");
         assert!(!after_cancellation.cache_hit);
+        let run_capacity = |text: &str| {
+            let mut output = String::new();
+            let stats = model
+                .generate_stream(
+                    text,
+                    4096,
+                    1,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |piece| {
+                        output.push_str(piece);
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("capacity probe");
+            (output, stats)
+        };
+        model.reset_context().expect("capacity probe reset");
+        let small = "\u{001e}system\nReply OK only.\u{001e}user\nShort record.";
+        run_capacity(small);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            512
+        );
+        let large = format!(
+            "\u{001e}system\nReply OK only.\u{001e}user\n{}",
+            "A completed record.\n".repeat(192)
+        );
+        let grown = run_capacity(&large);
+        assert!(!grown.1.cache_hit, "growth must rebuild before decoding");
+        let grown_capacity = model
+            .context
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .allocated_context_size;
+        assert!(grown_capacity > 512 && grown_capacity <= 4096);
+        model.reset_context().expect("capacity cold comparison");
+        assert_eq!(grown.0, run_capacity(&large).0);
+        assert!(run_capacity(small).1.cache_hit);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            grown_capacity,
+            "shorter turns retain the existing allocation"
+        );
         drop(model);
         super::shutdown();
     }

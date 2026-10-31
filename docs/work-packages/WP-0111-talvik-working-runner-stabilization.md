@@ -140,3 +140,13 @@ lost their source path/URL. The help check now peeks without consuming it. An
 IPC integration test runs the real client and verifies that source, model ID,
 and checksum reach the daemon. A checksum-pinned official Qwen GGUF import
 completed successfully using the corrected client.
+
+### Penalty sampler ABI correction, 2026-10-31
+
+The pinned llama.cpp penalty sampler takes vocabulary size before the history
+window. The Rust declaration/call omitted that first argument. The binding now
+passes the actual loaded vocabulary size and the intended 64-token window. A
+real native sampler test verifies the repetition adjustment and eviction at
+exactly 64 subsequent tokens, detecting an older or misaligned signature. This
+corrects a concrete ABI mismatch; it is not proof that every model-quality
+failure observed earlier came from that mismatch.
