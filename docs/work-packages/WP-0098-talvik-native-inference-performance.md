@@ -222,3 +222,19 @@ actual recurrent cache equivalence/reset/cancellation and existing text/vision
 paths. Architecture-selected cache strategies and single-context ownership are
 unchanged. Full Jinja kwargs/tools rendering, parser capability profiles and
 cross-model admitted cache retention remain open model-adaptation work.
+
+### Native CPU device selection correction, 2026-10-31
+
+Device discovery previously classified every unrecognized backend registry as
+CPU. In an Accelerate build, the BLAS ACCEL device can precede the actual CPU
+device, so CPU-only model loading selected BLAS as its primary device. The
+standalone native benchmark selected the actual CPU by ggml device type.
+
+Discovery now checks the pinned ggml device-type enum, excludes auxiliary
+ACCEL/meta/unsupported devices from selectable runners, and retains each
+device's original native index when filtering. CPU-only requests explicitly
+select the actual CPU; GPU device types still require a recognized CUDA, Metal,
+or Vulkan registry. No backend becomes qualified from discovery alone. Tests
+cover BLAS/CPU accelerator rejection and CPU/GPU classification. Performance
+must be compared on identical prompts and weights; BLAS library presence alone
+is not evidence of faster inference.

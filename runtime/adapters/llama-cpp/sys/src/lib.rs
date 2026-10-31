@@ -308,6 +308,7 @@ mod ffi {
         pub fn ggml_backend_dev_count() -> usize;
         pub fn ggml_backend_dev_get(index: usize) -> *mut c_void;
         pub fn ggml_backend_dev_name(device: *mut c_void) -> *const c_char;
+        pub fn ggml_backend_dev_type(device: *mut c_void) -> i32;
         pub fn ggml_backend_dev_memory(device: *mut c_void, free: *mut usize, total: *mut usize);
         pub fn ggml_backend_dev_backend_reg(device: *mut c_void) -> *mut c_void;
         pub fn ggml_backend_reg_name(registry: *mut c_void) -> *const c_char;
@@ -720,6 +721,15 @@ pub struct NativePlacement {
 /// Enumerate devices registered by the linked ggml build.
 #[must_use]
 pub fn devices() -> Vec<NativeDevice> {
+    indexed_devices()
+        .into_iter()
+        .map(|(_, device)| device)
+        .collect()
+}
+
+// Preserve native indices when filtering auxiliary/unsupported devices. BLAS
+// and AMX are ACCEL devices, not independently selectable CPU runners.
+fn indexed_devices() -> Vec<(usize, NativeDevice)> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let mut devices = Vec::new();
@@ -736,14 +746,10 @@ pub fn devices() -> Vec<NativeDevice> {
                     .to_string_lossy()
                     .to_ascii_lowercase()
             };
-            let backend = if backend_name.contains("cuda") {
-                NativeBackend::Cuda
-            } else if backend_name.contains("vulkan") {
-                NativeBackend::Vulkan
-            } else if backend_name.contains("metal") {
-                NativeBackend::Metal
-            } else {
-                NativeBackend::Cpu
+            let Some(backend) =
+                classify_native_device(ffi::ggml_backend_dev_type(device), &backend_name)
+            else {
+                continue;
             };
             let name = CStr::from_ptr(ffi::ggml_backend_dev_name(device))
                 .to_string_lossy()
@@ -764,19 +770,35 @@ pub fn devices() -> Vec<NativeDevice> {
                 NativeBackend::Cuda => Some(false),
                 NativeBackend::Vulkan => None,
             };
-            devices.push(NativeDevice {
-                backend,
-                name,
-                free_memory_bytes: u64::try_from(free).ok().filter(|value| *value > 0),
-                total_memory_bytes: u64::try_from(total).ok().filter(|value| *value > 0),
-                shared_memory,
-            });
+            devices.push((
+                index,
+                NativeDevice {
+                    backend,
+                    name,
+                    free_memory_bytes: u64::try_from(free).ok().filter(|value| *value > 0),
+                    total_memory_bytes: u64::try_from(total).ok().filter(|value| *value > 0),
+                    shared_memory,
+                },
+            ));
         }
         devices
     }
     #[cfg(not(native_llama_cpp))]
     {
         Vec::new()
+    }
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn classify_native_device(device_type: i32, backend_name: &str) -> Option<NativeBackend> {
+    // Values from the pinned ggml_backend_dev_type enum. An accelerator must
+    // never win CPU selection just because its registry name is unfamiliar.
+    match device_type {
+        0 => Some(NativeBackend::Cpu),
+        1 | 2 if backend_name.contains("cuda") => Some(NativeBackend::Cuda),
+        1 | 2 if backend_name.contains("vulkan") => Some(NativeBackend::Vulkan),
+        1 | 2 if backend_name.contains("metal") => Some(NativeBackend::Metal),
+        _ => None,
     }
 }
 
@@ -2108,6 +2130,19 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn auxiliary_accelerators_are_not_cpu_or_gpu_runners() {
+        use super::{classify_native_device as classify, NativeBackend};
+        assert_eq!(classify(3, "blas"), None);
+        assert_eq!(classify(3, "cpu"), None);
+        assert_eq!(classify(4, "rpc"), None);
+        assert_eq!(classify(1, "unknown"), None);
+        assert_eq!(classify(0, "cpu"), Some(NativeBackend::Cpu));
+        assert_eq!(classify(1, "cuda"), Some(NativeBackend::Cuda));
+        assert_eq!(classify(2, "metal"), Some(NativeBackend::Metal));
+        assert_eq!(classify(2, "vulkan"), Some(NativeBackend::Vulkan));
+    }
+
+    #[test]
     fn prompt_cache_reuse_requires_the_native_sequence_to_match_the_prefix() {
         assert!(cached_prefix_matches(36, 35));
         assert!(!cached_prefix_matches(36, 70));
@@ -3089,11 +3124,11 @@ pub fn load_model(
     #[cfg(native_llama_cpp)]
     unsafe {
         let path = CString::new(path).map_err(|_| "model path contains NUL".to_owned())?;
-        let available = devices();
+        let available = indexed_devices();
         let selected = available
             .iter()
-            .position(|device| device.backend == options.backend);
-        if options.backend != NativeBackend::Cpu && selected.is_none() {
+            .position(|(_, device)| device.backend == options.backend);
+        if selected.is_none() {
             return Err(format!(
                 "requested {} backend is not compiled, initialized, and usable",
                 options.backend.as_str()
@@ -3103,7 +3138,7 @@ pub fn load_model(
         params.n_gpu_layers = i32::try_from(options.gpu_layers).unwrap_or(i32::MAX);
         let mut native_devices = selected.map(|index| {
             vec![
-                ffi::ggml_backend_dev_get(index),
+                ffi::ggml_backend_dev_get(available[index].0),
                 std::ptr::null_mut::<c_void>(),
             ]
         });
@@ -3146,7 +3181,7 @@ pub fn load_model(
             return Err("this build does not include llama.cpp MTMD support".to_owned());
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
-        let device = selected.map(|index| available[index].name.clone());
+        let device = selected.map(|index| available[index].1.name.clone());
         #[cfg(native_mtmd)]
         let vision = mtmd.is_some();
         #[cfg(not(native_mtmd))]
