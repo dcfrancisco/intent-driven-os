@@ -2,7 +2,7 @@
 
 #[test]
 fn crate_boundary_is_reachable() {
-    assert!(!oid_model_runner::boundary_name().is_empty());
+    assert_ne!(oid_model_runner::boundary_name(), "");
 }
 
 #[test]

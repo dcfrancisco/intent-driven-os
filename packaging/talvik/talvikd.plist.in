@@ -11,6 +11,16 @@
   </array>
   <key>EnvironmentVariables</key>
   <dict>
+    <key>TALVIK_HTTP_ADDR</key>
+    <string>127.0.0.1:11435</string>
+    <key>TALVIK_HTTP_CONTEXT_SIZE</key>
+    <string>32768</string>
+    <key>TALVIK_HTTP_MAX_TOKENS</key>
+    <string>2048</string>
+    <key>TALVIK_ENABLE_THINKING</key>
+    <string>false</string>
+    <key>TALVIK_ADMISSION_TIMEOUT_SECONDS</key>
+    <string>180</string>
     <key>TALVIK_HOME</key>
     <string>__TALVIK_HOME__</string>
     <key>TALVIK_STATE_DIR</key>
@@ -25,7 +35,7 @@
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
   <key>StandardOutPath</key>
   <string>__TALVIK_HOME__/logs/talvikd.log</string>
   <key>StandardErrorPath</key>

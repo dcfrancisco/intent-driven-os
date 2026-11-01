@@ -49,6 +49,7 @@ struct Loaded {
 /// domain types and streamed generation events.
 #[derive(Debug)]
 pub struct LlamaCppModelRunner {
+    profiles: Mutex<BTreeMap<ModelId, oid_model_runner::ModelProfile>>,
     initialized: AtomicBool,
     models: Arc<Mutex<BTreeMap<ModelId, Loaded>>>,
     state: Arc<Mutex<ModelState>>,
@@ -58,6 +59,7 @@ pub struct LlamaCppModelRunner {
 impl Default for LlamaCppModelRunner {
     fn default() -> Self {
         Self {
+            profiles: Mutex::new(BTreeMap::new()),
             initialized: AtomicBool::new(false),
             models: Arc::new(Mutex::new(BTreeMap::new())),
             state: Arc::new(Mutex::new(ModelState::Unloaded)),
@@ -347,6 +349,13 @@ impl ModelRunner for LlamaCppModelRunner {
             model,
             placement: placement.clone(),
         };
+        self.profiles
+            .lock()
+            .map_err(|_| ModelRunnerError::BackendFailure("profile lock poisoned".to_owned()))?
+            .insert(
+                request.model_id.clone(),
+                loaded_model.model.profile().clone(),
+            );
         models.insert(request.model_id.clone(), loaded_model);
         if let Ok(mut state) = self.state.lock() {
             *state = ModelState::Ready;
@@ -366,6 +375,14 @@ impl ModelRunner for LlamaCppModelRunner {
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     fn generate(&self, request: GenerationRequest) -> Result<GenerationStream, ModelRunnerError> {
         request.validate()?;
+        if self
+            .model_profile(&request.model_id)?
+            .is_some_and(|profile| !profile.completion)
+        {
+            return Err(ModelRunnerError::NotImplemented(
+                "text generation for an encoder-only model".to_owned(),
+            ));
+        }
         if self.generating.swap(true, Ordering::SeqCst) {
             return Err(ModelRunnerError::ModelBusy(
                 "a generation is already active".to_owned(),
@@ -446,6 +463,9 @@ impl ModelRunner for LlamaCppModelRunner {
                     &mut callback,
                     worker_cancellation.as_atomic(),
                 )?;
+                let decode_time = native_stats
+                    .generation_time
+                    .saturating_sub(native_stats.prompt_eval_time);
                 let stats = GenerationStats {
                     prompt_tokens: Some(native_stats.prompt_tokens),
                     generated_tokens: native_stats.generated_tokens,
@@ -455,11 +475,9 @@ impl ModelRunner for LlamaCppModelRunner {
                         .and_then(|value| value.map(|time| time.duration_since(started))),
                     prompt_eval_time: Some(native_stats.prompt_eval_time),
                     generation_time: Some(native_stats.generation_time),
-                    tokens_per_second: (native_stats.generation_time.as_secs_f64() > 0.0)
-                        .then_some(
-                            native_stats.generated_tokens as f64
-                                / native_stats.generation_time.as_secs_f64(),
-                        ),
+                    tokens_per_second: (decode_time.as_secs_f64() > 0.0).then_some(
+                        native_stats.generated_tokens as f64 / decode_time.as_secs_f64(),
+                    ),
                     termination: match native_stats.termination {
                         native::NativeGenerationTermination::Stop => GenerationTermination::Stop,
                         native::NativeGenerationTermination::Length => {
@@ -497,9 +515,12 @@ impl ModelRunner for LlamaCppModelRunner {
                     }));
                 }
                 Err(error) => {
-                    let _ = sender.send(GenerationEvent::Error(ModelRunnerError::BackendFailure(
-                        error,
-                    )));
+                    let error = if error == "prompt exceeds context size" {
+                        ModelRunnerError::InvalidRequest(error)
+                    } else {
+                        ModelRunnerError::BackendFailure(error)
+                    };
+                    let _ = sender.send(GenerationEvent::Error(error));
                 }
             }
         });
@@ -572,14 +593,21 @@ impl ModelRunner for LlamaCppModelRunner {
             .map_err(ModelRunnerError::BackendFailure)
     }
 
-    fn tool_support(&self, model_id: &ModelId) -> Result<bool, ModelRunnerError> {
-        let models = self
-            .models
+    fn model_profile(
+        &self,
+        model_id: &ModelId,
+    ) -> Result<Option<oid_model_runner::ModelProfile>, ModelRunnerError> {
+        let profiles = self
+            .profiles
             .lock()
-            .map_err(|_| ModelRunnerError::BackendFailure("model lock poisoned".to_owned()))?;
-        Ok(models
-            .get(model_id)
-            .is_some_and(|loaded| loaded.model.supports_tools()))
+            .map_err(|_| ModelRunnerError::BackendFailure("profile lock poisoned".to_owned()))?;
+        Ok(profiles.get(model_id).cloned())
+    }
+
+    fn tool_support(&self, model_id: &ModelId) -> Result<bool, ModelRunnerError> {
+        Ok(self
+            .model_profile(model_id)?
+            .is_some_and(|p| p.tool_format.is_some()))
     }
 
     fn reset_context(&self, model_id: &ModelId) -> Result<(), ModelRunnerError> {
@@ -617,6 +645,10 @@ impl ModelRunner for LlamaCppModelRunner {
         if let Ok(mut state) = self.state.lock() {
             *state = ModelState::Unloading;
         }
+        self.profiles
+            .lock()
+            .map_err(|_| ModelRunnerError::UnloadFailure("profile lock poisoned".to_owned()))?
+            .clear();
         models.clear();
         drop(models);
         self.initialized.store(false, Ordering::SeqCst);
@@ -640,6 +672,10 @@ impl ModelRunner for LlamaCppModelRunner {
         if models.remove(model_id).is_none() {
             return Err(ModelRunnerError::ModelNotLoaded);
         }
+        self.profiles
+            .lock()
+            .map_err(|_| ModelRunnerError::UnloadFailure("profile lock poisoned".to_owned()))?
+            .remove(model_id);
         if let Ok(mut state) = self.state.lock() {
             *state = if models.is_empty() {
                 ModelState::Unloading
@@ -666,6 +702,45 @@ mod tests {
     use oid_model_runner::{
         ContentPart, ExecutionBackend, GenerationRequest, ImageInput, ModelId, PlacementPolicy,
     };
+
+    #[test]
+    #[ignore = "requires MARINA_TEST_GGUF for resident profile lifecycle qualification"]
+    fn resident_profile_is_available_during_inference_lock_and_removed_on_unload() {
+        use oid_model_runner::{LoadModelRequest, ModelPath, ModelRunner, PlacementRequest};
+        let runner = std::sync::Arc::new(super::LlamaCppModelRunner::new());
+        let id = ModelId::new("renamed-fixture-no-family-hint").expect("ID");
+        runner
+            .load(LoadModelRequest {
+                model_id: id.clone(),
+                path: ModelPath::new(std::env::var("MARINA_TEST_GGUF").expect("GGUF"))
+                    .expect("path"),
+                vision_projector_path: None,
+                placement: PlacementRequest {
+                    policy: PlacementPolicy::CpuOnly,
+                    ..PlacementRequest::default()
+                },
+            })
+            .expect("load");
+        let lock = runner.models.lock().expect("inference lock");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let r = runner.clone();
+        let selected = id.clone();
+        let lookup = std::thread::spawn(move || tx.send(r.model_profile(&selected)).expect("send"));
+        let profile = rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("inspection must not wait on inference")
+            .expect("profile")
+            .expect("resident");
+        assert!(profile.chat);
+        assert!(profile.tool_format.is_some());
+        drop(lock);
+        lookup.join().expect("lookup");
+        runner.unload_model(&id).expect("unload");
+        assert!(runner
+            .model_profile(&id)
+            .expect("inspect unloaded")
+            .is_none());
+    }
 
     #[test]
     fn automatic_selection_uses_only_qualified_available_gpu_routes() {

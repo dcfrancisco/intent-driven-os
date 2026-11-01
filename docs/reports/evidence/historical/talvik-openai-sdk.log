@@ -1,0 +1,9 @@
+OpenAI SDK 2.48.0
+PASS model discovery
+PASS non-stream Chat Completions
+PASS streaming Chat Completions
+PASS non-stream legacy Completions
+PASS streaming legacy Completions
+PASS non-stream Responses
+PASS streaming Responses
+OPENAI_CLIENT_ACCEPTED

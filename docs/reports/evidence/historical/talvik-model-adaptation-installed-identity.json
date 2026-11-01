@@ -1,0 +1,46 @@
+{
+  "talvikd": {
+    "sha256": "696c661daaea945416076f547adac6bf1ebf1cf633c679a7fd9264740ba0f8b4",
+    "matches_clean_release": true,
+    "build": {
+      "component": "talvikd",
+      "dirty": false,
+      "git_sha": "6f3f9bdb4c3813716928476c4fca011fe5851eab",
+      "native_backend": null,
+      "object": "talvik.build",
+      "profile": "release",
+      "target": "x86_64-apple-darwin",
+      "version": "0.1.0"
+    }
+  },
+  "talvik": {
+    "sha256": "00c48528b7f2a315bb163cb1db418a20a55fc14f120a3490c47614fb2c7ec68d",
+    "matches_clean_release": true,
+    "build": {
+      "component": "talvik",
+      "dirty": false,
+      "git_sha": "6f3f9bdb4c3813716928476c4fca011fe5851eab",
+      "native_backend": null,
+      "object": "talvik.build",
+      "profile": "release",
+      "target": "x86_64-apple-darwin",
+      "version": "0.1.0"
+    }
+  },
+  "oid-console": {
+    "sha256": "3085c63c0fa99895f9e5bf0b71508a46a8eb4586bf8aceff9bb43a2cbd2c3835",
+    "matches_clean_release": true
+  },
+  "oid-marina-chat": {
+    "sha256": "52902a3cf08e18973754b5faeb76ecddddf19fc09305e7cba6ef3c59f0418200",
+    "matches_clean_release": true
+  },
+  "readiness": {
+    "inference_ready": true,
+    "status": "ready"
+  },
+  "daemon_processes": [
+    "31243 /Users/abigailbangasan/.marina/bin/talvikd"
+  ],
+  "trace_prefill_disabled": true
+}

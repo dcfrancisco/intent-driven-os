@@ -1,5 +1,11 @@
 # WP-0098: Talvik Native Inference Performance and Worker Isolation
 
+## Current qualification checkpoint — 2026-11-01
+
+Implementation `5d5925b` is committed and pushed. The installed CLI still identifies `6d323e7`; the integrated new release and actual IDE build-only acceptance are pending. The native template change passed 279 workspace tests (10 ignored), focused strict Clippy and seven real-model fixture invocations, including both tool-template layouts. These are not full IDE or cross-platform RC qualification. Recurring soak testing has been deleted; continue manually.
+
+See the [current report](../reports/TALVIK-STATUS-2026-11-01.md), [evidence inventory](../reports/evidence/manifest.json), and [qualification runbook](../reports/TALVIK-QUALIFICATION-RUNBOOK.md). Entries below preserve implementation history; manual tool-order/declaration heuristics were superseded by ADR-0035. The current checkpoint marker method also supersedes the earlier partial-conversation renderer description. Worker process isolation, cold IDE latency and admitted cross-model cache retention remain open.
+
 ## Purpose
 
 Make interactive local inference responsive and bounded without changing the
@@ -146,3 +152,172 @@ Verification on 2026-10-24:
   repeated timing varied substantially and peak memory was not measured.
 - long-prompt test crossed the former native assertion point with `n_ctx=2048`
   and `n_batch=512` and passed on the real Qwen GGUF.
+
+## Intel CPU / Agent latency investigation, 2026-10-31
+
+A real Copilot Agent request supplied 59 tools (75,220 serialized bytes), a
+22,430-byte serialized system message and two user messages of 3,270 / 892
+bytes. The formatted prompt was 22,056 tokens. Native prefill progressed through
+512 tokens at 31.4 s and 1,024 at 52.565 s; the bounded profiling request was
+cancelled, not qualified as an Agent pass. No message bodies or credentials
+were captured by the opt-in diagnostics.
+
+An idle 769-token API probe measured 26.371 s prompt evaluation, about 0.611 s
+remaining inference and 10.338 s model load. CPU stack sampling showed active
+quantized matrix multiplication / dequantization; AVX2, FMA and Apple Accelerate
+are enabled. The host is a four-core/eight-thread i7-8569U with 16 GiB RAM.
+
+Removing two other resident models eliminated swap-outs during the measured
+probe but changed prefill only from 32.094 to 31.768 s. An isolated native
+8-thread / 4-thread / larger-batch comparison showed no reliable tuning win;
+thread and physical batch defaults remain unchanged. These short-prompt results
+must not be reported as measurements of completed 22K-token Agent requests.
+
+### Implemented candidate
+
+- Parse embedded chat-template control tokens on generation input, while keeping
+  the public literal-text tokenizer unchanged. The former text path split role
+  delimiters into ordinary tokens; the multimodal path already parsed them.
+- For hybrid/recurrent models, save at most two partial-state checkpoints: a
+  matching static Qwen system/tool prefix (at least 64 tokens) and the full
+  prompt except its final token. Each snapshot is capped at 64 MiB and their
+  total at 128 MiB. Attention KV remains in its original context. Restore the
+  exact matching recurrent state, trim attention KV and verify the native maximum
+  position before reuse. Any mismatch/failure falls back to a cleared context.
+- Drop checkpoints on cancellation, failures, explicit reset, context changes
+  and model unload. Preserve the existing transformer reuse policy and the
+  one-idle-context-across-models memory boundary. Switching to the Coder utility
+  model still discards the main model's context; this remains a cache limitation.
+- Reserve one output and compute logits only for the final prefill batch. The
+  local Qwen compute-buffer reservation changed from about 503 MiB to 71–77 MiB;
+  this is not total process memory or the complete cost of the checkpoints.
+- Report output tokens/s and generation-time milliseconds using decode time,
+  excluding prompt processing; retain total native inference time separately.
+- `TALVIK_TRACE_PREFILL=true` enables request-size and batch-progress diagnostics
+  containing counts/timings rather than prompt contents. It is off by default.
+
+The recurrent native fixture checks repeated and changed-question warm output
+against cold output, reset/cancel recovery and checkpoint bounds. The API
+benchmark `scripts/test-talvik-prompt-cache.py` checks matching answers, cache
+reuse, context invalidation and phase-timing consistency without model unload.
+Performance acceptance is recorded per installed build in the investigation
+report. A warm-prefix win does not remove the first cold Agent prefill cost or
+qualify Agent/Plan.
+
+### Model-neutral checkpoint boundary implementation, 2026-10-31
+
+The optional static checkpoint no longer searches for ChatML/Qwen role markers.
+The native adapter renders the structured conversation before its final user
+message with the loaded model's selected template and without an assistant
+suffix. It accepts this candidate only when it is a nonempty byte prefix of the
+actual full render and its tokenization is an exact prefix of the full token
+sequence. The existing 64-token minimum and recurrent snapshot bounds remain.
+Embedded role-marker text inside message content cannot move this boundary.
+
+Templates that merge/rewrite system messages, fail partial rendering, return an
+empty prefix, or tokenize differently at the boundary simply omit the additional
+checkpoint. Generation and full-prompt reuse remain available. No speculative
+cache boundary is used. Main template errors still reject the request explicitly.
+The template buffer helper also checks the native written length before decoding.
+
+Native renderer tests exercise ChatML, Llama 3, DeepSeek and Vicuna boundaries,
+Gemma merged-system fallback, user-only prompts, multi-turn history, unsupported
+templates and token-boundary mismatch. These renderer tests do not qualify real
+inference for every corresponding model family. Named GGUF fixtures verify
+actual recurrent cache equivalence/reset/cancellation and existing text/vision
+paths. Architecture-selected cache strategies and single-context ownership are
+unchanged. Full Jinja kwargs/tools rendering, parser capability profiles and
+cross-model admitted cache retention remain open model-adaptation work.
+
+### Native CPU device selection correction, 2026-10-31
+
+Device discovery previously classified every unrecognized backend registry as
+CPU. In an Accelerate build, the BLAS ACCEL device can precede the actual CPU
+device, so CPU-only model loading selected BLAS as its primary device. The
+standalone native benchmark selected the actual CPU by ggml device type.
+
+Discovery now checks the pinned ggml device-type enum, excludes auxiliary
+ACCEL/meta/unsupported devices from selectable runners, and retains each
+device's original native index when filtering. CPU-only requests explicitly
+select the actual CPU; GPU device types still require a recognized CUDA, Metal,
+or Vulkan registry. No backend becomes qualified from discovery alone. Tests
+cover BLAS/CPU accelerator rejection and CPU/GPU classification. Performance
+must be compared on identical prompts and weights; BLAS library presence alone
+is not evidence of faster inference.
+
+### Attention prefix reuse correction, 2026-10-31
+
+Attention models now reuse the longest exact token prefix, including changed
+or shortened prompts, rather than requiring the entire previous prompt to be
+a prefix of the next request. At least the final input token is re-evaluated
+for fresh logits. Native sequence trimming and maximum-position validation
+remain mandatory; failure clears state. No additional contexts or cache
+buffers are retained. Recurrent models remain checkpoint-only, and disabled
+caching never reuses state. Tests cover divergent, shorter, extended, unrelated
+and context-mismatched inputs, plus native cold/warm output equality and
+reset/cancellation recovery. This does not prevent another model or a short
+utility request from replacing the single retained context.
+
+### Demand-sized text context allocation, 2026-10-31
+
+The real Qwen3 1.7B IDE request allocated 3,584 MiB of KV memory at a 32K
+context despite a 9,288-token input and 2,048-token output budget. Text contexts
+now allocate power-of-two capacity sufficient for prompt plus permitted output,
+bounded by the caller's logical limit. Retained larger allocations are reused;
+capacity growth rebuilds before decoding. Logical limits and cache keys remain
+unchanged. Multimodal requests retain their previously qualified full allocation
+until their position accounting has separate sizing qualification. Native tests
+cover allocation bounds, growth, cold/warm output equality and shorter-turn
+reuse. No additional idle contexts are retained.
+
+A real Plan exchange crossed the 8K allocation boundary after its first tool
+result and paid for a second full prefill. New text allocations now add one
+eighth of the prompt/output requirement (at least 128 tokens) before rounding.
+Existing allocations are checked against the actual requirement, so optional
+headroom alone never forces a rebuild. The 6,032-token/2,048-output case now
+starts at 16K and can retain its KV state for the measured 6,332-token follow-up.
+
+### Tool action follow-through, 2026-11-01
+
+A real IDE build-only request ended in narration without a terminal invocation.
+The C role formatter was not executing the embedded template's tools branch.
+Templates declaring `<tools>`, `</tools>`, `<tool_call>` and JSON serialization
+now receive newline-delimited, unchanged function definitions in that declared
+envelope. Other templates retain their existing declaration fallback. Selection
+uses template capabilities rather than model names. Tool instructions require
+actual calls for external actions and evidence before execution claims; they do
+not force `tool_choice:auto`, execute commands, or bypass client approvals.
+The Coding preset narrows build-only scope and removes unconditional inspection.
+Live action-selection and actual IDE execution remain separate acceptance gates.
+
+The first live IDE retry executed a real Maven build (exit 0) but chose
+`clean install`, violating the preset's narrowed build-only scope. Native
+formatting now also matches the initial system-message order of the tools
+branch: client instructions, tool declarations, and explicit choice restrictions.
+Only the leading system/tool metadata prefix is combined. Conversation history
+and later system messages stay in place; requests without tools are unchanged.
+The earlier IDE run proves execution follow-through, not scope compliance.
+
+Cross-model acceptance caught incomplete XML-function parameters after the
+system-prefix reordering. Combining the prefix is now limited to XML/JSON
+profiles whose templates declare a `<tools>` envelope. XML-function profiles
+retain the previously qualified separate-system order. The regression checks
+both role layouts; this is capability gating rather than a model-name branch.
+
+Inspection of the complete embedded templates identified two declared layouts:
+client-before-tools and tools-before-client, both within one initial system
+message. Layout detection now follows the relative locations of the initial
+system-role test and tools heading in supported templates. Unknown layouts
+keep the fallback. Native fixtures check the actual embedded Qwen3 and Qwen3.5
+templates, not only synthetic snippets. No model identifiers enter the adapter.
+
+### Embedded Jinja execution supersedes manual tool formatting
+
+ADR-0035 replaces the earlier declaration/order heuristics with execution of
+the full GGUF template using the pinned native Jinja engine. HTTP tool results
+are carried as structured records with original content and IDs. Historical
+argument strings become JSON objects for templates that iterate parameters.
+A native tool-template probe gates supported tools; the C formatter remains a
+plain-chat fallback. Native schema/history examples are no longer synthesized.
+Model bindings are qualification choices in the client presets, not backend
+branches. Short API probes and full IDE acceptance remain separate evidence.

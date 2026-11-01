@@ -1,8 +1,8 @@
-//! Runtime-event-driven adaptive prompt presence indicator.
+//! Runtime-event-driven console status indicator.
 
 use oid_shared::{EventBus, EventReceiver, RuntimeEvent};
 
-/// Semantic presence state represented by the prompt cursor.
+/// Semantic runtime state represented by the status row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PresenceState {
     /// Ready for input.
@@ -48,24 +48,9 @@ impl PresenceIndicator {
     }
 
     /// Return the current semantic state.
-    #[allow(dead_code)]
     #[must_use]
     pub const fn state(&self) -> PresenceState {
         self.state
-    }
-
-    /// Return a subtle, theme-neutral cursor token.
-    #[must_use]
-    pub const fn token(&self) -> &'static str {
-        match self.state {
-            PresenceState::Idle => "▋",
-            PresenceState::Typing | PresenceState::Waiting => "▌",
-            PresenceState::Busy => "█",
-            PresenceState::Streaming => "▍",
-            PresenceState::Warning => "▐",
-            PresenceState::Error => "■",
-            PresenceState::Offline => "□",
-        }
     }
 
     fn apply(&mut self, event: &RuntimeEvent) {
@@ -126,13 +111,12 @@ mod tests {
     use oid_shared::{EventBus, RuntimeEvent};
 
     #[test]
-    fn cursor_state_changes_only_after_runtime_events() {
+    fn status_state_changes_only_after_runtime_events() {
         let bus = EventBus::new();
         let mut indicator = PresenceIndicator::new(&bus);
         assert_eq!(indicator.state(), PresenceState::Idle);
         bus.publish(&RuntimeEvent::StreamingStarted);
         indicator.refresh();
         assert_eq!(indicator.state(), PresenceState::Streaming);
-        assert_eq!(indicator.token(), "▍");
     }
 }

@@ -1,0 +1,145 @@
+{
+  "base_url": "http://127.0.0.1:11435",
+  "model": "qwen2.5-coder-3b-instruct-q4_k_m",
+  "results": [
+    {
+      "test": "auth_required",
+      "passed": true,
+      "details": {
+        "status": 401
+      },
+      "seconds": 0.001
+    },
+    {
+      "test": "missing_model",
+      "passed": true,
+      "details": {
+        "status": 400
+      },
+      "seconds": 0.001
+    },
+    {
+      "test": "unknown_model",
+      "passed": true,
+      "details": {
+        "status": 404
+      },
+      "seconds": 0.001
+    },
+    {
+      "test": "unsupported_option",
+      "passed": true,
+      "details": {
+        "status": 501
+      },
+      "seconds": 0.001
+    },
+    {
+      "test": "invalid_output_limit",
+      "passed": true,
+      "details": {
+        "status": 400
+      },
+      "seconds": 0.001
+    },
+    {
+      "test": "invalid_context_limit",
+      "passed": true,
+      "details": {
+        "status": 400
+      },
+      "seconds": 0.0
+    },
+    {
+      "test": "output_limit_sse",
+      "passed": true,
+      "details": {
+        "finish_reason": "length",
+        "usage": true
+      },
+      "seconds": 0.259
+    },
+    {
+      "test": "prompt_overflow_recovery",
+      "passed": true,
+      "details": {
+        "status": 400,
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 1.205
+    },
+    {
+      "test": "deadline_recovery",
+      "passed": true,
+      "details": {
+        "timeout_status": 504,
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 1.683
+    },
+    {
+      "test": "stream_deadline_recovery",
+      "passed": true,
+      "details": {
+        "error_code": "generation_timeout",
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 1.582
+    },
+    {
+      "test": "disconnect_before_token",
+      "passed": true,
+      "details": {
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 2.047
+    },
+    {
+      "test": "disconnect_after_token",
+      "passed": true,
+      "details": {
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 3.131
+    },
+    {
+      "test": "ollama_disconnect_before_token",
+      "passed": true,
+      "details": {
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 2.724
+    },
+    {
+      "test": "queue_overflow_and_cancel_recovery",
+      "passed": true,
+      "details": {
+        "overflow_status": 429,
+        "capacity": 8,
+        "next_request": {
+          "status": 200,
+          "finish_reason": "length"
+        }
+      },
+      "seconds": 2.669
+    }
+  ]
+}

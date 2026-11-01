@@ -539,10 +539,7 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
             RuntimeError::Persistence(format!("failed to inspect {}: {error}", path.display()))
         })?
         .len();
-    let partial_size = temporary
-        .metadata()
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
+    let partial_size = temporary.metadata().map_or(0, |metadata| metadata.len());
     if partial_size > source_size {
         fs::remove_file(temporary).map_err(|error| {
             RuntimeError::Persistence(format!("failed to reset partial model: {error}"))
@@ -551,10 +548,7 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
     let mut input = File::open(&path).map_err(|error| {
         RuntimeError::Persistence(format!("failed to open {}: {error}", path.display()))
     })?;
-    let partial_size = temporary
-        .metadata()
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
+    let partial_size = temporary.metadata().map_or(0, |metadata| metadata.len());
     input.seek(SeekFrom::Start(partial_size)).map_err(|error| {
         RuntimeError::Persistence(format!("failed to seek model source: {error}"))
     })?;
@@ -578,10 +572,7 @@ fn acquire_to(source: &str, temporary: &Path) -> Result<(), RuntimeError> {
         })?;
         eprint!(
             "\rmodel download: {}/{} bytes",
-            output
-                .metadata()
-                .map(|metadata| metadata.len())
-                .unwrap_or(0),
+            output.metadata().map_or(0, |metadata| metadata.len()),
             source_size
         );
     }
@@ -1100,7 +1091,7 @@ mod tests {
             receiver.try_iter().next(),
             Some(RuntimeEvent::ModelRegistered(_))
         ));
-        assert!(registry.list().is_empty());
+        assert_eq!(registry.list(), Vec::new());
     }
 
     #[test]
@@ -1225,7 +1216,7 @@ mod tests {
         let discovered = ModelDiscovery::new(vec![directory.clone()])
             .discover(&registry, "llama.cpp")
             .expect("discover model directory");
-        assert!(discovered.is_empty());
+        assert_eq!(discovered, Vec::new());
         assert_eq!(registry.list().len(), 1);
         std::fs::remove_dir_all(directory).expect("remove discovery directory");
     }
@@ -1244,10 +1235,12 @@ mod tests {
         alias.location = location.clone();
         registry.register(alias).expect("register alias");
         let discovery = ModelDiscovery::new(vec![directory.clone()]);
-        assert!(discovery
-            .discover(&registry, "llama.cpp")
-            .expect("discover")
-            .is_empty());
+        assert_eq!(
+            discovery
+                .discover(&registry, "llama.cpp")
+                .expect("discover"),
+            Vec::new()
+        );
         assert_eq!(registry.list().len(), 1);
 
         let mut stub = model();
@@ -1258,7 +1251,9 @@ mod tests {
         paired.vision_projector_location = Some("mmproj-demo.gguf".to_owned());
         registry.remove("demo-q4").expect("remove");
         registry.register(paired).expect("register paired");
-        discovery.discover(&registry, "llama.cpp").expect("discover");
+        discovery
+            .discover(&registry, "llama.cpp")
+            .expect("discover");
         let ids: Vec<_> = registry.list().into_iter().map(|model| model.id).collect();
         assert_eq!(ids, ["demo-q4"]);
         std::fs::remove_dir_all(directory).expect("remove discovery directory");

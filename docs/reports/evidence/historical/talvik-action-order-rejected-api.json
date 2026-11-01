@@ -1,0 +1,51 @@
+[
+  {
+    "test": "chat",
+    "passed": true,
+    "content": "4",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 26,
+      "total_tokens": 27
+    },
+    "seconds": 12.53
+  },
+  {
+    "test": "coder",
+    "passed": true,
+    "content": "```python\ndef clamp(x, low, high):\n    return max(low, min(x, high))\n```",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 22,
+      "prompt_tokens": 33,
+      "total_tokens": 55
+    },
+    "seconds": 4.11
+  },
+  {
+    "test": "vision",
+    "passed": true,
+    "content": "Red",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 31,
+      "total_tokens": 32
+    },
+    "seconds": 4.68
+  },
+  {
+    "test": "agent_tool_sse",
+    "passed": false,
+    "error": "Stream did not finish successfully",
+    "content": "",
+    "tool_calls": [],
+    "finish_reason": null,
+    "usage": null,
+    "seconds": 23.76
+  }
+]

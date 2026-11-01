@@ -1,0 +1,74 @@
+[
+  {
+    "question": "What is 2 + 2?",
+    "answer": "4",
+    "wall_seconds": 12.517,
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 511,
+      "generation_time_ms": 131,
+      "inference_time_ms": 9826,
+      "latency_ms": 9869,
+      "model_load_time_ms": 2620,
+      "prompt_eval_time_ms": 9695,
+      "prompt_evaluation_time_ms": 9695,
+      "prompt_tokens_per_second": 52.60443527591542,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 9695,
+      "tokens_per_second": 7.590408328900408
+    },
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 510,
+      "total_tokens": 511
+    }
+  },
+  {
+    "question": "What is 3 + 3?",
+    "answer": "6",
+    "wall_seconds": 0.68,
+    "metrics": {
+      "cache_hit": true,
+      "context_tokens": 511,
+      "generation_time_ms": 137,
+      "inference_time_ms": 644,
+      "latency_ms": 644,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 506,
+      "prompt_evaluation_time_ms": 506,
+      "prompt_tokens_per_second": 1007.905138339921,
+      "reused_prompt_tokens": 500,
+      "time_to_first_token_ms": 507,
+      "tokens_per_second": 7.271606916418006
+    },
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 510,
+      "total_tokens": 511
+    }
+  },
+  {
+    "question": "1+1?",
+    "answer": "2",
+    "wall_seconds": 0.752,
+    "metrics": {
+      "cache_hit": true,
+      "context_tokens": 507,
+      "generation_time_ms": 212,
+      "inference_time_ms": 718,
+      "latency_ms": 718,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 506,
+      "prompt_evaluation_time_ms": 506,
+      "prompt_tokens_per_second": 1000.0,
+      "reused_prompt_tokens": 497,
+      "time_to_first_token_ms": 506,
+      "tokens_per_second": 4.711673098956401
+    },
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 506,
+      "total_tokens": 507
+    }
+  }
+]

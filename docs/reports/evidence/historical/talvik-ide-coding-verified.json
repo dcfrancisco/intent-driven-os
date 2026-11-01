@@ -1,0 +1,1 @@
+{"marker": "Talvik verified Agent round trip", "found": true, "session_id": "75afcbae-a8b8-4945-9732-f0bc2b50b2d8", "completion_recorded": true, "timings": {"firstProgress": 287457, "totalElapsed": 301838}, "completed_reads": 1, "tool_ids": ["copilot_readFile"], "has_text": true, "heading_matches": true, "three_numbered_steps": false, "no_visible_control_tags": true}

@@ -176,3 +176,60 @@ each advertised modality.
 
 The sequence is dependency order, not a claim that later modalities are
 available now.
+
+### IDE prefill streaming, 2026-10-31
+
+Admitted Chat Completions streams now send HTTP headers and an assistant-role
+chunk before waiting for backend tokens, including requests with tools. During
+an idle backend wait, SSE comments are flushed every five seconds. These are
+transport keep-alives, not generated content, usage, or completion signals.
+Request validation and admission still fail before headers; later model-output
+failures use SSE error events without a success sentinel. Tool arguments are
+still withheld until the existing bounded parser and validation accept them.
+
+The macOS Intel IDE payload contained 59 tools and roughly 22,000 prompt tokens.
+A focused optional VS Code agent is supplied in
+`docs/examples/vscode/talvik-coding.agent.md` so users can explicitly choose a
+smaller tool set on CPU hardware. It preserves normal editor tool approvals.
+This is a client configuration option; Talvik does not silently discard schemas
+or truncate requests. Full built-in Agent latency remains separately qualified.
+
+### Tool-result continuation correction, 2026-10-31
+
+A real VS Code read-file exchange exposed a continuation that copied Talvik's
+synthetic plural `<tool_calls>` history wrapper as visible output. The HTTP
+edge now carries assistant tool-call history as a structured private record.
+The native adapter renders each past call using the loaded profile's JSON or
+function/parameter protocol, preserving accompanying assistant text and call
+IDs. Function/parameter history escapes XML text and rejects names that its
+protocol cannot represent. Tool instructions now explicitly prefer using
+available results over repeating completed calls. This does not execute calls
+or relax validation of calls emitted by the model. Live continuation behavior
+must be rechecked; this source change alone is not proof of a fix.
+
+For templates declaring both `<tool_response>` markers and a supported tool
+format, tool results now use that response wrapper under a user role. The
+role/content-only native C renderer otherwise misses the full Jinja tool
+branch and emits a literal tool role. Other templates retain their tool role.
+
+### Lazy JSON tool syntax constraints, 2026-10-31
+
+A real 9,288-token Copilot Agent request on Qwen3 1.7B emitted malformed JSON
+after passing the smaller API fixture. JSON-style tool profiles now activate a
+native lazy grammar when tagged, leading fenced-JSON, or leading bare-object
+call output begins. Ordinary prose stays unconstrained. The grammar requires
+valid JSON and matching wrapper delimiters; it does not select a function,
+repair arguments, or replace the existing declaration and choice checks.
+Function/parameter tool profiles retain their separate parser. Native tests
+mask a missing-comma token, require the closing wrapper, and verify prose is
+unrestricted across all supported JSON entry forms.
+
+Chat Completions stream errors now use a data-only JSON error frame. Copilot's
+custom-endpoint client attempted to parse the old `event: error` line as JSON.
+Typed Responses events retain their endpoint-specific format. Failure streams
+still terminate without a success sentinel.
+
+Lazy JSON constraints are enabled only when reasoning is absent or explicitly
+disabled by a supported template control. Leading thought output is also
+excluded from the trigger. Reasoning-enabled tool output keeps the existing
+edge validation, so thought examples cannot activate output grammar.

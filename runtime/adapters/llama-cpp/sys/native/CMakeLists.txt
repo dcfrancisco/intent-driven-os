@@ -1,0 +1,21 @@
+cmake_minimum_required(VERSION 3.18)
+project(talvik_chat_template LANGUAGES CXX)
+if(NOT EXISTS "${LLAMA_CPP_SOURCE_DIR}/common/jinja/runtime.cpp")
+  message(FATAL_ERROR "LLAMA_CPP_SOURCE_DIR must contain the pinned llama.cpp Jinja engine")
+endif()
+find_library(GGML_BASE_LIBRARY NAMES ggml-base PATHS "${LLAMA_CPP_LIB_DIR}" NO_DEFAULT_PATH REQUIRED)
+set(COMMON "${LLAMA_CPP_SOURCE_DIR}/common")
+add_library(oid-chat-template SHARED chat-template.cpp
+  "${COMMON}/json.cpp" "${COMMON}/unicode.cpp"
+  "${COMMON}/jinja/lexer.cpp" "${COMMON}/jinja/parser.cpp"
+  "${COMMON}/jinja/runtime.cpp" "${COMMON}/jinja/string.cpp" "${COMMON}/jinja/value.cpp")
+target_compile_features(oid-chat-template PRIVATE cxx_std_17)
+target_include_directories(oid-chat-template PRIVATE "${COMMON}" "${LLAMA_CPP_SOURCE_DIR}/vendor" "${LLAMA_CPP_SOURCE_DIR}/ggml/include")
+target_link_libraries(oid-chat-template PRIVATE "${GGML_BASE_LIBRARY}")
+set_target_properties(oid-chat-template PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+if(APPLE)
+  set_target_properties(oid-chat-template PROPERTIES INSTALL_NAME_DIR "@rpath" INSTALL_RPATH "@loader_path")
+elseif(UNIX)
+  set_target_properties(oid-chat-template PROPERTIES INSTALL_RPATH "$ORIGIN")
+endif()
+install(TARGETS oid-chat-template LIBRARY DESTINATION . RUNTIME DESTINATION . ARCHIVE DESTINATION .)

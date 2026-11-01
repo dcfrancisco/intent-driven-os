@@ -962,8 +962,11 @@ mod tests {
         )
         .expect("parse remote snapshot");
 
-        assert!(snapshot.loaded_models.is_empty());
-        assert!(snapshot.resident_models.is_empty());
+        assert_eq!(snapshot.loaded_models, [] as [std::string::String; 0]);
+        assert_eq!(
+            snapshot.resident_models,
+            [] as [oid_runtime::ResidentModelSnapshot; 0]
+        );
     }
 
     #[test]
@@ -1061,7 +1064,10 @@ mod tests {
         assert_eq!(result.statistics.prompt_tokens, 3);
         assert_eq!(result.statistics.context_tokens, 8);
         assert_eq!(result.statistics.latency_ms, 1200);
-        assert_eq!(result.statistics.tokens_per_second, 4.5);
+        assert_eq!(
+            result.statistics.tokens_per_second.to_bits(),
+            4.5_f64.to_bits()
+        );
         assert!(result.statistics.metrics_known);
         assert_eq!(
             result

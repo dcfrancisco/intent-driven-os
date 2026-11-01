@@ -1,0 +1,63 @@
+{
+  "model": "qwen3.5-4b-Q4_K_M",
+  "execution": "selection-only; no commands executed; supplied build result is a synthetic fixture",
+  "passed": false,
+  "results": [
+    {
+      "test": "build_only",
+      "passed": false,
+      "seconds": 37.388,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"argument_name\":\"mvn clean package -DskipTests\",\"explanation\":\"Building the Maven project without running tests or checking code quality, as requested.\",\"isBackground\":false}",
+              "name": "run_in_terminal"
+            },
+            "id": "call_http-50211-1793486436146457000_0",
+            "type": "function"
+          }
+        ]
+      }
+    },
+    {
+      "test": "retry_after_narration",
+      "passed": true,
+      "seconds": 19.112,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"command\":\"mvn -DskipTests package\",\"explanation\":\"Building the Maven project without running tests or inspections, as requested.\",\"isBackground\":false}",
+              "name": "run_in_terminal"
+            },
+            "id": "call_http-50211-1793486455257828000_0",
+            "type": "function"
+          }
+        ]
+      }
+    },
+    {
+      "test": "ordinary_question",
+      "passed": true,
+      "seconds": 24.216,
+      "message": {
+        "content": "2 + 2 = 4.",
+        "role": "assistant"
+      }
+    },
+    {
+      "test": "completed_build",
+      "passed": true,
+      "seconds": 7.914,
+      "message": {
+        "content": "BUILD SUCCESS",
+        "role": "assistant"
+      }
+    }
+  ]
+}

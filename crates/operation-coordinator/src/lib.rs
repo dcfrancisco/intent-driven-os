@@ -838,7 +838,7 @@ mod tests {
             .run("system-health", &request, false)
             .expect("run");
         assert!(!result.changed);
-        assert!(coordinator.recoverable().expect("recovery").is_empty());
+        assert_eq!(coordinator.recoverable().expect("recovery").len(), 0);
         std::fs::remove_file(path).expect("cleanup");
     }
 

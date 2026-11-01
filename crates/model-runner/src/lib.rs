@@ -7,7 +7,10 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod output;
+pub mod profile;
 pub mod structured_output;
+pub use profile::{CacheStrategy, ModelProfile, ReasoningFormat, ToolFormat};
 
 pub use structured_output::StructuredOutput;
 
@@ -604,6 +607,13 @@ pub trait ModelRunner: Send + Sync {
         _context_size: u32,
     ) -> Result<Vec<f32>, ModelRunnerError> {
         Err(ModelRunnerError::NotImplemented("embeddings".to_owned()))
+    }
+    /// Inspect the immutable profile of a resident model, without loading it.
+    ///
+    /// # Errors
+    /// Returns a lifecycle error if the selected model is not resident.
+    fn model_profile(&self, _model_id: &ModelId) -> Result<Option<ModelProfile>, ModelRunnerError> {
+        Ok(None)
     }
     /// Report whether the selected resident model exposes tool-capable chat.
     ///

@@ -2,8 +2,10 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use oid_runtime::{
-    auth, ContentPart, GenerationMessage, GenerationOptions, GenerationRequest, GenerationStream,
-    GenerationTermination, ImageInput, MarinaRuntime, RuntimeService, StructuredOutput,
+    auth, CacheStrategy, ContentPart, GenerationMessage, GenerationOptions, GenerationRequest,
+    GenerationResult, GenerationStream, GenerationTermination, ImageInput, MarinaRuntime,
+    ModelProfile, ParsedText, ReasoningFormat, ReasoningStreamParser, RuntimeService,
+    StructuredOutput, ToolFormat,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -170,25 +172,29 @@ impl Readiness {
         self.ready.store(ready, Ordering::Release);
     }
 
-    fn snapshot(&self) -> (bool, String) {
-        (
-            self.ready.load(Ordering::Acquire),
+    fn snapshot(&self, runtime: &dyn RuntimeService) -> (bool, String) {
+        // Bootstrap describes default-model provisioning. Inference readiness
+        // follows current residency, including explicit loads and unloads.
+        let ready = !runtime.snapshot().loaded_models.is_empty();
+        let bootstrap = if self.ready.load(Ordering::Acquire) && !ready {
+            "no_resident_model".to_owned()
+        } else {
             self.state
                 .lock()
-                .map_or_else(|_| "unknown".to_owned(), |state| state.clone()),
-        )
+                .map_or_else(|_| "unknown".to_owned(), |state| state.clone())
+        };
+        (ready, bootstrap)
     }
 }
 
 /// Serve the native HTTP API on an explicitly configured address.
 pub fn serve(
-    address: &str,
+    listener: &TcpListener,
     runtime: &Arc<MarinaRuntime>,
     authentication_enabled: bool,
     default_model_id: Option<&String>,
     readiness: &Arc<Readiness>,
-) -> std::io::Result<()> {
-    let listener = TcpListener::bind(address)?;
+) {
     let default_model_id = default_model_id.cloned();
     let owners = Arc::new(Mutex::new(HashMap::<String, String>::new()));
     for connection in listener.incoming() {
@@ -214,7 +220,6 @@ pub fn serve(
             Err(error) => eprintln!("Marina HTTP accept failed: {error}"),
         }
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -287,7 +292,7 @@ fn handle(
     });
     match (method, path) {
         ("GET", "/healthz") => {
-            let (ready, bootstrap) = readiness.snapshot();
+            let (ready, bootstrap) = readiness.snapshot(runtime);
             respond_json(
                 &mut stream,
                 200,
@@ -295,7 +300,7 @@ fn handle(
             )
         }
         ("GET", "/readyz") => {
-            let (ready, bootstrap) = readiness.snapshot();
+            let (ready, bootstrap) = readiness.snapshot(runtime);
             if ready {
                 respond_json(
                     &mut stream,
@@ -335,7 +340,8 @@ fn handle(
                         "owned_by": "marina",
                         "default": default_model_id.is_some_and(|id| id == model.id),
                         "resident": resident_ids.iter().any(|id| id == &model.id),
-                        "estimated_memory_mib": model.memory_requirement_mb
+                        "estimated_memory_mib": model.memory_requirement_mb,
+                        "runtime_profile": runtime.model_profile(&model.id).as_ref().map(profile_json)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -357,9 +363,8 @@ fn handle(
             if !scope_allowed(&identity, auth::MODELS_READ) {
                 return respond_ollama_scope_error(&mut stream, auth::MODELS_READ);
             }
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             ollama_show(&mut stream, runtime, &request)
         }
@@ -368,9 +373,8 @@ fn handle(
                 return respond_ollama_scope_error(&mut stream, auth::INFERENCE);
             }
             let legacy = path == "/api/embeddings";
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             ollama_embeddings(&mut stream, runtime, &request, legacy)
         }
@@ -383,9 +387,8 @@ fn handle(
             } else {
                 OllamaGenerationEndpoint::Generate
             };
-            let request = match parse_ollama_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_ollama_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             generate_ollama(&mut stream, runtime, &request, &identity, owners, endpoint)
         }
@@ -393,9 +396,8 @@ fn handle(
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
-            let request = match parse_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             embeddings(&mut stream, runtime, &request)
         }
@@ -403,9 +405,8 @@ fn handle(
             if !scope_allowed(&identity, auth::INFERENCE) {
                 return respond_scope_error(&mut stream, auth::INFERENCE);
             }
-            let request = match parse_json_body(&mut stream, &body)? {
-                Some(request) => request,
-                None => return Ok(()),
+            let Some(request) = parse_json_body(&mut stream, &body)? else {
+                return Ok(());
             };
             let endpoint = if path == "/v1/completions" {
                 OpenAiGenerationEndpoint::Completions
@@ -511,7 +512,7 @@ fn embeddings(
         return respond_error(stream, 400, "input must contain non-empty text".to_owned());
     }
     if let Err(error) = runtime.model_load(model) {
-        return respond_error(stream, 409, error.to_string());
+        return respond_error(stream, runtime_error_status(&error), error.to_string());
     }
     let mut data = Vec::with_capacity(inputs.len());
     for (index, input) in inputs.iter().enumerate() {
@@ -668,7 +669,9 @@ fn ollama_show(
                 "families": [model.family],
                 "quantization_level": model.quantization
             },
-            "capabilities": model.capabilities,
+            "capabilities": runtime.model_profile(model_id).as_ref().map(profile_capabilities).unwrap_or_default(),
+            "declared_capabilities": model.capabilities,
+            "runtime_profile": runtime.model_profile(model_id).as_ref().map(profile_json),
             "model_info": {}
         }),
     )
@@ -798,11 +801,24 @@ fn generate_ollama(
         Ok(output) => output,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
     };
-    let prompt = match ollama_prompt(body, endpoint) {
+    let mut prompt = match ollama_prompt(body, endpoint) {
         Ok(prompt) => prompt,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
     };
     let base_prompt = prompt.clone();
+    let enabled_thinking = body.get("think").and_then(Value::as_bool).or_else(|| {
+        std::env::var("TALVIK_ENABLE_THINKING")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    });
+    if endpoint == OllamaGenerationEndpoint::Chat {
+        if let Some(enabled) = enabled_thinking {
+            prompt.insert_str(
+                0,
+                &format!("\u{001e}__talvik_template\nenable_thinking={enabled}"),
+            );
+        }
+    }
     let options = match ollama_generation_options(body) {
         Ok(options) => options,
         Err((status, message)) => return respond_ollama_error(stream, status, message),
@@ -852,6 +868,34 @@ fn generate_ollama(
     } else {
         duration_nanos(load_started.elapsed())
     };
+    let output_profile = runtime.model_profile(model);
+    if let Some(profile) = output_profile.as_ref() {
+        if body.get("think").is_some() && !profile.thinking_control {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded template has no supported thinking control",
+            );
+        }
+        if !profile.completion || (endpoint == OllamaGenerationEndpoint::Chat && !profile.chat) {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded model does not support this text generation endpoint",
+            );
+        }
+        if request_content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image(_)))
+            && !profile.vision
+        {
+            return respond_ollama_error(
+                stream,
+                501,
+                "the loaded model has no initialized vision projector",
+            );
+        }
+    }
     if tool_definitions.is_some() && !runtime.tool_support(model).supported {
         return respond_ollama_error(
             stream,
@@ -863,6 +907,13 @@ fn generate_ollama(
         Ok(created_at) => created_at,
         Err(error) => return respond_ollama_error(stream, 500, error.to_string()),
     };
+    if !reserve_owner(owners, &request_id, &identity.principal) {
+        return respond_ollama_error(
+            stream,
+            409,
+            "request_id is already in use or ownership registry unavailable".to_owned(),
+        );
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
@@ -872,12 +923,19 @@ fn generate_ollama(
         structured_output: structured_output.clone(),
     }) {
         Ok(generation) => generation,
-        Err(error) => return respond_ollama_error(stream, 429, error.to_string()),
+        Err(error) => {
+            finish_owner(owners, &request_id);
+            return respond_ollama_error(stream, runtime_error_status(&error), error.to_string());
+        }
     };
+    let _lease = HttpGenerationLease {
+        generation: &generation,
+        owners,
+        request_id: &request_id,
+    };
+    stream.set_read_timeout(Some(Duration::from_millis(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let generation_started_at = Instant::now();
-    if let Ok(mut owners) = owners.lock() {
-        owners.insert(request_id.clone(), identity.principal.clone());
-    }
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(true);
     if streaming {
         write!(
@@ -888,13 +946,56 @@ fn generate_ollama(
     }
     let stream_tool_calls =
         streaming && endpoint == OllamaGenerationEndpoint::Chat && tool_definitions.is_some();
-    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut tool_parser = stream_tool_calls.then(|| {
+        selected_tool_parser(
+            request_id.clone(),
+            output_profile.as_ref(),
+            tool_definitions,
+        )
+    });
     let mut streamed_tool_calls = Vec::new();
+    let mut reason_parser =
+        if endpoint == OllamaGenerationEndpoint::Chat && structured_output.is_none() {
+            reasoning_parser(output_profile.as_ref(), enabled_thinking)
+        } else {
+            None
+        };
+    let mut reasoning = String::new();
+    let mut pending_completion = None;
     let mut output = String::new();
     let mut first_token_logged = false;
     loop {
-        match generation.recv() {
+        if peer_disconnected(stream)? {
+            generation.cancel();
+            let _ = drain_cancelled_generation(&generation);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "inference client disconnected",
+            ));
+        }
+        let message = pending_completion.take().map_or_else(
+            || generation.recv_timeout(Duration::from_millis(100)),
+            |result| Ok(GenerationMessage::Completed(result)),
+        );
+        let (message, thought) =
+            split_reasoning_message(message, &mut reason_parser, &mut pending_completion);
+        reasoning.push_str(&thought);
+        if streaming && !thought.is_empty() {
+            if let Err(error) = write_ndjson_line(
+                stream,
+                &json!({"model":model,"created_at":created_at,"message":{"role":"assistant","content":"","thinking":thought},"done":false}),
+            ) {
+                generation.cancel();
+                let _ = drain_cancelled_generation(&generation);
+                return Err(error);
+            }
+        }
+        match message {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Ok(GenerationMessage::Token(token)) => {
+                if token.is_empty() {
+                    continue;
+                }
                 if !first_token_logged {
                     first_token_logged = true;
                     eprintln!(
@@ -911,11 +1012,9 @@ fn generate_ollama(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return write_ndjson_line(stream, &json!({"error": message}));
                         }
                     };
@@ -927,11 +1026,9 @@ fn generate_ollama(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return write_ndjson_line(
                                     stream,
                                     &json!({"error": "model returned an undeclared tool name"}),
@@ -940,16 +1037,14 @@ fn generate_ollama(
                             streamed_tool_calls.push(call.clone());
                         }
                         if let Err(error) =
-                            write_ollama_tool_stream_part(stream, model, &created_at, part)
+                            write_ollama_tool_stream_part(stream, model, &created_at, &part)
                         {
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return Err(error);
                         }
                     }
@@ -974,13 +1069,11 @@ fn generate_ollama(
                     if let Err(error) = write_ndjson_line(stream, &chunk) {
                         generation.cancel();
                         let _ = drain_cancelled_generation(&generation);
-                        finish_owner(owners, &request_id);
                         return Err(error);
                     }
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
-                finish_owner(owners, &request_id);
                 if let Some(structured_output) = structured_output.as_ref() {
                     if let Err(message) = structured_output.validate_output(&output) {
                         if streaming {
@@ -1008,7 +1101,7 @@ fn generate_ollama(
                             }
                             streamed_tool_calls.push(call.clone());
                         }
-                        write_ollama_tool_stream_part(stream, model, &created_at, part)?;
+                        write_ollama_tool_stream_part(stream, model, &created_at, &part)?;
                     }
                     (!streamed_tool_calls.is_empty()).then(|| {
                         streamed_tool_calls
@@ -1017,7 +1110,12 @@ fn generate_ollama(
                             .collect::<Vec<_>>()
                     })
                 } else {
-                    match parse_tool_calls(&output, &unique_request_id()) {
+                    match parse_tool_calls_selected(
+                        &output,
+                        &unique_request_id(),
+                        output_profile.as_ref(),
+                        tool_definitions,
+                    ) {
                         Ok(calls) => calls
                             .map(|calls| calls.iter().map(ollama_tool_call).collect::<Vec<_>>()),
                         Err(message) if streaming => {
@@ -1069,6 +1167,12 @@ fn generate_ollama(
                         terminal["message"]["tool_calls"] = json!(tool_calls);
                     }
                 }
+                if !streaming
+                    && !reasoning.trim().is_empty()
+                    && endpoint == OllamaGenerationEndpoint::Chat
+                {
+                    terminal["message"]["thinking"] = json!(reasoning);
+                }
                 add_ollama_statistics(
                     &mut terminal,
                     &result.statistics,
@@ -1081,7 +1185,6 @@ fn generate_ollama(
                 return respond_json(stream, 200, terminal);
             }
             Ok(GenerationMessage::Cancelled(result)) => {
-                finish_owner(owners, &request_id);
                 let mut terminal = match endpoint {
                     OllamaGenerationEndpoint::Chat => json!({
                         "model": model,
@@ -1110,14 +1213,16 @@ fn generate_ollama(
                 return respond_json(stream, 200, terminal);
             }
             Ok(GenerationMessage::Failed(error)) => {
-                finish_owner(owners, &request_id);
                 if streaming {
                     return write_ndjson_line(stream, &json!({"error": error.to_string()}));
                 }
-                return respond_ollama_error(stream, 500, error.to_string());
+                return respond_ollama_error(
+                    stream,
+                    runtime_error_status(&error),
+                    error.to_string(),
+                );
             }
             Err(error) => {
-                finish_owner(owners, &request_id);
                 if streaming {
                     return write_ndjson_line(
                         stream,
@@ -1135,10 +1240,16 @@ fn validate_ollama_generation_request(
     body: &Value,
     endpoint: OllamaGenerationEndpoint,
 ) -> Result<(), (u16, String)> {
-    for field in ["keep_alive", "think", "template", "context"] {
+    for field in ["keep_alive", "template", "context"] {
         if body.get(field).is_some_and(|value| !value.is_null()) {
             return Err((501, format!("request field `{field}` is not supported yet")));
         }
+    }
+    if body.get("think").is_some_and(|v| !v.is_boolean()) {
+        return Err((400, "think must be a boolean".to_owned()));
+    }
+    if endpoint != OllamaGenerationEndpoint::Chat && body.get("think").is_some() {
+        return Err((501, "think is supported only by chat".to_owned()));
     }
     parse_ollama_format(body.get("format"))?;
     if body.get("raw").and_then(Value::as_bool) == Some(true) {
@@ -1401,10 +1512,10 @@ fn write_openai_tool_stream_part(
     request_id: &str,
     created: u64,
     model: &str,
-    part: ToolStreamPart,
+    part: &ToolStreamPart,
     headers_sent: &mut bool,
 ) -> std::io::Result<()> {
-    let Some(delta) = openai_tool_stream_delta(&part, !*headers_sent) else {
+    let Some(delta) = openai_tool_stream_delta(part, !*headers_sent) else {
         return Ok(());
     };
     if !*headers_sent {
@@ -1487,7 +1598,7 @@ fn write_openai_stream_failure(
 
 fn openai_stream_error_frame(error_type: &str, code: &str, message: &str) -> String {
     let error = openai_error(error_type, code, message);
-    format!("event: error\ndata: {error}\n\n")
+    format!("data: {error}\n\n")
 }
 
 fn openai_model_output_error(code: &str, message: &str) -> Value {
@@ -1512,7 +1623,10 @@ fn respond_model_output_error(
 }
 
 fn responses_sse_frame(event_type: &str, sequence_number: u64, payload: Value) -> String {
-    let mut event = payload.as_object().cloned().unwrap_or_default();
+    let mut event = match payload {
+        Value::Object(event) => event,
+        _ => serde_json::Map::new(),
+    };
     event.insert("type".to_owned(), json!(event_type));
     event.insert("sequence_number".to_owned(), json!(sequence_number));
     format!("event: {event_type}\ndata: {}\n\n", Value::Object(event))
@@ -1530,24 +1644,13 @@ fn write_responses_sse_event(
     stream.flush()
 }
 
-fn write_openai_chat_stream_start(
-    stream: &mut TcpStream,
-    request_id: &str,
-    created: u64,
-    model: &str,
-) -> std::io::Result<()> {
-    let event = openai_chat_stream_start_event(request_id, created, model);
-    write!(stream, "data: {event}\n\n")?;
-    stream.flush()
-}
-
 fn openai_chat_stream_start_event(request_id: &str, created: u64, model: &str) -> Value {
     json!({
         "id": request_id,
         "object": "chat.completion.chunk",
         "created": created,
         "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": Value::Null}]
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": Value::Null}]
     })
 }
 
@@ -1565,6 +1668,8 @@ fn responses_output_message(request_id: &str, status: &str, text: &str) -> Value
     })
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn responses_object(
     request_id: &str,
     created: u64,
@@ -1578,30 +1683,33 @@ fn responses_object(
     error: Value,
     incomplete_details: Value,
 ) -> Value {
-    json!({
+    let mut response = json!({
         "id": format!("resp_{request_id}"),
         "object": "response",
         "created_at": created,
         "status": status,
         "background": false,
-        "error": error,
-        "incomplete_details": incomplete_details,
         "instructions": body.get("instructions").cloned().unwrap_or(Value::Null),
         "max_output_tokens": body.get("max_output_tokens").cloned().unwrap_or(Value::Null),
         "model": model,
-        "output": output,
         "parallel_tool_calls": false,
         "previous_response_id": Value::Null,
         "temperature": temperature,
         "text": {"format": {"type": "text"}},
         "top_p": top_p,
         "truncation": "disabled",
-        "usage": usage,
         "metadata": body.get("metadata").cloned().unwrap_or_else(|| json!({})),
         "store": false
-    })
+    });
+    response["output"] = Value::Array(output);
+    response["usage"] = usage;
+    response["error"] = error;
+    response["incomplete_details"] = incomplete_details;
+    response
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn write_responses_stream_start(
     stream: &mut TcpStream,
     sequence_number: &mut u64,
@@ -1666,6 +1774,8 @@ fn write_responses_stream_start(
     )
 }
 
+// Keep wire fields explicit at serialization boundaries; callers supply named locals.
+#[allow(clippy::too_many_arguments)]
 fn write_responses_stream_failure(
     stream: &mut TcpStream,
     sequence_number: &mut u64,
@@ -1713,9 +1823,9 @@ fn write_ollama_tool_stream_part(
     stream: &mut TcpStream,
     model: &str,
     created_at: &str,
-    part: ToolStreamPart,
+    part: &ToolStreamPart,
 ) -> std::io::Result<()> {
-    let Some(chunk) = ollama_tool_stream_chunk(model, created_at, &part) else {
+    let Some(chunk) = ollama_tool_stream_chunk(model, created_at, part) else {
         return Ok(());
     };
     write_ndjson_line(stream, &chunk)
@@ -1841,6 +1951,122 @@ fn respond_ollama_scope_error(stream: &mut TcpStream, scope: &str) -> std::io::R
     respond_ollama_error(stream, 403, format!("required scope: {scope}"))
 }
 
+fn profile_capabilities(profile: &ModelProfile) -> Vec<&'static str> {
+    let mut result = Vec::new();
+    for (enabled, name) in [
+        (profile.completion, "completion"),
+        (profile.chat, "chat"),
+        (profile.embedding, "embedding"),
+        (profile.vision, "vision"),
+        (profile.tool_format.is_some(), "tools"),
+        (profile.reasoning_format.is_some(), "thinking"),
+    ] {
+        if enabled {
+            result.push(name);
+        }
+    }
+    result
+}
+
+fn profile_json(profile: &ModelProfile) -> Value {
+    json!({
+        "architecture": profile.architecture, "training_context_length": profile.context_length,
+        "capabilities": profile_capabilities(profile), "tokenizer_adds_bos": profile.tokenizer_adds_bos,
+        "cache_strategy": match profile.cache { CacheStrategy::Disabled => "disabled", CacheStrategy::Attention => "attention", CacheStrategy::Recurrent => "recurrent_checkpoint" },
+        "tools_declared": profile.tools_declared,
+        "tool_parser": profile.tool_format.map(|format| match format { ToolFormat::XmlJson => "xml_json", ToolFormat::XmlFunction => "xml_function" }),
+        "embedding_declared":profile.embedding_declared,
+        "reasoning_parser": profile.reasoning_format.map(|ReasoningFormat::ThinkTags| "think_tags"),
+        "thinking_control": profile.thinking_control, "reasoning_prefilled": profile.reasoning_prefilled,
+        "evidence": "loaded_artifact_and_backend_support"
+    })
+}
+
+fn reasoning_parser(
+    profile: Option<&ModelProfile>,
+    enabled: Option<bool>,
+) -> Option<ReasoningStreamParser> {
+    let profile = profile?;
+    match profile.reasoning_format? {
+        ReasoningFormat::ThinkTags => Some(ReasoningStreamParser::new(
+            enabled
+                .filter(|_| profile.thinking_control)
+                .unwrap_or(profile.reasoning_prefilled),
+        )),
+    }
+}
+
+fn selected_tool_parser(
+    id: String,
+    profile: Option<&ModelProfile>,
+    definitions: Option<&Vec<Value>>,
+) -> ToolCallStreamParser {
+    let mut parser = ToolCallStreamParser::new(id);
+    parser.format = profile
+        .and_then(|p| p.tool_format)
+        .unwrap_or(ToolFormat::XmlJson);
+    parser.definitions = definitions.cloned().unwrap_or_default();
+    parser
+}
+
+fn split_reasoning_message(
+    message: Result<GenerationMessage, std::sync::mpsc::RecvTimeoutError>,
+    parser: &mut Option<ReasoningStreamParser>,
+    pending: &mut Option<GenerationResult>,
+) -> (
+    Result<GenerationMessage, std::sync::mpsc::RecvTimeoutError>,
+    String,
+) {
+    match message {
+        Ok(GenerationMessage::Token(token)) => {
+            let parsed = parser.as_mut().map_or_else(
+                || ParsedText {
+                    content: token.clone(),
+                    reasoning: String::new(),
+                },
+                |p| p.push(&token),
+            );
+            (
+                Ok(GenerationMessage::Token(parsed.content)),
+                parsed.reasoning,
+            )
+        }
+        Ok(GenerationMessage::Completed(result)) => {
+            let tail = parser
+                .take()
+                .map_or_else(ParsedText::default, |mut p| p.finish());
+            if tail.content.is_empty() {
+                (Ok(GenerationMessage::Completed(result)), tail.reasoning)
+            } else {
+                *pending = Some(result);
+                (Ok(GenerationMessage::Token(tail.content)), tail.reasoning)
+            }
+        }
+        other => (other, String::new()),
+    }
+}
+
+fn write_openai_reasoning(
+    stream: &mut TcpStream,
+    id: &str,
+    created: u64,
+    model: &str,
+    text: &str,
+    headers: &mut bool,
+) -> std::io::Result<()> {
+    if !*headers {
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n")?;
+    }
+    let mut delta = json!({"reasoning_content":text});
+    if !*headers {
+        delta["role"] = json!("assistant");
+    }
+    *headers = true;
+    let event = json!({"id":id,"object":"chat.completion.chunk","created":created,"model":model,"choices":[{"index":0,"delta":delta,"finish_reason":Value::Null}]});
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
 const TOOL_CALL_START: &str = "<tool_call>";
 const TOOL_CALL_END: &str = "</tool_call>";
 const MAX_TOOL_CALL_BYTES: usize = 64 * 1024;
@@ -1851,6 +2077,8 @@ enum ToolStreamPart {
 }
 
 struct ToolCallStreamParser {
+    format: ToolFormat,
+    definitions: Vec<Value>,
     buffer: String,
     inside_call: bool,
     close_search_from: usize,
@@ -1861,6 +2089,8 @@ struct ToolCallStreamParser {
 impl ToolCallStreamParser {
     fn new(id_prefix: String) -> Self {
         Self {
+            format: ToolFormat::XmlJson,
+            definitions: Vec::new(),
             buffer: String::new(),
             inside_call: false,
             close_search_from: 0,
@@ -1886,11 +2116,24 @@ impl ToolCallStreamParser {
             .as_bytes()
             .starts_with(self.buffer.as_bytes())
         {
+            // Some instruction-tuned models emit another opening marker after
+            // a complete call, then stop before its payload. The completed call
+            // is already valid and streamed to the client, so discard only
+            // this trailing partial marker instead of invalidating the turn.
+            if self.next_index > 0 {
+                self.buffer.clear();
+                return Ok(parts);
+            }
             return Err("model ended with an incomplete tool-call marker".to_owned());
         }
         let remaining = std::mem::take(&mut self.buffer);
-        if let Ok(value) = serde_json::from_str::<Value>(remaining.trim()) {
-            if value.get("name").is_some() || value.get("arguments").is_some() {
+        let candidate = remaining.trim();
+        let candidate = candidate
+            .strip_prefix("```json")
+            .and_then(|v| v.trim_end().strip_suffix("```"))
+            .map_or(candidate, str::trim);
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            if value.get("name").is_some() && value.get("arguments").is_some() {
                 parts.push(self.parse_call(&value)?);
                 return Ok(parts);
             }
@@ -1909,8 +2152,14 @@ impl ToolCallStreamParser {
                     TOOL_CALL_END.as_bytes(),
                 ) {
                     let end = self.close_search_from + relative;
-                    let value = serde_json::from_str::<Value>(&self.buffer[..end].trim())
-                        .map_err(|error| format!("malformed model tool call: {error}"))?;
+                    if end > MAX_TOOL_CALL_BYTES {
+                        return Err("model tool call exceeded the 64 KiB limit".to_owned());
+                    }
+                    let value = parse_tool_payload(
+                        self.buffer[..end].trim(),
+                        self.format,
+                        &self.definitions,
+                    )?;
                     parts.push(self.parse_call(&value)?);
                     self.buffer.drain(..end + TOOL_CALL_END.len());
                     self.inside_call = false;
@@ -1927,6 +2176,20 @@ impl ToolCallStreamParser {
                 break;
             }
 
+            let leading = self.buffer.trim_start();
+            if self.next_index == 0
+                && (leading.starts_with('{')
+                    || leading.starts_with("```json")
+                    || (!leading.is_empty() && "```json".starts_with(leading)))
+            {
+                if self.buffer.len() > MAX_TOOL_CALL_BYTES {
+                    return Err("model tool call exceeded the 64 KiB limit".to_owned());
+                }
+                // A standalone JSON call may be fenced by coding models. Hold
+                // only this leading bounded candidate until completion; never
+                // scan arbitrary answer prose or later code blocks for calls.
+                break;
+            }
             if let Some(start) = self.buffer.find(TOOL_CALL_START) {
                 if start > 0 {
                     parts.push(ToolStreamPart::Content(self.buffer[..start].to_owned()));
@@ -1987,6 +2250,77 @@ impl ToolCallStreamParser {
     }
 }
 
+fn parse_tool_payload(
+    payload: &str,
+    format: ToolFormat,
+    definitions: &[Value],
+) -> Result<Value, String> {
+    if format == ToolFormat::XmlJson || payload.starts_with('{') {
+        return serde_json::from_str(payload)
+            .map_err(|error| format!("malformed model tool call: {error}"));
+    }
+    // This is the model's bounded function-tag protocol, not general XML:
+    // no DTDs, entities, attributes, I/O or recursive element expansion.
+    let rest = payload
+        .strip_prefix("<function=")
+        .ok_or_else(|| "model tool call is missing a function block".to_owned())?;
+    let (name, rest) = rest
+        .split_once('>')
+        .ok_or_else(|| "model tool call has an incomplete function name".to_owned())?;
+    let mut body = rest
+        .trim_end()
+        .strip_suffix("</function>")
+        .ok_or_else(|| "model tool call is missing its function terminator".to_owned())?
+        .trim();
+    let schema = definitions
+        .iter()
+        .find(|d| d.pointer("/function/name").and_then(Value::as_str) == Some(name))
+        .and_then(|d| d.pointer("/function/parameters/properties"));
+    let mut arguments = serde_json::Map::new();
+    while !body.is_empty() {
+        let parameter = body
+            .strip_prefix("<parameter=")
+            .ok_or_else(|| "unexpected content in model function call".to_owned())?;
+        let (key, rest) = parameter
+            .split_once('>')
+            .ok_or_else(|| "incomplete model parameter name".to_owned())?;
+        if key.is_empty() || arguments.contains_key(key) {
+            return Err("empty or duplicate model parameter name".to_owned());
+        }
+        let (raw, remaining) = rest
+            .split_once("</parameter>")
+            .ok_or_else(|| "incomplete model parameter value".to_owned())?;
+        let raw = raw.strip_prefix('\n').unwrap_or(raw);
+        let raw = raw.strip_suffix('\n').unwrap_or(raw);
+        let kind = schema
+            .and_then(|p| p.get(key))
+            .and_then(|p| p.get("type"))
+            .and_then(Value::as_str);
+        let value = if kind == Some("string") {
+            Value::String(raw.to_owned())
+        } else {
+            let parsed = serde_json::from_str::<Value>(raw.trim());
+            match (kind, parsed) {
+                (None, _) => Value::String(raw.to_owned()),
+                (Some("integer"), Ok(v)) if v.is_i64() || v.is_u64() => v,
+                (Some("number"), Ok(v)) if v.is_number() => v,
+                (Some("boolean"), Ok(v)) if v.is_boolean() => v,
+                (Some("object"), Ok(v)) if v.is_object() => v,
+                (Some("array"), Ok(v)) if v.is_array() => v,
+                (Some("null"), Ok(v)) if v.is_null() => v,
+                _ => {
+                    return Err(format!(
+                        "model parameter {key:?} does not match its declared type"
+                    ))
+                }
+            }
+        };
+        arguments.insert(key.to_owned(), value);
+        body = remaining.trim();
+    }
+    Ok(json!({"name":name,"arguments":arguments}))
+}
+
 fn find_byte_sequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -2001,8 +2335,18 @@ fn suffix_prefix_overlap(value: &[u8], marker: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
 fn parse_tool_calls(output: &str, id_prefix: &str) -> Result<Option<Vec<Value>>, String> {
-    let mut parser = ToolCallStreamParser::new(id_prefix.to_owned());
+    parse_tool_calls_selected(output, id_prefix, None, None)
+}
+
+fn parse_tool_calls_selected(
+    output: &str,
+    id_prefix: &str,
+    profile: Option<&ModelProfile>,
+    definitions: Option<&Vec<Value>>,
+) -> Result<Option<Vec<Value>>, String> {
+    let mut parser = selected_tool_parser(id_prefix.to_owned(), profile, definitions);
     let mut calls = Vec::new();
     for part in parser.push(output)?.into_iter().chain(parser.finish()?) {
         if let ToolStreamPart::Call { call, .. } = part {
@@ -2105,6 +2449,8 @@ fn build_chat_prompt(body: &Value) -> Result<String, String> {
     Ok(flatten_content(&parts))
 }
 
+// Validate the complete protocol object together so incompatible fields cannot bypass checks.
+#[allow(clippy::too_many_lines)]
 fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
     let Some(messages) = body.get("messages") else {
         let prompt = body
@@ -2130,38 +2476,47 @@ fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
         if !matches!(role, "system" | "developer" | "user" | "assistant" | "tool") {
             return Err(format!("unsupported message role: {role}"));
         }
-        push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
         if role == "assistant" {
             if let Some(calls) = message.get("tool_calls").filter(|calls| !calls.is_null()) {
-                push_text_part(&mut parts, &format!("<tool_calls>{calls}</tool_calls>"));
-            } else {
-                let content = message
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?;
-                push_text_part(&mut parts, content);
+                // Keep history structured until the adapter can select the
+                // loaded model's tool format, just like tool instructions.
+                let history = json!({"calls": calls, "content": message.get("content").and_then(Value::as_str).unwrap_or("")});
+                push_text_part(
+                    &mut parts,
+                    &format!("\u{001e}__talvik_tool_calls\n{history}"),
+                );
+                continue;
             }
+        }
+        if role == "tool" {
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "tool message content must be a string".to_owned())?;
+            let mut result = json!({"content":content});
+            for key in ["name", "tool_call_id"] {
+                if let Some(value) = message.get(key) {
+                    result[key] = value.clone();
+                }
+            }
+            push_text_part(
+                &mut parts,
+                &format!("\u{001e}__talvik_tool_result\n{result}"),
+            );
+            continue;
+        }
+        push_text_part(&mut parts, &format!("\u{001e}{role}\n"));
+        if role == "assistant" {
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "assistant message requires content or tool_calls".to_owned())?;
+            push_text_part(&mut parts, content);
         } else {
             let content = message
                 .get("content")
                 .ok_or_else(|| "message content is required".to_owned())?;
-            if role == "tool" {
-                let content = content
-                    .as_str()
-                    .ok_or_else(|| "tool message content must be a string".to_owned())?;
-                let name = message
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("tool");
-                let call_id = message
-                    .get("tool_call_id")
-                    .and_then(Value::as_str)
-                    .map_or_else(String::new, |id| format!(" (tool_call_id: {id})"));
-                push_text_part(
-                    &mut parts,
-                    &format!("Tool result for {name}{call_id}: {content}"),
-                );
-            } else if let Some(content) = content.as_str() {
+            if let Some(content) = content.as_str() {
                 push_text_part(&mut parts, content);
             } else if let Some(content) = content.as_array() {
                 for part in content {
@@ -2288,6 +2643,30 @@ fn parse_tool_choice(body: &Value) -> Result<OpenAiToolChoice, (u16, String)> {
             "`tool_choice` must be a string or function choice object".to_owned(),
         )),
     }
+}
+
+fn parse_chat_template_kwargs(body: &Value) -> Result<Option<bool>, (u16, String)> {
+    let Some(kwargs) = body.get("chat_template_kwargs") else {
+        return Ok(None);
+    };
+    let Some(kwargs) = kwargs.as_object() else {
+        return Err((400, "`chat_template_kwargs` must be an object".to_owned()));
+    };
+    if let Some(field) = kwargs.keys().find(|key| key.as_str() != "enable_thinking") {
+        return Err((
+            501,
+            format!("`chat_template_kwargs.{field}` is not supported yet"),
+        ));
+    }
+    let Some(enabled) = kwargs.get("enable_thinking") else {
+        return Ok(None);
+    };
+    enabled.as_bool().map(Some).ok_or_else(|| {
+        (
+            400,
+            "`chat_template_kwargs.enable_thinking` must be a boolean".to_owned(),
+        )
+    })
 }
 
 fn validate_tool_definitions(body: &Value) -> Result<Vec<String>, (u16, String)> {
@@ -2448,10 +2827,10 @@ fn parse_openai_response_format(
                     "`response_format.json_schema` contains an unsupported field".to_owned(),
                 ));
             }
-            if !spec
+            if spec
                 .get("name")
                 .and_then(Value::as_str)
-                .is_some_and(|name| !name.trim().is_empty())
+                .is_none_or(|name| name.trim().is_empty())
             {
                 return Err((
                     400,
@@ -2520,6 +2899,8 @@ fn parse_ollama_format(value: Option<&Value>) -> Result<Option<StructuredOutput>
     Ok(Some(output))
 }
 
+// Validate the complete protocol object together so incompatible fields cannot bypass checks.
+#[allow(clippy::too_many_lines)]
 fn validate_generation_request(
     body: &Value,
     endpoint: OpenAiGenerationEndpoint,
@@ -2573,6 +2954,15 @@ fn validate_generation_request(
             ));
         }
     }
+    if body.get("chat_template_kwargs").is_some() {
+        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+            return Err((
+                501,
+                "`chat_template_kwargs` is only supported for Chat Completions".to_owned(),
+            ));
+        }
+        parse_chat_template_kwargs(body)?;
+    }
     if let Some(value) = body.get("n") {
         match value.as_u64() {
             Some(1) => {}
@@ -2588,13 +2978,11 @@ fn validate_generation_request(
     if body.get("tools").is_some() && !body.get("tools").is_some_and(Value::is_array) {
         return Err((400, "tools must be an array".to_owned()));
     }
-    if body.get("tool_choice").is_some() {
-        if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
-            return Err((
-                501,
-                "`tool_choice` is only supported for Chat Completions".to_owned(),
-            ));
-        }
+    if body.get("tool_choice").is_some() && endpoint != OpenAiGenerationEndpoint::ChatCompletions {
+        return Err((
+            501,
+            "`tool_choice` is only supported for Chat Completions".to_owned(),
+        ));
     }
     if let Some(value) = body.get("parallel_tool_calls") {
         if endpoint != OpenAiGenerationEndpoint::ChatCompletions {
@@ -2683,7 +3071,7 @@ fn validate_generation_request(
         if let Some(value) = body.get(field) {
             if !value
                 .as_u64()
-                .is_some_and(|tokens| tokens > 0 && tokens <= u64::from(u32::MAX))
+                .is_some_and(|tokens| tokens > 0 && u32::try_from(tokens).is_ok())
             {
                 return Err((400, format!("{field} must be a positive integer")));
             }
@@ -2720,9 +3108,9 @@ fn validate_generation_request(
         }
     }
     if let Some(value) = body.get("seed") {
-        if !value
+        if value
             .as_u64()
-            .is_some_and(|seed| seed <= u64::from(u32::MAX))
+            .is_none_or(|seed| u32::try_from(seed).is_err())
         {
             return Err((400, "seed must be an unsigned 32-bit integer".to_owned()));
         }
@@ -2757,6 +3145,47 @@ fn validate_generation_request(
     Ok(())
 }
 
+fn generation_defaults(
+    body: &Value,
+    context_default: Option<&str>,
+    thinking_default: Option<&str>,
+) -> Result<(u32, Option<bool>), (u16, String)> {
+    let context = if let Some(value) = body.get("context_size") {
+        value
+            .as_u64()
+            .ok_or_else(|| (400, "context_size must be an integer".to_owned()))?
+    } else {
+        context_default
+            .unwrap_or("4096")
+            .parse::<u64>()
+            .map_err(|_| {
+                (
+                    500,
+                    "TALVIK_HTTP_CONTEXT_SIZE must be an integer".to_owned(),
+                )
+            })?
+    };
+    if context == 0 || context > MAX_CONTEXT_TOKENS {
+        return Err((
+            400,
+            format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
+        ));
+    }
+    let thinking = match parse_chat_template_kwargs(body)? {
+        Some(value) => Some(value),
+        None => thinking_default
+            .map(str::parse::<bool>)
+            .transpose()
+            .map_err(|_| {
+                (
+                    500,
+                    "TALVIK_ENABLE_THINKING must be true or false".to_owned(),
+                )
+            })?,
+    };
+    Ok((u32::try_from(context).unwrap_or(u32::MAX), thinking))
+}
+
 #[allow(clippy::too_many_lines)]
 fn generate(
     stream: &mut TcpStream,
@@ -2774,6 +3203,14 @@ fn generate(
     }
     let structured_output = match parse_openai_response_format(body.get("response_format")) {
         Ok(output) => output,
+        Err((status, message)) => return respond_error(stream, status, message),
+    };
+    let (context_size, enable_thinking) = match generation_defaults(
+        body,
+        std::env::var("TALVIK_HTTP_CONTEXT_SIZE").ok().as_deref(),
+        std::env::var("TALVIK_ENABLE_THINKING").ok().as_deref(),
+    ) {
+        Ok(value) => value,
         Err((status, message)) => return respond_error(stream, status, message),
     };
     if structured_output.is_some()
@@ -2823,6 +3260,14 @@ fn generate(
         Err(message) => return respond_error(stream, 400, message),
     };
     let base_prompt = prompt.clone();
+    if let Some(enabled) =
+        enable_thinking.filter(|_| endpoint == OpenAiGenerationEndpoint::ChatCompletions)
+    {
+        prompt.insert_str(
+            0,
+            &format!("\u{001e}__talvik_template\nenable_thinking={enabled}"),
+        );
+    }
     if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
         if let Some(tools) = tool_definitions {
             prompt.insert_str(
@@ -2868,18 +3313,7 @@ fn generate(
         .get("timeout_ms")
         .and_then(Value::as_u64)
         .map(|milliseconds| Duration::from_millis(milliseconds.min(300_000)));
-    let context_size = body
-        .get("context_size")
-        .and_then(Value::as_u64)
-        .unwrap_or(4096);
-    if context_size == 0 || context_size > MAX_CONTEXT_TOKENS {
-        return respond_error(
-            stream,
-            429,
-            format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
-        );
-    }
-    let options = generation_options(body, u32::try_from(context_size).unwrap_or(u32::MAX));
+    let options = generation_options(body, context_size);
     let response_temperature = options.temperature;
     let response_top_p = options.top_p;
     let created = match openai_timestamp() {
@@ -2891,7 +3325,7 @@ fn generate(
         .map(|metadata| matches!(metadata.status, oid_runtime::ModelStatus::Loaded));
     let load_started = Instant::now();
     if let Err(error) = runtime.model_load(model) {
-        return respond_error(stream, 409, error.to_string());
+        return respond_error(stream, runtime_error_status(&error), error.to_string());
     }
     let model_load_time_ms = was_resident
         .filter(|resident| !resident)
@@ -2909,6 +3343,40 @@ fn generate(
         options.top_k,
         options.seed
     );
+    let output_profile = runtime.model_profile(model);
+    if let Some(profile) = output_profile.as_ref() {
+        if !profile.completion
+            || (endpoint == OpenAiGenerationEndpoint::ChatCompletions && !profile.chat)
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded model does not support this text generation endpoint".to_owned(),
+            );
+        }
+        if body
+            .get("chat_template_kwargs")
+            .is_some_and(|kwargs| kwargs.get("enable_thinking").is_some())
+            && !profile.thinking_control
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded template has no supported thinking control".to_owned(),
+            );
+        }
+        if request_content
+            .iter()
+            .any(|p| matches!(p, ContentPart::Image(_)))
+            && !profile.vision
+        {
+            return respond_error(
+                stream,
+                501,
+                "the loaded model has no initialized vision projector".to_owned(),
+            );
+        }
+    }
     if tool_definitions.is_some() {
         let support = runtime.tool_support(model);
         if !support.supported {
@@ -2919,6 +3387,23 @@ fn generate(
             );
         }
     }
+    if !reserve_owner(owners, &request_id, &identity.principal) {
+        return respond_error(
+            stream,
+            409,
+            "request_id is already in use or ownership registry unavailable".to_owned(),
+        );
+    }
+    if std::env::var("TALVIK_TRACE_PREFILL")
+        .is_ok_and(|value| matches!(value.as_str(), "1" | "true"))
+    {
+        let messages = body.get("messages").and_then(Value::as_array);
+        let roles = messages.into_iter().flatten().map(|message| json!({"role": message.get("role"), "content_bytes": message.get("content").map_or(0, |content| content.to_string().len())})).collect::<Vec<_>>();
+        let tool_bytes = tool_definitions.map_or(0, |tools| {
+            serde_json::to_vec(tools).map_or(0, |value| value.len())
+        });
+        eprintln!("Talvik HTTP request_profile request_id={request_id} prompt_bytes={} tool_count={} tool_schema_bytes={tool_bytes} messages={}", prompt.len(), tool_definitions.map_or(0, Vec::len), json!(roles));
+    }
     let generation = match runtime.generate(GenerationRequest {
         request_id: request_id.clone(),
         model_id: model.to_owned(),
@@ -2928,17 +3413,37 @@ fn generate(
         structured_output: structured_output.clone(),
     }) {
         Ok(stream_result) => stream_result,
-        Err(error) => return respond_error(stream, 429, error.to_string()),
+        Err(error) => {
+            finish_owner(owners, &request_id);
+            return respond_error(stream, runtime_error_status(&error), error.to_string());
+        }
     };
-    if let Ok(mut owners) = owners.lock() {
-        owners.insert(request_id.clone(), identity.principal.clone());
-    }
+    let _lease = HttpGenerationLease {
+        generation: &generation,
+        owners,
+        request_id: &request_id,
+    };
+    // Bound dead/slow clients as well as the backend wait. The request body is
+    // fully consumed before these settings are applied.
+    stream.set_read_timeout(Some(Duration::from_millis(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let defer_stream_headers = streaming && tool_definitions.is_some();
+    // Admit and validate before starting SSE, then acknowledge chat requests
+    // immediately. Tool output still passes the bounded parser and validation;
+    // delaying the HTTP headers until output made CPU prefill look hung to IDEs.
+    let defer_stream_headers = streaming
+        && tool_definitions.is_some()
+        && endpoint != OpenAiGenerationEndpoint::ChatCompletions;
     let stream_tool_calls = streaming
         && endpoint == OpenAiGenerationEndpoint::ChatCompletions
         && tool_definitions.is_some();
-    let mut tool_parser = stream_tool_calls.then(|| ToolCallStreamParser::new(request_id.clone()));
+    let mut tool_parser = stream_tool_calls.then(|| {
+        selected_tool_parser(
+            request_id.clone(),
+            output_profile.as_ref(),
+            tool_definitions,
+        )
+    });
     let mut streamed_tool_calls = Vec::new();
     let mut stream_headers_sent = false;
     let mut response_sequence_number = 0;
@@ -2950,14 +3455,9 @@ fn generate(
         stream.flush()?;
         stream_headers_sent = true;
         if endpoint == OpenAiGenerationEndpoint::ChatCompletions {
-            if let Err(error) = write_openai_chat_stream_start(stream, &request_id, created, model)
-            {
-                generation.cancel();
-                let _ = drain_cancelled_generation(&generation);
-                finish_owner(owners, &request_id);
-                return Err(error);
-            }
-        } else if endpoint == OpenAiGenerationEndpoint::Responses {
+            write_chat_stream_role(stream, &request_id, created, model)?;
+        }
+        if endpoint == OpenAiGenerationEndpoint::Responses {
             if let Err(error) = write_responses_stream_start(
                 stream,
                 &mut response_sequence_number,
@@ -2970,49 +3470,79 @@ fn generate(
             ) {
                 generation.cancel();
                 if !drain_cancelled_generation(&generation) {
-                    eprintln!(
-                        "Talvik HTTP generation cleanup timed out request_id={}",
-                        request_id
-                    );
+                    eprintln!("Talvik HTTP generation cleanup timed out request_id={request_id}");
                 }
-                finish_owner(owners, &request_id);
                 return Err(error);
             }
         }
     }
+    let mut reason_parser =
+        if endpoint == OpenAiGenerationEndpoint::ChatCompletions && structured_output.is_none() {
+            reasoning_parser(output_profile.as_ref(), enable_thinking)
+        } else {
+            None
+        };
+    let mut reasoning = String::new();
+    let mut pending_completion = None;
     let mut output = String::new();
     let deadline = timeout.map(|duration| Instant::now() + duration);
+    let mut last_keepalive = Instant::now();
     loop {
-        let message = if streaming {
-            let wait = deadline.map_or(SSE_HEARTBEAT_INTERVAL, |deadline| {
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(SSE_HEARTBEAT_INTERVAL)
-            });
-            if wait.is_zero() {
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-            } else {
-                generation.recv_timeout(wait)
+        if peer_disconnected(stream)? {
+            generation.cancel();
+            if !drain_cancelled_generation(&generation) {
+                eprintln!("Talvik HTTP disconnect cleanup timed out request_id={request_id}");
             }
-        } else {
-            deadline.map_or_else(
-                || {
-                    generation
-                        .recv()
-                        .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
-                },
-                |deadline| {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                    } else {
-                        generation.recv_timeout(remaining)
-                    }
-                },
-            )
-        };
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "inference client disconnected",
+            ));
+        }
+        let wait = deadline.map_or(Duration::from_millis(100), |end| {
+            end.saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(100))
+        });
+        let message = pending_completion.take().map_or_else(
+            || generation.recv_timeout(wait),
+            |result| Ok(GenerationMessage::Completed(result)),
+        );
+        if matches!(message, Err(std::sync::mpsc::RecvTimeoutError::Timeout))
+            && deadline.is_none_or(|end| Instant::now() < end)
+        {
+            if streaming
+                && stream_headers_sent
+                && last_keepalive.elapsed() >= SSE_HEARTBEAT_INTERVAL
+            {
+                // SSE comments are ignored by OpenAI clients. They keep a long
+                // prefill connection live without inventing content or usage.
+                stream.write_all(b": talvik keep-alive\n\n")?;
+                stream.flush()?;
+                last_keepalive = Instant::now();
+            }
+            continue;
+        }
+        let (message, thought) =
+            split_reasoning_message(message, &mut reason_parser, &mut pending_completion);
+        reasoning.push_str(&thought);
+        if streaming && !thought.is_empty() {
+            if let Err(error) = write_openai_reasoning(
+                stream,
+                &request_id,
+                created,
+                model,
+                &thought,
+                &mut stream_headers_sent,
+            ) {
+                generation.cancel();
+                let _ = drain_cancelled_generation(&generation);
+                return Err(error);
+            }
+        }
         match message {
             Ok(GenerationMessage::Token(token)) => {
+                if token.is_empty() {
+                    continue;
+                }
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
                         Ok(parts) => parts,
@@ -3020,11 +3550,9 @@ fn generate(
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return write_openai_stream_error(
                                 stream,
                                 stream_headers_sent,
@@ -3052,11 +3580,9 @@ fn generate(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return write_openai_stream_error(
                                     stream,
                                     stream_headers_sent,
@@ -3071,17 +3597,15 @@ fn generate(
                             &request_id,
                             created,
                             model,
-                            part,
+                            &part,
                             &mut stream_headers_sent,
                         ) {
                             generation.cancel();
                             if !drain_cancelled_generation(&generation) {
                                 eprintln!(
-                                    "Talvik HTTP generation cleanup timed out request_id={}",
-                                    request_id
+                                    "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                 );
                             }
-                            finish_owner(owners, &request_id);
                             return Err(error);
                         }
                     }
@@ -3119,11 +3643,9 @@ fn generate(
                                 generation.cancel();
                                 if !drain_cancelled_generation(&generation) {
                                     eprintln!(
-                                        "Talvik HTTP generation cleanup timed out request_id={}",
-                                        request_id
+                                        "Talvik HTTP generation cleanup timed out request_id={request_id}"
                                     );
                                 }
-                                finish_owner(owners, &request_id);
                                 return Err(error);
                             }
                             continue;
@@ -3134,7 +3656,6 @@ fn generate(
                 }
             }
             Ok(GenerationMessage::Completed(result)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation completed request_id={} model={} termination={:?} generated_tokens={}",
                     request_id,
@@ -3204,20 +3725,23 @@ fn generate(
                                 }
                                 streamed_tool_calls.push(call.clone());
                             }
-                            if let Err(error) = write_openai_tool_stream_part(
+                            write_openai_tool_stream_part(
                                 stream,
                                 &request_id,
                                 created,
                                 model,
-                                part,
+                                &part,
                                 &mut stream_headers_sent,
-                            ) {
-                                return Err(error);
-                            }
+                            )?;
                         }
                         (!streamed_tool_calls.is_empty()).then(|| streamed_tool_calls.clone())
                     } else {
-                        match parse_tool_calls(&output, &unique_request_id()) {
+                        match parse_tool_calls_selected(
+                            &output,
+                            &unique_request_id(),
+                            output_profile.as_ref(),
+                            tool_definitions,
+                        ) {
                             Ok(calls) => calls,
                             Err(message) => {
                                 return respond_model_output_error(
@@ -3424,10 +3948,13 @@ fn generate(
                 }
                 let (choice, response_object) = match endpoint {
                     OpenAiGenerationEndpoint::ChatCompletions => {
-                        let message = tool_calls.as_ref().map_or_else(
+                        let mut message = tool_calls.as_ref().map_or_else(
                             || json!({"role":"assistant","content":output}),
                             |calls| json!({"role":"assistant","content":Value::Null,"tool_calls":calls}),
                         );
+                        if !reasoning.trim().is_empty() {
+                            message["reasoning_content"] = json!(reasoning);
+                        }
                         (
                             json!({
                                 "index": 0,
@@ -3492,7 +4019,6 @@ fn generate(
                 );
             }
             Ok(GenerationMessage::Cancelled(result)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation cancelled request_id={} model={} generated_tokens={}",
                     request_id, model, result.statistics.generated_tokens
@@ -3589,7 +4115,6 @@ fn generate(
                 );
             }
             Ok(GenerationMessage::Failed(error)) => {
-                finish_owner(owners, &request_id);
                 eprintln!(
                     "Talvik HTTP generation failed request_id={request_id} model={model} error={error}"
                 );
@@ -3612,25 +4137,20 @@ fn generate(
                     return write_openai_stream_failure(
                         stream,
                         stream_headers_sent,
-                        500,
-                        "server_error",
+                        runtime_error_status(&error),
+                        if runtime_error_status(&error) == 400 {
+                            "invalid_request_error"
+                        } else {
+                            "server_error"
+                        },
                         "generation_failed",
                         &error.to_string(),
                     );
                 }
-                return respond_error(stream, 500, error.to_string());
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                if streaming && deadline.is_none_or(|deadline| Instant::now() < deadline) =>
-            {
-                // A comment is valid SSE and keeps IDE/proxy connections alive while
-                // llama.cpp is evaluating a long prompt before its first token.
-                stream.write_all(b": talvik keep-alive\n\n")?;
-                stream.flush()?;
+                return respond_error(stream, runtime_error_status(&error), error.to_string());
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 generation.cancel();
-                finish_owner(owners, &request_id);
                 eprintln!("Talvik HTTP generation timed_out request_id={request_id} model={model}");
                 if drain_cancelled_generation(&generation) {
                     if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
@@ -3693,7 +4213,6 @@ fn generate(
                 );
             }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                finish_owner(owners, &request_id);
                 if streaming && endpoint == OpenAiGenerationEndpoint::Responses {
                     return write_responses_stream_failure(
                         stream,
@@ -3732,7 +4251,13 @@ fn generation_options(body: &Value, context_size: u32) -> GenerationOptions {
         .or_else(|| body.get("max_output_tokens"))
         .or_else(|| body.get("max_tokens"))
         .and_then(Value::as_u64)
-        .unwrap_or(128)
+        .unwrap_or_else(|| {
+            std::env::var("TALVIK_HTTP_MAX_TOKENS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+                .unwrap_or(128)
+        })
         .min(u64::from(u32::MAX));
     let max_tokens = u32::try_from(max_tokens).unwrap_or(u32::MAX);
     let temperature = body
@@ -3791,6 +4316,17 @@ fn completion_termination_reason(termination: GenerationTermination) -> &'static
     }
 }
 
+fn write_chat_stream_role(
+    stream: &mut impl Write,
+    request_id: &str,
+    created: u64,
+    model: &str,
+) -> std::io::Result<()> {
+    let event = openai_chat_stream_start_event(request_id, created, model);
+    write!(stream, "data: {event}\n\n")?;
+    stream.flush()
+}
+
 /// Wait for the backend worker to publish its terminal result after a timeout.
 ///
 /// Returning a timeout response before this point can leave the single
@@ -3816,6 +4352,82 @@ fn drain_cancelled_generation(generation: &GenerationStream) -> bool {
                 | std::sync::mpsc::RecvTimeoutError::Disconnected,
             ) => return false,
         }
+    }
+}
+
+// A transport error must never leave an unobserved request consuming inference.
+struct HttpGenerationLease<'a> {
+    generation: &'a GenerationStream,
+    owners: &'a Arc<Mutex<HashMap<String, String>>>,
+    request_id: &'a str,
+}
+
+impl Drop for HttpGenerationLease<'_> {
+    fn drop(&mut self) {
+        self.generation.cancel();
+        finish_owner(self.owners, self.request_id);
+    }
+}
+
+fn peer_disconnected(stream: &TcpStream) -> std::io::Result<bool> {
+    match stream.peek(&mut [0_u8; 1]) {
+        Ok(0) => Ok(true),
+        Ok(_) => Ok(false),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn runtime_error_status(error: &oid_shared::RuntimeError) -> u16 {
+    use oid_shared::RuntimeError;
+    match error {
+        RuntimeError::InvalidRequest(_) => 400,
+        RuntimeError::ModelNotFound(_) => 404,
+        RuntimeError::ResourceAdmission {
+            retryable: true, ..
+        } => 429,
+        RuntimeError::ResourceAdmission {
+            retryable: false, ..
+        }
+        | RuntimeError::NativeBackendUnavailable(_) => 503,
+        RuntimeError::NotImplemented(_) => 501,
+        RuntimeError::ModelLifecycle(_) => 409,
+        _ => 500,
+    }
+}
+
+fn reserve_owner(
+    owners: &Arc<Mutex<HashMap<String, String>>>,
+    request_id: &str,
+    principal: &str,
+) -> bool {
+    let Ok(mut owners) = owners.lock() else {
+        return false;
+    };
+    if let std::collections::hash_map::Entry::Vacant(entry) = owners.entry(request_id.to_owned()) {
+        entry.insert(principal.to_owned());
+        true
+    } else {
+        false
     }
 }
 
@@ -3930,21 +4542,323 @@ mod tests {
         flatten_content, generation_options, iso8601_now, ollama_generation_options, ollama_prompt,
         ollama_request_content, ollama_tool_call, ollama_tool_stream_chunk,
         openai_chat_stream_start_event, openai_model_output_error, openai_stream_error_frame,
-        openai_tool_stream_delta, parse_ollama_format, parse_openai_response_format,
-        parse_tool_calls, reason, request_body_size_is_allowed, responses_sse_frame,
-        tool_call_output_error_code, validate_generated_tool_calls, validate_generation_request,
-        validate_ollama_generation_request, validate_openai_tool_history,
-        validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
-        OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
-        MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
+        openai_tool_stream_delta, parse_chat_template_kwargs, parse_ollama_format,
+        parse_openai_response_format, parse_tool_calls, reason, request_body_size_is_allowed,
+        responses_sse_frame, tool_call_output_error_code, validate_generated_tool_calls,
+        validate_generation_request, validate_ollama_generation_request,
+        validate_openai_tool_history, validate_streamed_tool_call, GenerationTermination,
+        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser,
+        ToolStreamPart, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
     use base64::Engine as _;
     use serde_json::{json, Value};
 
     #[test]
+    fn chat_stream_acknowledges_role_without_fabricating_output_or_completion() {
+        let mut bytes = Vec::new();
+        super::write_chat_stream_role(&mut bytes, "request-1", 123, "local-model").unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.ends_with("\n\n"));
+        let event: serde_json::Value =
+            serde_json::from_str(text.trim().strip_prefix("data: ").unwrap()).unwrap();
+        assert_eq!(event["id"], "request-1");
+        assert_eq!(
+            event["choices"][0]["delta"],
+            json!({"role": "assistant", "content": ""})
+        );
+        assert!(event["choices"][0]["finish_reason"].is_null());
+        assert!(event.get("usage").is_none());
+    }
+
+    #[test]
+    fn request_ownership_cannot_be_overwritten_by_another_client() {
+        use std::sync::{Arc, Mutex};
+        let owners = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        assert!(super::reserve_owner(&owners, "same-id", "alice"));
+        assert!(!super::reserve_owner(&owners, "same-id", "bob"));
+        assert_eq!(owners.lock().unwrap().get("same-id").unwrap(), "alice");
+        super::finish_owner(&owners, "same-id");
+        assert!(super::reserve_owner(&owners, "same-id", "bob"));
+    }
+
+    #[test]
+    fn runtime_errors_have_actionable_http_statuses() {
+        use oid_shared::RuntimeError;
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::InvalidRequest("context overflow".into())),
+            400
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::ModelNotFound("missing".into())),
+            404
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::ResourceAdmission {
+                message: "queue full".into(),
+                retryable: true
+            }),
+            429
+        );
+        assert_eq!(
+            super::runtime_error_status(&RuntimeError::NativeBackend("failure".into())),
+            500
+        );
+    }
+
+    #[test]
+    fn transport_probe_distinguishes_idle_peer_from_closed_peer() {
+        use std::net::{TcpListener, TcpStream};
+        use std::time::Duration;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        assert!(!super::peer_disconnected(&server).unwrap());
+        drop(client);
+        assert!(super::peer_disconnected(&server).unwrap());
+    }
+
+    #[test]
+    fn transport_lease_cancels_and_removes_owner_on_early_return() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc, Mutex,
+        };
+        let (_sender, receiver) = mpsc::channel();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let generation = super::GenerationStream::from_parts(receiver, cancellation.clone());
+        let owners = Arc::new(Mutex::new(std::collections::HashMap::from([(
+            "test".to_owned(),
+            "owner".to_owned(),
+        )])));
+        {
+            let _lease = super::HttpGenerationLease {
+                generation: &generation,
+                owners: &owners,
+                request_id: "test",
+            };
+        }
+        assert!(cancellation.load(Ordering::SeqCst));
+        assert_eq!(owners.lock().unwrap().len(), 0);
+    }
+
+    #[test]
     fn rejects_oversized_http_bodies() {
         assert!(request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES));
         assert!(!request_body_size_is_allowed(MAX_REQUEST_BODY_BYTES + 1));
+    }
+
+    #[test]
+    fn daemon_defaults_support_ide_context_and_allow_request_overrides() {
+        assert_eq!(
+            super::generation_defaults(&json!({}), None, None),
+            Ok((4096, None))
+        );
+        assert_eq!(
+            super::generation_defaults(&json!({}), Some("16384"), Some("false")),
+            Ok((16384, Some(false)))
+        );
+        assert_eq!(
+            super::generation_defaults(
+                &json!({"context_size":8192,"chat_template_kwargs":{"enable_thinking":true}}),
+                Some("16384"),
+                Some("false")
+            ),
+            Ok((8192, Some(true)))
+        );
+        for (context, thinking) in [
+            ("0", "false"),
+            ("32769", "false"),
+            ("bad", "false"),
+            ("16384", "bad"),
+        ] {
+            assert!(super::generation_defaults(&json!({}), Some(context), Some(thinking)).is_err());
+        }
+    }
+
+    fn loaded_profile_fixture() -> oid_runtime::ModelProfile {
+        oid_runtime::ModelProfile {
+            architecture: "arbitrary-architecture".to_owned(),
+            context_length: 4096,
+            completion: true,
+            chat: true,
+            embedding: false,
+            embedding_declared: true,
+            vision: false,
+            cache: oid_runtime::CacheStrategy::Attention,
+            tokenizer_adds_bos: true,
+            tools_declared: true,
+            tool_format: Some(oid_runtime::ToolFormat::XmlFunction),
+            reasoning_format: Some(oid_runtime::ReasoningFormat::ThinkTags),
+            thinking_control: true,
+            reasoning_prefilled: false,
+        }
+    }
+
+    #[test]
+    fn profile_discovery_does_not_promote_declared_unsupported_capabilities() {
+        let mut profile = loaded_profile_fixture();
+        profile.tool_format = None;
+        let json = super::profile_json(&profile);
+        assert_eq!(json["tools_declared"], true);
+        assert_eq!(json["embedding_declared"], true);
+        assert!(!super::profile_capabilities(&profile).contains(&"tools"));
+        assert!(!super::profile_capabilities(&profile).contains(&"embedding"));
+        assert!(super::reasoning_parser(Some(&profile), Some(true)).is_some());
+        assert!(super::reasoning_parser(None, Some(true)).is_none());
+        profile.reasoning_prefilled = true;
+        let mut disabled = super::reasoning_parser(Some(&profile), Some(false)).expect("parser");
+        assert_eq!(disabled.push("answer").content, "answer");
+        let mut enabled = super::reasoning_parser(Some(&profile), Some(true)).expect("parser");
+        assert_eq!(enabled.push("reason").reasoning, "reason");
+    }
+
+    #[test]
+    fn selected_function_parser_preserves_schema_types_at_every_split() {
+        let profile = loaded_profile_fixture();
+        let definitions = vec![
+            json!({"function":{"name":"inspect","parameters":{"properties":{"path":{"type":"string"},"count":{"type":"integer"},"flag":{"type":"boolean"},"items":{"type":"array"}}}}}),
+        ];
+        let text = "<tool_call><function=inspect>\n<parameter=path>\n123\n</parameter>\n<parameter=count>2</parameter><parameter=flag>true</parameter><parameter=items>[1,2]</parameter></function></tool_call>";
+        for split in 0..=text.len() {
+            let mut parser =
+                super::selected_tool_parser("test".to_owned(), Some(&profile), Some(&definitions));
+            let parts = parser
+                .push(&text[..split])
+                .expect("first")
+                .into_iter()
+                .chain(parser.push(&text[split..]).expect("second"))
+                .chain(parser.finish().expect("finish"))
+                .collect::<Vec<_>>();
+            let calls = parts
+                .into_iter()
+                .filter_map(|p| {
+                    if let super::ToolStreamPart::Call { call, .. } = p {
+                        Some(call)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(
+                    calls[0]["function"]["arguments"].as_str().expect("args")
+                )
+                .expect("JSON"),
+                json!({"path":"123","count":2,"flag":true,"items":[1,2]})
+            );
+        }
+        for invalid in [
+            "<function=inspect><parameter=x>1</parameter><parameter=x>2</parameter></function>",
+            "<function=inspect><parameter=count>bad</parameter></function>",
+            "<function=inspect>unexpected</function>",
+        ] {
+            assert!(super::parse_tool_payload(
+                invalid,
+                oid_runtime::ToolFormat::XmlFunction,
+                &definitions
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn leading_bare_and_fenced_json_calls_are_bounded_and_prose_is_preserved() {
+        for text in [
+            "{\"name\":\"inspect\",\"arguments\":{\"path\":\"123\"}}",
+            "```json\n{\"name\":\"inspect\",\"arguments\":{\"path\":\"123\"}}\n```",
+        ] {
+            for split in 0..=text.len() {
+                let mut parser = super::ToolCallStreamParser::new("test".to_owned());
+                let mut parts = parser.push(&text[..split]).expect("part one");
+                parts.extend(parser.push(&text[split..]).expect("part two"));
+                parts.extend(parser.finish().expect("finish"));
+                let calls = parts
+                    .iter()
+                    .filter(|p| matches!(p, super::ToolStreamPart::Call { .. }))
+                    .count();
+                assert_eq!(calls, 1);
+            }
+        }
+        let text = "Here is an example: ```json\n{\"name\":\"inspect\",\"arguments\":{}}\n```";
+        assert!(super::parse_tool_calls(text, "test")
+            .expect("prose")
+            .is_none());
+        let mut parser = super::ToolCallStreamParser::new("test".to_owned());
+        assert!(parser
+            .push(&format!(
+                "```json\n{}",
+                "x".repeat(super::MAX_TOOL_CALL_BYTES)
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn reasoning_is_removed_before_tool_proposals_are_parsed() {
+        let profile = loaded_profile_fixture();
+        let mut reason = super::reasoning_parser(Some(&profile), Some(false));
+        let mut pending = None;
+        let text="<think><tool_call>{\"name\":\"do_not_run\",\"arguments\":{}}</tool_call></think><tool_call>{\"name\":\"inspect\",\"arguments\":{}}</tool_call>";
+        let (message, thought) = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Token(text.to_owned())),
+            &mut reason,
+            &mut pending,
+        );
+        assert!(thought.contains("do_not_run"));
+        let oid_runtime::GenerationMessage::Token(content) = message.expect("token") else {
+            panic!("expected token")
+        };
+        let calls = super::parse_tool_calls_selected(&content, "test", Some(&profile), None)
+            .expect("parse")
+            .expect("calls");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "inspect");
+        let mut reason = super::reasoning_parser(Some(&profile), Some(false));
+        let _ = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Token("<thi".to_owned())),
+            &mut reason,
+            &mut pending,
+        );
+        let result = oid_runtime::GenerationResult {
+            request_id: "r".to_owned(),
+            generation_id: "g".to_owned(),
+            text: String::new(),
+            statistics: oid_runtime::GenerationStatistics::default(),
+        };
+        let (tail, _) = super::split_reasoning_message(
+            Ok(oid_runtime::GenerationMessage::Completed(result)),
+            &mut reason,
+            &mut pending,
+        );
+        assert!(matches!(tail,Ok(oid_runtime::GenerationMessage::Token(ref t)) if t=="<thi"));
+        assert!(pending.is_some());
+    }
+
+    #[test]
+    fn parses_chat_template_thinking_option() {
+        assert_eq!(
+            parse_chat_template_kwargs(&json!({
+                "chat_template_kwargs": {"enable_thinking": false}
+            })),
+            Ok(Some(false))
+        );
+        assert_eq!(
+            parse_chat_template_kwargs(&json!({
+                "chat_template_kwargs": {"enable_thinking": true}
+            })),
+            Ok(Some(true))
+        );
+        assert!(parse_chat_template_kwargs(&json!({
+            "chat_template_kwargs": {"enable_thinking": "false"}
+        }))
+        .is_err());
+        assert!(parse_chat_template_kwargs(&json!({
+            "chat_template_kwargs": {"unknown": false}
+        }))
+        .is_err());
     }
 
     #[test]
@@ -4185,6 +5099,15 @@ mod tests {
         let mut incomplete_marker = ToolCallStreamParser::new("marker".to_owned());
         assert!(incomplete_marker.push("text<tool_").is_ok());
         assert!(incomplete_marker.finish().is_err());
+
+        let mut trailing_marker = ToolCallStreamParser::new("trailing".to_owned());
+        let parts = trailing_marker
+            .push("<tool_call>{\"name\":\"weather\",\"arguments\":{}}</tool_call><tool_")
+            .expect("complete call is retained");
+        assert!(parts
+            .iter()
+            .any(|part| matches!(part, ToolStreamPart::Call { .. })));
+        assert!(trailing_marker.finish().is_ok());
     }
 
     #[test]
@@ -4417,8 +5340,12 @@ mod tests {
             {"role":"tool","tool_call_id":"call_123","name":"get_weather","content":"sunny"}
         ]});
         let prompt = build_chat_prompt(&body).expect("chat prompt");
-        assert!(prompt.contains("tool_call_id: call_123"));
-        assert!(prompt.contains("Tool result for get_weather"));
+        assert!(prompt.contains("\"tool_call_id\":\"call_123\""));
+        assert!(prompt.contains("\u{001e}__talvik_tool_result\n"));
+        assert!(prompt.contains("\"content\":\"sunny\""));
+        assert!(prompt.contains("\u{001e}__talvik_tool_calls\n"));
+        assert!(!prompt.contains("<tool_calls>"));
+        assert!(!prompt.contains("Tool result for"));
     }
 
     #[test]
@@ -4494,7 +5421,11 @@ mod tests {
             "incomplete_tool_call",
             "model ended early",
         );
-        assert!(frame.starts_with("event: error\n"));
+        assert!(frame.starts_with("data: "));
+        assert!(!frame.contains("event:"));
+        let payload: serde_json::Value =
+            serde_json::from_str(frame.trim().strip_prefix("data: ").unwrap()).unwrap();
+        assert_eq!(payload["error"]["type"], "model_output_error");
         assert!(frame.contains("\"code\":\"incomplete_tool_call\""));
         assert!(!frame.contains("[DONE]"));
     }
@@ -4644,8 +5575,8 @@ mod tests {
         .expect("supported options");
         assert_eq!(options.context_size, 2048);
         assert_eq!(options.max_tokens, 32);
-        assert_eq!(options.temperature, 0.2);
-        assert_eq!(options.top_p, 0.75);
+        assert_eq!(options.temperature.to_bits(), 0.2_f32.to_bits());
+        assert_eq!(options.top_p.to_bits(), 0.75_f32.to_bits());
         assert_eq!(options.top_k, 10);
         assert_eq!(options.seed, 7);
         assert_eq!(options.stop_sequences, ["END"]);

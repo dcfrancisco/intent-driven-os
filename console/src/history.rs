@@ -21,10 +21,13 @@ impl History {
         }
     }
 
-    /// Load history from `~/.oip/history`, falling back to an empty in-memory
+    /// Load history from `OID_HISTORY_FILE` or `~/.oip/history`, falling back to an empty in-memory
     /// history when the home directory or history file is unavailable.
     #[must_use]
     pub fn load_default() -> Self {
+        if let Some(path) = std::env::var_os("OID_HISTORY_FILE") {
+            return Self::load(path.into()).unwrap_or_else(|_| Self::new());
+        }
         let Some(home) = std::env::var_os("HOME") else {
             return Self::new();
         };

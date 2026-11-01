@@ -2,6 +2,11 @@
 set -euo pipefail
 
 ARCHIVE="${1:?usage: $0 RELEASE_ARCHIVE}"
+# Do not let a developer's shell select their real registry/config/model state.
+for variable in $(compgen -v); do
+  case "$variable" in TALVIK_*|MARINA_*|OID_*) unset "$variable" ;; esac
+done
+unset DYLD_LIBRARY_PATH LD_LIBRARY_PATH LLAMA_CPP_LIB_DIR
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/talvik-release-smoke.XXXXXX")"
 PREFIX="$WORK/prefix"
@@ -22,11 +27,11 @@ PAYLOAD="$WORK/talvik"
 [[ -x "$PAYLOAD/bin/talvik" && -x "$PAYLOAD/bin/talvikd" ]] || {
   echo "archive does not contain talvik/bin/talvik and talvikd" >&2; exit 1;
 }
-(cd "$PAYLOAD" && ./install-model-runner.sh --prefix "$PREFIX")
+(cd "$PAYLOAD" && TALVIK_HOME="$STATE" TALVIK_STATE_DIR="$STATE" TALVIK_MODEL_DIR="$STATE/models" ./install-model-runner.sh --prefix "$PREFIX")
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --help >/dev/null
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --version >/dev/null
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvikd" --help >/dev/null
-TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvikd" >"$WORK/daemon.log" 2>&1 &
+TALVIK_AUTO_DOWNLOAD=false TALVIK_AUTO_LOAD=false TALVIK_HTTP_ADDR=127.0.0.1:0 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$PREFIX/bin/talvikd" >"$WORK/daemon.log" 2>&1 &
 DAEMON_PID=$!
 for _ in $(seq 1 30); do
   if TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --json status >/dev/null 2>&1; then break; fi
@@ -34,6 +39,9 @@ for _ in $(seq 1 30); do
 done
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --json status | grep -q '"health"'
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PREFIX/bin/talvik" --json models >/dev/null
+kill "$DAEMON_PID"
+wait "$DAEMON_PID" || true
+DAEMON_PID=""
 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" "$PAYLOAD/install-model-runner.sh" --prefix "$PREFIX" --uninstall
 [[ ! -e "$PREFIX/bin/talvik" && -d "$STATE/models" ]] || {
   echo "uninstall did not remove binaries while preserving model state" >&2; exit 1;

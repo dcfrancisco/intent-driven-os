@@ -1,0 +1,45 @@
+{
+  "backend": "llama.cpp",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "PERF_OK",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1793426586,
+  "execution": {
+    "backend": "cpu",
+    "device": "CPU",
+    "fallback_reason": null,
+    "offloaded_layers": 0,
+    "requested_offloaded_layers": 0
+  },
+  "generation_id": "talvik-gen-21261-1",
+  "id": "http-21261-1793426586908622000",
+  "metrics": {
+    "cache_hit": false,
+    "context_tokens": 772,
+    "generation_time_ms": 26370,
+    "inference_time_ms": 26370,
+    "latency_ms": 26370,
+    "model_load_time_ms": 5285,
+    "prompt_eval_time_ms": 25444,
+    "prompt_evaluation_time_ms": 25444,
+    "prompt_tokens_per_second": 30.22323534035529,
+    "reused_prompt_tokens": 0,
+    "time_to_first_token_ms": 25450,
+    "tokens_per_second": 0.11376333346218068
+  },
+  "model": "qwen3.5-4b-Q4_K_M",
+  "object": "chat.completion",
+  "termination_reason": "stop",
+  "usage": {
+    "completion_tokens": 3,
+    "prompt_tokens": 769,
+    "total_tokens": 772
+  }
+}

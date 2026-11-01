@@ -162,6 +162,7 @@ pub struct MarinaRuntime {
     loaded: Arc<Mutex<BTreeMap<String, LoadedModel>>>,
     residency_lock: Arc<Mutex<()>>,
     last_used: Arc<Mutex<BTreeMap<String, Instant>>>,
+    generation_admission: Arc<Mutex<()>>,
     active_generation: Arc<Mutex<Option<ActiveGeneration>>>,
     pending_generations: Arc<Mutex<VecDeque<PendingGeneration>>>,
     resource_policy: ResourcePolicy,
@@ -222,6 +223,7 @@ impl MarinaRuntime {
             loaded: Arc::new(Mutex::new(BTreeMap::new())),
             residency_lock: Arc::new(Mutex::new(())),
             last_used: Arc::new(Mutex::new(BTreeMap::new())),
+            generation_admission: Arc::new(Mutex::new(())),
             active_generation: Arc::new(Mutex::new(None)),
             pending_generations: Arc::new(Mutex::new(VecDeque::new())),
             resource_policy: ResourcePolicy::from_environment(),
@@ -1054,6 +1056,10 @@ impl RuntimeService for MarinaRuntime {
         self.backends.embeddings(request)
     }
 
+    fn model_profile(&self, model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        self.backends.model_profile(model_id)
+    }
+
     fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
         self.backends.tool_support(model_id)
     }
@@ -1083,30 +1089,51 @@ impl RuntimeService for MarinaRuntime {
                 )));
             }
         }
+        // Atomically decide whether a request starts or queues. Without this
+        // gate, simultaneous IDE utility and Agent requests can both observe
+        // an idle runtime and one is rejected after recovery finishes.
+        let _admission = self.generation_admission.lock().map_err(|_| {
+            RuntimeError::ModelLifecycle("generation admission unavailable".to_owned())
+        })?;
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
-        if self
-            .active_generation
-            .lock()
-            .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))?
-            .is_some()
         {
-            let mut queue = self.pending_generations.lock().map_err(|_| {
-                RuntimeError::ModelLifecycle("generation queue unavailable".to_owned())
-            })?;
-            if queue.len() >= self.resource_policy.queue_capacity {
-                return Err(RuntimeError::ResourceAdmission {
-                    message: "generation queue is full while another request is active".to_owned(),
-                    retryable: true,
+            let active = self
+                .active_generation
+                .lock()
+                .map_err(|_| RuntimeError::ModelLifecycle("generation unavailable".to_owned()))?;
+            if active.is_some() {
+                // Keep the active lock until enqueue finishes, so the worker
+                // cannot clear its slot and drain an empty queue first.
+                let mut queue = self.pending_generations.lock().map_err(|_| {
+                    RuntimeError::ModelLifecycle("generation queue unavailable".to_owned())
+                })?;
+                if active
+                    .as_ref()
+                    .is_some_and(|(id, _, _)| id == &request.request_id)
+                    || queue
+                        .iter()
+                        .any(|pending| pending.request.request_id == request.request_id)
+                {
+                    return Err(RuntimeError::InvalidRequest(
+                        "duplicate active or queued request_id".to_owned(),
+                    ));
+                }
+                if queue.len() >= self.resource_policy.queue_capacity {
+                    return Err(RuntimeError::ResourceAdmission {
+                        message: "generation queue is full while another request is active"
+                            .to_owned(),
+                        retryable: true,
+                    });
+                }
+                queue.push_back(PendingGeneration {
+                    request,
+                    sender,
+                    cancellation: cancellation.clone(),
+                    enqueued_at: Instant::now(),
                 });
+                return Ok(GenerationStream::new(receiver, cancellation));
             }
-            queue.push_back(PendingGeneration {
-                request,
-                sender,
-                cancellation: cancellation.clone(),
-                enqueued_at: Instant::now(),
-            });
-            return Ok(GenerationStream::new(receiver, cancellation));
         }
         self.recover_for_generation(&request)?;
         let generation_id = format!(
@@ -1801,6 +1828,90 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
+    fn simultaneous_generation_requests_queue_without_rejection_or_lost_wakeup() {
+        let root = temporary_root("concurrent-generation");
+        std::fs::create_dir_all(&root).expect("create test root");
+        let runtime = MarinaRuntime::start_with_backend_and_hardware(
+            RuntimeConfig {
+                model_directory: Some(root.join("models")),
+                registry_path: Some(root.join("registry.db")),
+                ..RuntimeConfig::default()
+            },
+            EventBus::new(),
+            Box::new(MockBackend),
+            HardwareService::from_snapshot(HardwareSnapshot {
+                available_ram_bytes: Some(8 * 1024 * 1024 * 1024),
+                ..HardwareSnapshot::default()
+            }),
+        );
+        runtime
+            .models
+            .register(ModelMetadata {
+                id: "concurrent".to_owned(),
+                name: "concurrent.gguf".to_owned(),
+                family: "test".to_owned(),
+                backend: "mock".to_owned(),
+                quantization: "test".to_owned(),
+                context_window: 4096,
+                memory_requirement_mb: 1,
+                capabilities: vec!["text".to_owned()],
+                status: ModelStatus::Registered,
+                checksum: None,
+                vision_projector_location: None,
+                location: root.join("concurrent.gguf").display().to_string(),
+            })
+            .expect("register model");
+        runtime.model_load("concurrent").expect("load model");
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers = (0..8)
+            .map(|worker| {
+                let runtime = runtime.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let mut errors = Vec::new();
+                    for round in 0..8 {
+                        barrier.wait();
+                        let request = GenerationRequest {
+                            request_id: format!("request-{worker}-{round}"),
+                            model_id: "concurrent".to_owned(),
+                            prompt: "hello".to_owned(),
+                            content: Vec::new(),
+                            options: GenerationOptions::default(),
+                            structured_output: None,
+                        };
+                        match runtime.generate(request) {
+                            Ok(stream) => loop {
+                                match stream.recv_timeout(Duration::from_secs(5)) {
+                                    Ok(GenerationMessage::Completed(_)) => break,
+                                    Ok(GenerationMessage::Token(_)) => {}
+                                    other => {
+                                        errors.push(format!("{other:?}"));
+                                        break;
+                                    }
+                                }
+                            },
+                            Err(error) => errors.push(error.to_string()),
+                        }
+                    }
+                    errors
+                })
+            })
+            .collect::<Vec<_>>();
+        let errors = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().expect("worker thread"))
+            .collect::<Vec<_>>();
+        assert!(errors.is_empty(), "concurrent requests failed: {errors:?}");
+        assert!(runtime
+            .pending_generations
+            .lock()
+            .expect("queue")
+            .is_empty());
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn queue_capacity_and_admission_deadline_are_bounded() {
         let mut runtime = MarinaRuntime::start_with_backend(
             RuntimeConfig::default(),
@@ -1824,6 +1935,14 @@ mod tests {
         let queued = runtime
             .generate(request("queued"))
             .expect("queue one request");
+        assert!(matches!(
+            runtime.generate(request("active")),
+            Err(oid_shared::RuntimeError::InvalidRequest(_))
+        ));
+        assert!(matches!(
+            runtime.generate(request("queued")),
+            Err(oid_shared::RuntimeError::InvalidRequest(_))
+        ));
         assert!(matches!(
             runtime.generate(request("overflow")),
             Err(oid_shared::RuntimeError::ResourceAdmission { .. })
@@ -2117,7 +2236,7 @@ mod tests {
             ModelStatus::Registered
         );
         assert_eq!(runtime.model_list()[0].status, ModelStatus::Registered);
-        assert!(runtime.snapshot().loaded_models.is_empty());
+        assert_eq!(runtime.snapshot().loaded_models, Vec::<String>::new());
         std::fs::remove_dir_all(root).expect("remove test data");
     }
 
@@ -2239,7 +2358,7 @@ mod tests {
         runtime.model_unload("alpha").expect("unload alpha");
         assert_eq!(runtime.snapshot().loaded_models, vec!["beta".to_owned()]);
         runtime.model_unload("beta").expect("unload beta");
-        assert!(runtime.snapshot().loaded_models.is_empty());
+        assert_eq!(runtime.snapshot().loaded_models, Vec::<String>::new());
         std::fs::remove_dir_all(root).expect("remove test data");
     }
 }

@@ -1,10 +1,19 @@
 //! Keyboard-first terminal line editor.
 
 use crate::signals::SignalController;
-use crate::{history::History, presence::PresenceIndicator, prompt::Prompt};
+use crate::{
+    history::History, presence::PresenceIndicator, prompt::Prompt, status_bar::StatusFooter,
+    terminal_ui,
+};
+use crossterm::{
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+        KeyModifiers,
+    },
+    execute,
+};
 use oid_runtime::RuntimeService;
 use std::io::{self, Read, Write};
-use std::process::Command;
 
 /// Result of one interactive input cycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,30 +108,28 @@ impl LineBuffer {
 pub struct LineEditor;
 
 impl LineEditor {
-    /// Read and edit one command line.
+    /// Read and edit one command line, using terminal events only on a real TTY.
     pub fn read_command(
         prompt: &Prompt,
         history: &mut History,
         runtime: &dyn RuntimeService,
         presence: &mut PresenceIndicator,
         signals: &SignalController,
+        footer: &mut StatusFooter,
     ) -> io::Result<EditResult> {
-        let terminal_mode = TerminalMode::enter();
-        if terminal_mode.is_raw() {
-            let mut stdin = io::stdin().lock();
-            let mut stdout = io::stdout().lock();
-            Self::read_raw(
-                &mut stdin,
-                &mut stdout,
+        let terminal_mode = TerminalMode::enter()?;
+        let mut stdout = io::stdout().lock();
+        if terminal_mode.is_some() {
+            let mut session = EditorSession {
                 prompt,
                 history,
                 runtime,
                 presence,
                 signals,
-            )
+                footer,
+            };
+            Self::read_raw(&mut stdout, &mut session)
         } else {
-            drop(terminal_mode);
-            let mut stdout = io::stdout().lock();
             write!(stdout, "{} ", prompt.marker)?;
             stdout.flush()?;
             Self::read_line_interruptible(signals, &mut stdout)
@@ -138,7 +145,7 @@ impl LineEditor {
             .name("oid-line-reader".to_owned())
             .spawn(move || {
                 let mut input = io::stdin().lock();
-                let mut line = String::new();
+                let mut line = Vec::new();
                 let mut byte = [0_u8; 1];
                 let result = loop {
                     let read = match input.read(&mut byte) {
@@ -147,16 +154,16 @@ impl LineEditor {
                         Err(error) => break Err(error),
                     };
                     if read != 1 {
-                        break Ok(if line.is_empty() {
-                            EditResult::Eof
+                        break if line.is_empty() {
+                            Ok(EditResult::Eof)
                         } else {
-                            EditResult::Submitted(line)
-                        });
+                            Self::submitted(line)
+                        };
                     }
                     if byte[0] == b'\n' || byte[0] == b'\r' {
-                        break Ok(EditResult::Submitted(line));
+                        break Self::submitted(line);
                     }
-                    line.push(byte[0] as char);
+                    line.push(byte[0]);
                 };
                 let _ = sender.send(result);
             })
@@ -182,133 +189,148 @@ impl LineEditor {
         }
     }
 
-    fn read_raw<R: Read, W: Write>(
-        input: &mut R,
+    fn submitted(line: Vec<u8>) -> io::Result<EditResult> {
+        String::from_utf8(line)
+            .map(EditResult::Submitted)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    }
+
+    fn read_raw<W: Write>(
         output: &mut W,
-        prompt: &Prompt,
-        history: &mut History,
-        runtime: &dyn RuntimeService,
-        presence: &mut PresenceIndicator,
-        signals: &SignalController,
+        session: &mut EditorSession<'_>,
     ) -> io::Result<EditResult> {
         let mut buffer = LineBuffer::new();
         let mut editing = false;
-        prompt.render_line(output, &buffer, presence)?;
+        session
+            .prompt
+            .render_line(output, &buffer, session.footer.columns())?;
         loop {
-            if signals.is_shutdown_requested() {
+            if session.signals.is_shutdown_requested() {
                 return Ok(EditResult::Eof);
             }
-            let mut byte = [0_u8; 1];
-            let read = match input.read(&mut byte) {
-                Ok(read) => read,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Err(error),
-            };
-            if read == 0 {
-                return Ok(EditResult::Eof);
+            if session.signals.take_interrupt() {
+                return session.cancel(output);
             }
-            match byte[0] {
-                3 => {
-                    runtime.cancel_generation();
-                    runtime.input_stopped();
-                    presence.refresh();
-                    writeln!(output, "^C")?;
-                    return Ok(EditResult::Cancelled);
-                }
-                4 => return Ok(EditResult::Eof),
-                8 | 127 => buffer.backspace(),
-                10 | 13 => {
-                    runtime.input_stopped();
-                    presence.refresh();
-                    writeln!(output)?;
-                    return Ok(EditResult::Submitted(buffer.text()));
-                }
-                12 => {
-                    write!(output, "\x1b[2J\x1b[H")?;
-                    buffer.end();
-                }
-                27 => Self::read_escape(input, &mut buffer, history)?,
-                byte if byte.is_ascii_graphic() || byte == b' ' => {
-                    if !editing {
-                        editing = true;
-                        runtime.input_started();
+            if !event::poll(std::time::Duration::from_millis(100))? {
+                continue;
+            }
+            match event::read()? {
+                Event::Resize(columns, rows) => session.footer.resize(columns, rows)?,
+                Event::Paste(text) => {
+                    for ch in text.chars() {
+                        if matches!(ch, '\r' | '\n' | '\t') {
+                            buffer.insert(' ');
+                        } else if !ch.is_control() {
+                            buffer.insert(ch);
+                        }
                     }
-                    buffer.insert(byte as char);
+                    if !editing {
+                        session.runtime.input_started();
+                        editing = true;
+                    }
+                }
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL) {
+                        match key.code {
+                            KeyCode::Char('c') => return session.cancel(output),
+                            KeyCode::Char('d') => {
+                                write!(output, "\r\n")?;
+                                return Ok(EditResult::Eof);
+                            }
+                            KeyCode::Char('l') => {
+                                write!(output, "\x1b[2J\x1b[H")?;
+                                session.footer.repaint()?;
+                            }
+                            KeyCode::Char('a') => buffer.home(),
+                            KeyCode::Char('e') => buffer.end(),
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Enter => {
+                                session.runtime.input_stopped();
+                                session.presence.refresh();
+                                write!(output, "\r\n")?;
+                                return Ok(EditResult::Submitted(buffer.text()));
+                            }
+                            KeyCode::Backspace => buffer.backspace(),
+                            KeyCode::Delete => buffer.delete(),
+                            KeyCode::Left => buffer.left(),
+                            KeyCode::Right => buffer.right(),
+                            KeyCode::Home => buffer.home(),
+                            KeyCode::End => buffer.end(),
+                            KeyCode::Up => {
+                                if let Some(previous) = session.history.previous() {
+                                    buffer.replace(&previous);
+                                }
+                            }
+                            KeyCode::Down => {
+                                if let Some(next) = session.history.next() {
+                                    buffer.replace(&next);
+                                }
+                            }
+                            KeyCode::Char(ch) => {
+                                if !editing {
+                                    session.runtime.input_started();
+                                    editing = true;
+                                }
+                                buffer.insert(ch);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 _ => {}
             }
-            presence.refresh();
-            prompt.render_line(output, &buffer, presence)?;
+            session.presence.refresh();
+            session
+                .prompt
+                .render_line(output, &buffer, session.footer.columns())?;
         }
     }
+}
 
-    fn read_escape<R: Read>(
-        input: &mut R,
-        buffer: &mut LineBuffer,
-        history: &mut History,
-    ) -> io::Result<()> {
-        let mut sequence = [0_u8; 2];
-        if input.read(&mut sequence[..1])? != 1 || sequence[0] != b'[' {
-            return Ok(());
-        }
-        if input.read(&mut sequence[1..])? != 1 {
-            return Ok(());
-        }
-        match sequence[1] {
-            b'A' => {
-                if let Some(previous) = history.previous() {
-                    buffer.replace(&previous);
-                }
-            }
-            b'B' => {
-                if let Some(next) = history.next() {
-                    buffer.replace(&next);
-                }
-            }
-            b'C' => buffer.right(),
-            b'D' => buffer.left(),
-            b'H' | b'1' => buffer.home(),
-            b'F' | b'4' => buffer.end(),
-            b'3' => {
-                let mut terminator = [0_u8; 1];
-                let _ = input.read(&mut terminator)?;
-                buffer.delete();
-            }
-            _ => {}
-        }
-        Ok(())
+struct EditorSession<'a> {
+    prompt: &'a Prompt,
+    history: &'a mut History,
+    runtime: &'a dyn RuntimeService,
+    presence: &'a mut PresenceIndicator,
+    signals: &'a SignalController,
+    footer: &'a mut StatusFooter,
+}
+
+impl EditorSession<'_> {
+    fn cancel<W: Write>(&mut self, output: &mut W) -> io::Result<EditResult> {
+        self.runtime.cancel_generation();
+        self.runtime.input_stopped();
+        self.presence.refresh();
+        write!(output, "^C\r\n")?;
+        Ok(EditResult::Cancelled)
     }
 }
 
 struct TerminalMode {
-    previous: Option<String>,
+    was_raw: bool,
 }
 
 impl TerminalMode {
-    fn enter() -> Self {
-        let previous = Command::new("stty")
-            .arg("-g")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-        if previous.is_some() {
-            let _ = Command::new("stty")
-                .args(["-icanon", "-echo", "min", "1", "time", "0"])
-                .status();
+    fn enter() -> io::Result<Option<Self>> {
+        if !terminal_ui::interactive() {
+            return Ok(None);
         }
-        Self { previous }
-    }
-
-    const fn is_raw(&self) -> bool {
-        self.previous.is_some()
+        let was_raw = crossterm::terminal::is_raw_mode_enabled()?;
+        crossterm::terminal::enable_raw_mode()?;
+        let guard = Self { was_raw };
+        execute!(io::stdout(), EnableBracketedPaste)?;
+        Ok(Some(guard))
     }
 }
 
 impl Drop for TerminalMode {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            let _ = Command::new("stty").arg(previous).status();
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
+        if !self.was_raw {
+            let _ = crossterm::terminal::disable_raw_mode();
         }
     }
 }

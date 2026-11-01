@@ -45,7 +45,7 @@ install -m 0755 "$TALVIKD" "$PKG/usr/bin/talvikd"
 install -m 0755 "$TALVIK" "$PKG/usr/bin/talvik"
 install -m 0755 "$OID_CONSOLE" "$PKG/usr/bin/oid-console"
 find "$NATIVE_LIB_DIR" -maxdepth 1 \( -type f -o -type l \) \
-  \( -name 'libllama.so*' -o -name 'libggml*.so*' \) -exec cp -a {} "$PKG/usr/lib/marina/" \;
+  \( -name 'libllama.so*' -o -name 'libggml*.so*' -o -name 'libmtmd.so*' -o -name 'liboid-chat-template.so*' \) -exec cp -a {} "$PKG/usr/lib/marina/" \;
 [[ -e "$PKG/usr/lib/marina/libllama.so" || -e "$PKG/usr/lib/marina/libllama.so.0" ]] || {
   echo "native payload does not contain libllama.so" >&2; exit 1;
 }

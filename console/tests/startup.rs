@@ -26,11 +26,13 @@ fn console_binary_starts_with_runtime_prompt() {
     std::fs::remove_dir_all(&state_root).expect("cleanup startup test state");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("startup output is UTF-8");
-    assert!(stdout.contains("AI CONSOLE"));
-    assert!(stdout.contains("Runtime:"));
-    assert!(stdout.contains("Available models:") || stdout.contains("No models found"));
+    assert!(stdout.contains("OID Console"));
+    assert!(stdout.contains("Type :help to begin."));
+    assert!(!stdout.contains("Available models:"));
+    assert!(!stdout.contains("Intelligent Runtime"));
+    assert!(!stdout.contains('\x1b'));
     assert!(!stdout.contains("No models installed."));
-    assert!(stdout.contains("$ "));
+    assert!(stdout.contains(". "));
 }
 
 #[test]
@@ -72,4 +74,33 @@ fn local_console_rejects_http_backend_selection() {
     let stderr = String::from_utf8(output.stderr).expect("startup error is UTF-8");
     assert!(stderr.contains("oid-console is a local MarinaOS client"));
     assert!(stderr.contains("only supports Talvik IPC"));
+}
+
+#[test]
+fn daemon_rejects_an_occupied_http_port_before_starting_the_runtime() {
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupied port");
+    let root = std::env::temp_dir().join(format!("talvik-duplicate-{}", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_talvikd"))
+        .env(
+            "TALVIK_HTTP_ADDR",
+            occupied.local_addr().expect("address").to_string(),
+        )
+        .env("TALVIK_HOME", &root)
+        .env("TALVIK_CONFIG", root.join("config.yaml"))
+        .env("TALVIK_SOCKET", root.join("daemon.sock"))
+        .output()
+        .expect("duplicate daemon should exit");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot bind Talvik HTTP listener"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("loaded meta data"),
+        "model loading must not start"
+    );
+    if root.exists() {
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
 }

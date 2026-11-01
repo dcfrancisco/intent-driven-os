@@ -1,0 +1,42 @@
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.46s
+     Running unittests src/lib.rs (target/debug/deps/oid_llama_cpp_sys-962e0941e1976ea9)
+
+running 28 tests
+test tests::auxiliary_accelerators_are_not_cpu_or_gpu_runners ... ok
+test tests::embedded_chat_template_formats_a_user_prompt ... ignored, requires a real GGUF supplied through MARINA_TEST_GGUF
+test tests::loaded_profile_applies_tokenizer_metadata_without_duplicate_bos ... ignored, requires TALVIK_TEST_PROFILE_GGUF for metadata/tokenizer qualification
+test tests::checkpoint_boundary_requires_an_exact_nontrivial_token_prefix ... ok
+test tests::end_markers_split_across_tokens_are_removed ... ok
+test tests::bare_marker_match_does_not_leak_its_angle_bracket_prefix ... ok
+test tests::cache_boundary_preserves_history_before_the_last_user_turn ... ok
+test tests::native_abort_is_cancellation_only_when_requested ... ok
+test tests::partial_marker_prefix_is_discarded_when_generation_ends ... ok
+test tests::persistent_context_reuses_a_compatible_prompt_prefix ... ignored, requires a real GGUF supplied through MARINA_TEST_GGUF
+test tests::prompt_cache_reuse_requires_the_native_sequence_to_match_the_prefix ... ok
+test tests::cache_boundary_comes_from_structured_roles_across_template_families ... ok
+test tests::prompts_larger_than_the_physical_batch_decode_without_aborting ... ignored, requires a real GGUF supplied through MARINA_TEST_GGUF
+test tests::merged_system_template_falls_back_without_rejecting_generation ... ok
+test tests::prompt_reuse_requires_matching_context_and_prefix ... ok
+test tests::recurrent_checkpoint_reuse_matches_cold_output_and_clears_on_cancel ... ignored, requires a hybrid/recurrent GGUF supplied through TALVIK_TEST_RECURRENT_GGUF
+test tests::repeated_marker_prefix_is_not_leaked_at_generation_end ... ok
+test tests::repeated_prefix_before_split_terminal_marker_is_not_emitted ... ok
+test tests::successful_decode_remains_success ... ok
+test tests::template_output_formats_require_a_supported_protocol ... ok
+test tests::terminal_special_pieces_are_not_emitted ... ok
+test tests::text_context_capacity_reserves_output_and_bounded_growth_headroom ... ok
+test tests::thinking_option_prefills_only_models_that_support_it ... ok
+test tests::vision_input_uses_image_content_and_recovers_after_cancellation ... ignored, requires SmolVLM GGUF and projector supplied through TALVIK_TEST_VISION_GGUF and TALVIK_TEST_VISION_PROJECTOR
+test tool_grammar::tests::lazy_tool_grammar_blocks_missing_commas_and_incomplete_wrappers ... ignored, requires MARINA_TEST_GGUF for real tokenizer/grammar qualification
+test tests::tool_system_prefix_matches_declared_order_without_moving_history ... ok
+test tests::tool_declarations_honor_template_envelopes_without_changing_schemas ... ok
+test tests::tool_history_uses_the_selected_protocol_and_preserves_content_and_ids ... ok
+
+test result: ok. 21 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests oid_llama_cpp_sys
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

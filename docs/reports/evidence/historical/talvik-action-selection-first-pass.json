@@ -1,0 +1,73 @@
+{
+  "model": "qwen3-1.7b-q4_k_m",
+  "execution": "selection-only; no commands executed; supplied build result is a synthetic fixture",
+  "passed": false,
+  "results": [
+    {
+      "test": "build_only",
+      "passed": true,
+      "seconds": 19.243,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"command\":\"mvn -DskipTests package\",\"explanation\":\"Building the project without running tests\",\"isBackground\":false}",
+              "name": "run_in_terminal"
+            },
+            "id": "call_http-36337-1793483518774739000_0",
+            "type": "function"
+          }
+        ]
+      }
+    },
+    {
+      "test": "retry_after_narration",
+      "passed": true,
+      "seconds": 7.772,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"command\":\"mvn -DskipTests package\",\"explanation\":\"Building the project without tests or inspection\",\"isBackground\":false}",
+              "name": "run_in_terminal"
+            },
+            "id": "call_http-36337-1793483526547293000_0",
+            "type": "function"
+          }
+        ]
+      }
+    },
+    {
+      "test": "ordinary_question",
+      "passed": false,
+      "seconds": 8.869,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"command\":\"echo 2+2 | bc\",\"explanation\":\"Calculate 2+2 using the 'bc' command to handle arithmetic operations.\",\"isBackground\":false}",
+              "name": "run_in_terminal"
+            },
+            "id": "call_http-36337-1793483535416105000_0",
+            "type": "function"
+          }
+        ]
+      }
+    },
+    {
+      "test": "completed_build",
+      "passed": true,
+      "seconds": 3.543,
+      "message": {
+        "content": "The project was successfully built without any tests being executed.",
+        "role": "assistant"
+      }
+    }
+  ]
+}

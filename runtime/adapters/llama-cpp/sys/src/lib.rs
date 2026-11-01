@@ -13,7 +13,6 @@ use std::ffi::c_void;
 use std::ffi::{c_char, c_void, CStr, CString};
 #[cfg(native_mtmd)]
 use std::io::Cursor;
-#[cfg(any(native_llama_cpp, test))]
 use std::sync::atomic::AtomicBool;
 #[cfg(native_llama_cpp)]
 use std::sync::atomic::AtomicPtr;
@@ -21,6 +20,11 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering;
 #[cfg(native_llama_cpp)]
 use std::sync::Mutex;
+#[cfg(native_chat_template)]
+mod chat_template;
+#[cfg(native_llama_cpp)]
+mod tool_grammar;
+
 use std::time::Duration;
 #[cfg(native_llama_cpp)]
 use std::time::Instant;
@@ -147,9 +151,37 @@ struct Batch {
 struct PersistentContext {
     pointer: *mut c_void,
     context_size: u32,
+    allocated_context_size: u32,
     prompt_tokens: Vec<i32>,
+    checkpoints: Vec<PromptCheckpoint>,
     relay: Box<CancellationRelay>,
 }
+
+// Only partial/recurrent state is copied. Attention KV stays in its existing
+// native context and is trimmed after restoring the matching recurrent state.
+#[cfg(native_llama_cpp)]
+struct PromptCheckpoint {
+    tokens: Vec<i32>,
+    state: Vec<u8>,
+}
+
+#[cfg(native_llama_cpp)]
+impl std::fmt::Debug for PromptCheckpoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PromptCheckpoint")
+            .field("tokens", &self.tokens.len())
+            .field("state_bytes", &self.state.len())
+            .finish()
+    }
+}
+
+#[cfg(native_llama_cpp)]
+const PARTIAL_STATE_ONLY: u32 = 1;
+#[cfg(native_llama_cpp)]
+const MAX_CHECKPOINT_BYTES: usize = 64 * 1_048_576;
+#[cfg(native_llama_cpp)]
+const MAX_TOTAL_CHECKPOINT_BYTES: usize = 128 * 1_048_576;
 
 #[cfg(native_llama_cpp)]
 unsafe impl Send for PersistentContext {}
@@ -264,10 +296,27 @@ mod ffi {
             name: *const c_char,
         ) -> *const c_char;
         pub fn llama_model_size(model: *const c_void) -> u64;
+        pub fn llama_model_meta_val_str(
+            model: *const c_void,
+            key: *const c_char,
+            buf: *mut c_char,
+            buf_size: usize,
+        ) -> i32;
+        pub fn llama_model_n_ctx_train(model: *const c_void) -> i32;
+        pub fn llama_model_has_decoder(model: *const c_void) -> bool;
+        pub fn llama_vocab_get_add_bos(vocab: *const c_void) -> bool;
+        pub fn llama_vocab_bos(vocab: *const c_void) -> i32;
+        #[cfg(native_chat_template)]
+        pub fn llama_vocab_eos(vocab: *const c_void) -> i32;
+        #[cfg(test)]
+        pub fn llama_vocab_get_text(vocab: *const c_void, token: i32) -> *const c_char;
+        pub fn llama_vocab_get_attr(vocab: *const c_void, token: i32) -> i32;
+
         pub fn llama_model_n_embd(model: *const c_void) -> i32;
         pub fn ggml_backend_dev_count() -> usize;
         pub fn ggml_backend_dev_get(index: usize) -> *mut c_void;
         pub fn ggml_backend_dev_name(device: *mut c_void) -> *const c_char;
+        pub fn ggml_backend_dev_type(device: *mut c_void) -> i32;
         pub fn ggml_backend_dev_memory(device: *mut c_void, free: *mut usize, total: *mut usize);
         pub fn ggml_backend_dev_backend_reg(device: *mut c_void) -> *mut c_void;
         pub fn ggml_backend_reg_name(registry: *mut c_void) -> *const c_char;
@@ -284,6 +333,23 @@ mod ffi {
         pub fn llama_init_from_model(model: *mut c_void, params: ContextParams) -> *mut c_void;
         pub fn llama_free(ctx: *mut c_void);
         pub fn llama_get_memory(ctx: *mut c_void) -> *mut c_void;
+        pub fn llama_model_is_recurrent(model: *const c_void) -> bool;
+        pub fn llama_model_is_hybrid(model: *const c_void) -> bool;
+        pub fn llama_state_seq_get_size_ext(ctx: *mut c_void, seq_id: i32, flags: u32) -> usize;
+        pub fn llama_state_seq_get_data_ext(
+            ctx: *mut c_void,
+            dst: *mut u8,
+            size: usize,
+            seq_id: i32,
+            flags: u32,
+        ) -> usize;
+        pub fn llama_state_seq_set_data_ext(
+            ctx: *mut c_void,
+            src: *const u8,
+            size: usize,
+            seq_id: i32,
+            flags: u32,
+        ) -> usize;
         pub fn llama_memory_clear(memory: *mut c_void, data: bool);
         pub fn llama_memory_seq_rm(memory: *mut c_void, seq_id: i32, p0: i32, p1: i32) -> bool;
         pub fn llama_memory_seq_pos_max(memory: *mut c_void, seq_id: i32) -> i32;
@@ -297,10 +363,21 @@ mod ffi {
             grammar_str: *const c_char,
             grammar_root: *const c_char,
         ) -> *mut c_void;
+        pub fn llama_sampler_init_grammar_lazy_patterns(
+            vocab: *const c_void,
+            grammar_str: *const c_char,
+            grammar_root: *const c_char,
+            trigger_patterns: *const *const c_char,
+            num_trigger_patterns: usize,
+            trigger_tokens: *const i32,
+            num_trigger_tokens: usize,
+        ) -> *mut c_void;
+        pub fn llama_vocab_n_tokens(vocab: *const c_void) -> i32;
         pub fn llama_sampler_init_top_k(k: i32) -> *mut c_void;
         pub fn llama_sampler_init_top_p(p: f32, min_keep: usize) -> *mut c_void;
         pub fn llama_sampler_init_temp(t: f32) -> *mut c_void;
         pub fn llama_sampler_init_penalties(
+            n_vocab: i32,
             penalty_last_n: i32,
             penalty_repeat: f32,
             penalty_freq: f32,
@@ -414,7 +491,7 @@ struct OwnedBatch {
     _sequence_counts: Vec<i32>,
     _sequence_id: Box<i32>,
     _sequence_ids: Vec<*mut i32>,
-    _logits: Vec<i8>,
+    logits: Vec<i8>,
 }
 
 #[cfg(native_llama_cpp)]
@@ -451,7 +528,7 @@ fn make_batch(tokens: &mut [i32], start_position: usize) -> Result<OwnedBatch, S
         _sequence_counts: sequence_counts,
         _sequence_id: sequence_id,
         _sequence_ids: sequence_ids,
-        _logits: logits,
+        logits,
     })
 }
 
@@ -463,6 +540,7 @@ fn invalidate_context(context: &mut Option<PersistentContext>) {
             unsafe { ffi::llama_memory_clear(memory, true) };
         }
         cached.prompt_tokens.clear();
+        cached.checkpoints.clear();
     }
 }
 
@@ -474,9 +552,31 @@ fn inference_threads() -> i32 {
         .filter(|value| *value > 0)
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|count| i32::try_from(count.get()).unwrap_or(i32::MAX))
-                .unwrap_or(0)
+                .map_or(0, |count| i32::try_from(count.get()).unwrap_or(i32::MAX))
         })
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn text_context_capacity(limit: u32, prompt_tokens: usize, max_tokens: u32) -> u32 {
+    let required = required_text_context(limit, prompt_tokens, max_tokens);
+    // Reserve room for the next tool result instead of rebuilding immediately
+    // when prompt + output happens to fall just below a power-of-two boundary.
+    let needed = required
+        .saturating_add((required / 8).max(128))
+        .max(512)
+        .min(limit);
+    needed
+        .checked_next_power_of_two()
+        .unwrap_or(limit)
+        .min(limit)
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn required_text_context(limit: u32, prompt_tokens: usize, max_tokens: u32) -> u32 {
+    u32::try_from(prompt_tokens)
+        .unwrap_or(u32::MAX)
+        .saturating_add(max_tokens)
+        .min(limit)
 }
 
 #[cfg(native_llama_cpp)]
@@ -484,11 +584,80 @@ fn compatible_prompt_reuse_len(
     cached: &PersistentContext,
     prompt_tokens: &[i32],
     context_size: u32,
+    strategy: oid_model_runner::CacheStrategy,
 ) -> Option<usize> {
-    (cached.context_size == context_size
-        && cached.prompt_tokens.len() <= prompt_tokens.len()
-        && cached.prompt_tokens == prompt_tokens[..cached.prompt_tokens.len()])
-        .then(|| cached.prompt_tokens.len().saturating_sub(1))
+    if strategy == oid_model_runner::CacheStrategy::Disabled
+        || cached.context_size != context_size
+        || prompt_tokens.len() < 2
+    {
+        return None;
+    }
+    if strategy == oid_model_runner::CacheStrategy::Recurrent {
+        return cached
+            .checkpoints
+            .iter()
+            .filter(|checkpoint| {
+                checkpoint.tokens.len() < prompt_tokens.len()
+                    && prompt_tokens.starts_with(&checkpoint.tokens)
+            })
+            .map(|checkpoint| checkpoint.tokens.len())
+            .max();
+    }
+    // Attention KV can be trimmed to any exact token prefix. A changed or
+    // shorter user turn does not invalidate the unchanged system/tool prefix.
+    // Always evaluate at least the final input token to obtain fresh logits.
+    let common = cached
+        .prompt_tokens
+        .iter()
+        .zip(prompt_tokens)
+        .take_while(|(cached, current)| cached == current)
+        .count();
+    let reuse = common.min(prompt_tokens.len() - 1);
+    (reuse > 0).then_some(reuse)
+}
+
+#[cfg(native_llama_cpp)]
+fn save_prompt_checkpoint(cached: &mut PersistentContext, tokens: &[i32]) {
+    if tokens.is_empty() {
+        return;
+    }
+    // Replacing a checkpoint releases its buffer before allocating a new one.
+    cached
+        .checkpoints
+        .retain(|checkpoint| checkpoint.tokens.len() != tokens.len());
+    let size = unsafe { ffi::llama_state_seq_get_size_ext(cached.pointer, 0, PARTIAL_STATE_ONLY) };
+    let retained: usize = cached
+        .checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.state.len())
+        .sum();
+    if size == 0
+        || size > MAX_CHECKPOINT_BYTES
+        || retained.saturating_add(size) > MAX_TOTAL_CHECKPOINT_BYTES
+    {
+        return;
+    }
+    let mut state = vec![0; size];
+    let written = unsafe {
+        ffi::llama_state_seq_get_data_ext(
+            cached.pointer,
+            state.as_mut_ptr(),
+            state.len(),
+            0,
+            PARTIAL_STATE_ONLY,
+        )
+    };
+    if written != size {
+        return;
+    }
+    cached.checkpoints.push(PromptCheckpoint {
+        tokens: tokens.to_vec(),
+        state,
+    });
+    eprintln!(
+        "llama.cpp prompt checkpoint tokens={} bytes={size}",
+        tokens.len()
+    );
 }
 
 #[cfg(any(native_llama_cpp, test))]
@@ -517,6 +686,7 @@ pub fn system_info() -> Option<String> {
 /// A loaded native model handle.
 #[derive(Debug)]
 pub struct NativeModel {
+    profile: oid_model_runner::ModelProfile,
     #[cfg(native_llama_cpp)]
     context: Mutex<Option<PersistentContext>>,
     #[cfg(native_mtmd)]
@@ -605,6 +775,15 @@ pub struct NativePlacement {
 /// Enumerate devices registered by the linked ggml build.
 #[must_use]
 pub fn devices() -> Vec<NativeDevice> {
+    indexed_devices()
+        .into_iter()
+        .map(|(_, device)| device)
+        .collect()
+}
+
+// Preserve native indices when filtering auxiliary/unsupported devices. BLAS
+// and AMX are ACCEL devices, not independently selectable CPU runners.
+fn indexed_devices() -> Vec<(usize, NativeDevice)> {
     #[cfg(native_llama_cpp)]
     unsafe {
         let mut devices = Vec::new();
@@ -621,14 +800,10 @@ pub fn devices() -> Vec<NativeDevice> {
                     .to_string_lossy()
                     .to_ascii_lowercase()
             };
-            let backend = if backend_name.contains("cuda") {
-                NativeBackend::Cuda
-            } else if backend_name.contains("vulkan") {
-                NativeBackend::Vulkan
-            } else if backend_name.contains("metal") {
-                NativeBackend::Metal
-            } else {
-                NativeBackend::Cpu
+            let Some(backend) =
+                classify_native_device(ffi::ggml_backend_dev_type(device), &backend_name)
+            else {
+                continue;
             };
             let name = CStr::from_ptr(ffi::ggml_backend_dev_name(device))
                 .to_string_lossy()
@@ -649,19 +824,35 @@ pub fn devices() -> Vec<NativeDevice> {
                 NativeBackend::Cuda => Some(false),
                 NativeBackend::Vulkan => None,
             };
-            devices.push(NativeDevice {
-                backend,
-                name,
-                free_memory_bytes: u64::try_from(free).ok().filter(|value| *value > 0),
-                total_memory_bytes: u64::try_from(total).ok().filter(|value| *value > 0),
-                shared_memory,
-            });
+            devices.push((
+                index,
+                NativeDevice {
+                    backend,
+                    name,
+                    free_memory_bytes: u64::try_from(free).ok().filter(|value| *value > 0),
+                    total_memory_bytes: u64::try_from(total).ok().filter(|value| *value > 0),
+                    shared_memory,
+                },
+            ));
         }
         devices
     }
     #[cfg(not(native_llama_cpp))]
     {
         Vec::new()
+    }
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn classify_native_device(device_type: i32, backend_name: &str) -> Option<NativeBackend> {
+    // Values from the pinned ggml_backend_dev_type enum. An accelerator must
+    // never win CPU selection just because its registry name is unfamiliar.
+    match device_type {
+        0 => Some(NativeBackend::Cpu),
+        1 | 2 if backend_name.contains("cuda") => Some(NativeBackend::Cuda),
+        1 | 2 if backend_name.contains("vulkan") => Some(NativeBackend::Vulkan),
+        1 | 2 if backend_name.contains("metal") => Some(NativeBackend::Metal),
+        _ => None,
     }
 }
 
@@ -791,12 +982,28 @@ impl EndMarkerFilter {
             .iter()
             .filter_map(|marker| self.held.find(marker))
             .min();
-        if let Some(index) = earliest {
+        if let Some(mut index) = earliest {
+            // Bare markers also match inside a split angle-bracketed marker
+            // before its final '>' arrives. Consume its leading '<' as well.
+            if index > 0
+                && self.held.as_bytes()[index] == b'|'
+                && self.held.as_bytes()[index - 1] == b'<'
+            {
+                index -= 1;
+            }
+            // A model can repeat '<' before a split terminal marker. Keep
+            // these control-prefix bytes out of the completed response.
+            while index > 0
+                && self.held.as_bytes()[index] == b'<'
+                && self.held.as_bytes()[index - 1] == b'<'
+            {
+                index -= 1;
+            }
             let emit = self.held[..index].to_owned();
             self.held.clear();
             return (emit, true);
         }
-        let keep = (1..=self.held.len())
+        let mut keep = (1..=self.held.len())
             .rev()
             .filter(|length| self.held.is_char_boundary(self.held.len() - length))
             .find(|length| {
@@ -804,7 +1011,27 @@ impl EndMarkerFilter {
                 END_MARKERS.iter().any(|marker| marker.starts_with(suffix))
             })
             .unwrap_or(0);
-        let split = self.held.len() - keep;
+        // Keep runs of marker-start bytes together. Otherwise a repeated `<`
+        // can cause every copy except the last to be emitted before an EOG
+        // token, leaking a dangling marker into the completed response.
+        let repeated_marker_prefix = self
+            .held
+            .chars()
+            .rev()
+            .take_while(|character| {
+                END_MARKERS
+                    .iter()
+                    .any(|marker| marker.starts_with(*character))
+            })
+            .map(char::len_utf8)
+            .sum::<usize>();
+        keep = keep.max(repeated_marker_prefix);
+        let mut split = self.held.len() - keep;
+        if keep > 0 && self.held.as_bytes()[split] == b'<' {
+            while split > 0 && self.held.as_bytes()[split - 1] == b'<' {
+                split -= 1;
+            }
+        }
         let emit = self.held[..split].to_owned();
         self.held.drain(..split);
         (emit, false)
@@ -812,8 +1039,152 @@ impl EndMarkerFilter {
 
     /// Returns text held back as a possible marker prefix once generation ends.
     fn finish(&mut self) -> String {
-        std::mem::take(&mut self.held)
+        let held = std::mem::take(&mut self.held);
+        if END_MARKERS
+            .iter()
+            .any(|marker| marker.starts_with(held.as_str()))
+            || held.chars().all(|character| {
+                END_MARKERS
+                    .iter()
+                    .any(|marker| marker.starts_with(character))
+            })
+        {
+            String::new()
+        } else {
+            held
+        }
     }
+}
+
+// Both strings are produced by the loaded model's template. A candidate
+// prefix is optional: rendering a partial conversation is not prefix-stable
+// for every template. Generation must still work when no safe prefix exists.
+#[cfg(native_llama_cpp)]
+struct FormattedPrompt {
+    text: String,
+    cache_prefix: Option<String>,
+    constrain_json_tools: bool,
+}
+
+#[cfg(native_llama_cpp)]
+fn render_template_messages(
+    template: &CStr,
+    entries: &[(String, String)],
+    add_assistant: bool,
+) -> Result<String, String> {
+    let roles = entries
+        .iter()
+        .map(|(role, _)| CString::new(role.as_str()).map_err(|_| "invalid chat role".to_owned()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let contents = entries
+        .iter()
+        .map(|(_, content)| {
+            CString::new(content.as_str()).map_err(|_| "prompt contains NUL".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let messages = roles
+        .iter()
+        .zip(contents.iter())
+        .map(|(role, content)| ChatMessage {
+            role: role.as_ptr(),
+            content: content.as_ptr(),
+        })
+        .collect::<Vec<_>>();
+    // The C strings and messages remain alive through both native calls.
+    let required = unsafe {
+        ffi::llama_chat_apply_template(
+            template.as_ptr(),
+            messages.as_ptr(),
+            messages.len(),
+            add_assistant,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if required < 0 {
+        return Err(format!(
+            "llama.cpp could not apply the model chat template: {required}"
+        ));
+    }
+    let capacity = required
+        .checked_add(1)
+        .ok_or_else(|| "formatted prompt is too large".to_owned())?;
+    let mut buffer = vec![
+        0_u8;
+        usize::try_from(capacity)
+            .map_err(|_| "formatted prompt is too large".to_owned())?
+    ];
+    let written = unsafe {
+        ffi::llama_chat_apply_template(
+            template.as_ptr(),
+            messages.as_ptr(),
+            messages.len(),
+            add_assistant,
+            buffer.as_mut_ptr().cast(),
+            capacity,
+        )
+    };
+    if written < 0 || written >= capacity {
+        return Err(format!(
+            "llama.cpp could not format the model chat template: {written}"
+        ));
+    }
+    buffer.truncate(
+        usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
+    );
+    String::from_utf8(buffer)
+        .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+}
+
+#[cfg(native_llama_cpp)]
+fn render_chat_prompt(
+    template: &CStr,
+    entries: &[(String, String)],
+    enable_thinking: Option<bool>,
+) -> Result<FormattedPrompt, String> {
+    let text = apply_thinking_prefill(
+        render_template_messages(template, entries, true)?,
+        &template.to_string_lossy(),
+        enable_thinking,
+    );
+    // Use structured message roles, never strings found in user content or a
+    // particular family's delimiter. Some templates merge system/user turns;
+    // a partial render may be empty, fail, or differ from the full prompt.
+    let cache_prefix = entries
+        .iter()
+        .rposition(|(role, _)| role == "user")
+        .filter(|position| *position > 0)
+        .and_then(|position| render_template_messages(template, &entries[..position], false).ok())
+        .filter(|prefix| !prefix.is_empty() && text.starts_with(prefix));
+    Ok(FormattedPrompt {
+        text,
+        cache_prefix,
+        constrain_json_tools: false,
+    })
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn verified_checkpoint_position(prefix: &[i32], prompt: &[i32]) -> Option<usize> {
+    // BPE tokenization can merge at a text boundary. Text-prefix matching alone
+    // is insufficient; only an exact, nontrivial token prefix is reusable.
+    (prefix.len() >= 64 && prefix.len() < prompt.len() && prompt.starts_with(prefix))
+        .then_some(prefix.len())
+}
+
+// The C template API selects a built-in formatter; it does not evaluate the
+// GGUF's Jinja kwargs. Apply Qwen's documented assistant prefill explicitly.
+#[cfg_attr(not(native_llama_cpp), allow(dead_code))]
+fn apply_thinking_prefill(mut prompt: String, template: &str, enabled: Option<bool>) -> String {
+    if template.contains("enable_thinking") && template.contains("<think>") {
+        match enabled {
+            Some(false) if !prompt.ends_with("</think>\n\n") => {
+                prompt.push_str("<think>\n\n</think>\n\n");
+            }
+            Some(true) if !prompt.ends_with("<think>\n") => prompt.push_str("<think>\n"),
+            _ => {}
+        }
+    }
+    prompt
 }
 
 #[cfg(native_llama_cpp)]
@@ -842,23 +1213,16 @@ fn take_complete_utf8(buffer: &mut Vec<u8>) -> String {
 unsafe impl Send for NativeModel {}
 
 impl NativeModel {
-    /// Report whether the embedded chat template advertises tool handling.
+    /// Immutable artifact and serving support facts observed during load.
+    #[must_use]
+    pub const fn profile(&self) -> &oid_model_runner::ModelProfile {
+        &self.profile
+    }
+
+    /// Report usable tool handling, requiring an implemented output parser.
     #[must_use]
     pub fn supports_tools(&self) -> bool {
-        #[cfg(native_llama_cpp)]
-        unsafe {
-            let template =
-                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
-            if template.is_null() {
-                return false;
-            }
-            let template = CStr::from_ptr(template).to_string_lossy();
-            template.contains("custom_tools") || template.contains("tool_calls")
-        }
-        #[cfg(not(native_llama_cpp))]
-        {
-            false
-        }
+        self.profile.tool_format.is_some()
     }
 
     /// Model memory reported by llama.cpp.
@@ -901,6 +1265,21 @@ impl NativeModel {
     /// Returns an error when the text cannot be represented for the C API or
     /// llama.cpp reports a tokenization failure.
     pub fn tokenize(&self, text: &str) -> Result<Vec<i32>, String> {
+        self.tokenize_with_special(text, false)
+    }
+
+    #[cfg(native_llama_cpp)]
+    fn tokenize_generation(&self, text: &str) -> Result<Vec<i32>, String> {
+        let mut tokens = self.tokenize_with_special(text, true)?;
+        let bos =
+            unsafe { ffi::llama_vocab_bos(ffi::llama_model_get_vocab(self.pointer.cast_const())) };
+        if self.profile.tokenizer_adds_bos && bos >= 0 && tokens.first() != Some(&bos) {
+            tokens.insert(0, bos);
+        }
+        Ok(tokens)
+    }
+
+    fn tokenize_with_special(&self, text: &str, parse_special: bool) -> Result<Vec<i32>, String> {
         #[cfg(native_llama_cpp)]
         unsafe {
             let vocabulary = ffi::llama_model_get_vocab(self.pointer.cast_const());
@@ -913,7 +1292,7 @@ impl NativeModel {
                 std::ptr::null_mut(),
                 0,
                 false,
-                false,
+                parse_special,
             );
             if required >= 0 {
                 return Err("llama.cpp returned no token count".to_owned());
@@ -930,7 +1309,7 @@ impl NativeModel {
                 tokens.as_mut_ptr(),
                 capacity,
                 false,
-                false,
+                parse_special,
             );
             if count < 0 {
                 return Err("llama.cpp tokenization failed".to_owned());
@@ -940,7 +1319,7 @@ impl NativeModel {
         }
         #[cfg(not(native_llama_cpp))]
         {
-            let _ = text;
+            let _ = (text, parse_special);
             Err("native llama.cpp is unavailable".to_owned())
         }
     }
@@ -952,6 +1331,11 @@ impl NativeModel {
     /// Returns an error when the embedding context cannot be created or the
     /// native engine cannot produce an embedding vector.
     pub fn embedding(&self, text: &str, context_size: u32) -> Result<Vec<f32>, String> {
+        if !self.profile.embedding {
+            return Err(
+                "the native adapter does not implement this model's embedding mode".to_owned(),
+            );
+        }
         #[cfg(native_llama_cpp)]
         unsafe {
             let mut tokens = self.tokenize(text)?;
@@ -1000,131 +1384,70 @@ impl NativeModel {
     }
 
     #[cfg(native_llama_cpp)]
-    #[allow(clippy::too_many_lines)]
-    fn format_prompt(&self, prompt: &str) -> Result<String, String> {
-        unsafe {
-            let template =
-                ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null());
-            if template.is_null() {
-                return Ok(prompt.to_owned());
-            }
-            // HTTP multi-turn requests use a private record separator so the
-            // backend-neutral public contract remains plain text while the
-            // native adapter can still pass distinct role/content messages to
-            // the embedded GGUF chat template.
-            let parsed = prompt
-                .strip_prefix('\u{001e}')
-                .map(|conversation| {
-                    conversation
-                        .split('\u{001e}')
-                        .filter(|record| !record.is_empty())
-                        .map(|record| {
-                            record
-                                .split_once('\n')
-                                .ok_or_else(|| "invalid structured chat prompt".to_owned())
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?;
-            let entries = parsed.unwrap_or_else(|| vec![("user", prompt)]);
-            let entries = entries
-                .into_iter()
-                .map(|(role, content)| {
-                    let entry = if role == "__talvik_tools" {
-                        (
-                            "system".to_owned(),
-                            format!(
-                                "You may call one or more of these tools. When the user asks for a tool, do not answer in prose and do not invent results. Emit each call as <tool_call>{{\"name\":\"tool_name\",\"arguments\":{{}}}}</tool_call>. The arguments must be valid JSON. Tools: {content}"
-                            ),
-                        )
-                    } else if role == "__talvik_tool_choice" {
-                        let instruction = match content {
-                            "single" => {
-                                "Do not make more than one tool call in this response."
-                                    .to_owned()
-                            }
-                            "required" => {
-                                "A tool call is required for this response. You must call one of the listed tools and must not answer in prose."
-                                    .to_owned()
-                            }
-                            name if name.starts_with("function:") => format!(
-                                "You must call the listed function {:?} exactly once and must not call another function or answer in prose.",
-                                &name["function:".len()..]
-                            ),
-                            _ => return Err("invalid tool-choice prompt directive".to_owned()),
-                        };
-                        ("system".to_owned(), instruction)
-                    } else {
-                        (role.to_owned(), content.to_owned())
-                    };
-                    Ok(entry)
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let roles = entries
-                .iter()
-                .map(|(role, _)| {
-                    CString::new(role.as_str()).map_err(|_| "invalid chat role".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let contents = entries
-                .iter()
-                .map(|(_, content)| {
-                    CString::new(content.as_str()).map_err(|_| "prompt contains NUL".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let messages = roles
-                .iter()
-                .zip(contents.iter())
-                .map(|(role, content)| ChatMessage {
-                    role: role.as_ptr(),
-                    content: content.as_ptr(),
-                })
-                .collect::<Vec<_>>();
-            let required = ffi::llama_chat_apply_template(
-                template,
-                messages.as_ptr(),
-                messages.len(),
-                true,
-                std::ptr::null_mut(),
-                0,
-            );
-            if required < 0 {
-                return Err(format!(
-                    "llama.cpp could not apply the model chat template: {required}"
-                ));
-            }
-            let capacity = required
-                .checked_add(1)
-                .ok_or_else(|| "formatted prompt is too large".to_owned())?;
-            let mut buffer = vec![
-                0_i8;
-                usize::try_from(capacity)
-                    .map_err(|_| "formatted prompt is too large".to_owned())?
-            ];
-            let written = ffi::llama_chat_apply_template(
-                template,
-                messages.as_ptr(),
-                messages.len(),
-                true,
-                buffer.as_mut_ptr(),
-                capacity,
-            );
-            if written < 0 {
-                return Err(format!(
-                    "llama.cpp could not format the model chat template: {written}"
-                ));
-            }
-            let bytes = std::slice::from_raw_parts(
-                buffer.as_ptr().cast::<u8>(),
-                usize::try_from(written).map_err(|_| "formatted prompt is too large".to_owned())?,
-            );
-            String::from_utf8(bytes.to_vec())
-                .map_err(|_| "llama.cpp produced an invalid UTF-8 chat prompt".to_owned())
+    fn format_prompt(&self, prompt: &str) -> Result<FormattedPrompt, String> {
+        let template =
+            unsafe { ffi::llama_model_chat_template(self.pointer.cast_const(), std::ptr::null()) };
+        if template.is_null() {
+            return Ok(FormattedPrompt {
+                text: prompt.to_owned(),
+                cache_prefix: None,
+                constrain_json_tools: false,
+            });
         }
+        let template = unsafe { CStr::from_ptr(template) };
+        #[cfg(native_chat_template)]
+        if template
+            .to_bytes()
+            .windows(2)
+            .any(|part| part == b"{%" || part == b"{{")
+        {
+            return chat_template::format(self, prompt, template);
+        }
+        // Legacy named C formatters remain available for plain chat only.
+        // Tool formatting must execute the artifact's actual template.
+        let mut thinking = None;
+        let mut entries = Vec::new();
+        if let Some(records) = prompt.strip_prefix('\u{001e}') {
+            for record in records
+                .split('\u{001e}')
+                .filter(|record| !record.is_empty())
+            {
+                let (role, content) = record
+                    .split_once('\n')
+                    .ok_or("invalid structured chat prompt")?;
+                if role == "__talvik_template" {
+                    thinking = Some(
+                        content
+                            .strip_prefix("enable_thinking=")
+                            .ok_or("invalid template option")?
+                            .parse::<bool>()
+                            .map_err(|_| "invalid thinking option")?,
+                    );
+                } else if role.starts_with("__talvik_tool") {
+                    return Err(
+                        "tool use requires the native embedded-template renderer".to_owned()
+                    );
+                } else {
+                    entries.push((role.to_owned(), content.to_owned()));
+                }
+            }
+        } else {
+            entries.push(("user".to_owned(), prompt.to_owned()));
+        }
+        render_chat_prompt(template, &entries, thinking)
     }
 
     #[cfg(native_llama_cpp)]
     unsafe fn token_piece(vocabulary: *const c_void, token: i32) -> Result<Vec<u8>, String> {
+        unsafe { Self::token_piece_with_special(vocabulary, token, false) }
+    }
+
+    #[cfg(native_llama_cpp)]
+    unsafe fn token_piece_with_special(
+        vocabulary: *const c_void,
+        token: i32,
+        special: bool,
+    ) -> Result<Vec<u8>, String> {
         let mut capacity = 64_i32;
         loop {
             let mut text = vec![
@@ -1132,8 +1455,14 @@ impl NativeModel {
                 usize::try_from(capacity)
                     .map_err(|_| "token text is too large".to_owned())?
             ];
-            let length =
-                ffi::llama_token_to_piece(vocabulary, token, text.as_mut_ptr(), capacity, 0, false);
+            let length = ffi::llama_token_to_piece(
+                vocabulary,
+                token,
+                text.as_mut_ptr(),
+                capacity,
+                0,
+                special,
+            );
             if length < 0 {
                 capacity = length
                     .checked_neg()
@@ -1322,7 +1651,9 @@ impl NativeModel {
             if cancelled.load(Ordering::SeqCst) {
                 return Err("generation cancelled".to_owned());
             }
-            let formatted_prompt = self.format_prompt(prompt)?;
+            let formatted = self.format_prompt(prompt)?;
+            let constrain_json_tools = grammar.is_none() && formatted.constrain_json_tools;
+            let formatted_prompt = formatted.text;
             #[allow(unused_assignments)]
             let mut prompt_tokens = Vec::new();
             let prompt_count: usize;
@@ -1331,7 +1662,7 @@ impl NativeModel {
             #[cfg(native_mtmd)]
             let mut multimodal_bitmaps = None;
             if images.is_empty() {
-                prompt_tokens = self.tokenize(&formatted_prompt)?;
+                prompt_tokens = self.tokenize_generation(&formatted_prompt)?;
                 prompt_count = prompt_tokens.len();
             } else {
                 #[cfg(not(native_mtmd))]
@@ -1376,7 +1707,7 @@ impl NativeModel {
                         mtmd_ffi::mtmd_tokenize(
                             mtmd,
                             chunks.0,
-                            &input_text,
+                            std::ptr::from_ref(&input_text),
                             bitmap_pointers.as_ptr(),
                             bitmap_pointers.len(),
                         )
@@ -1395,13 +1726,48 @@ impl NativeModel {
                     multimodal_bitmaps = Some(owned_bitmaps);
                 }
             }
+            eprintln!(
+                "llama.cpp generation prompt_tokens={prompt_count} context_size={context_size} max_tokens={max_tokens}"
+            );
             let prompt_count_u64 = prompt_count as u64;
             let max_context =
                 usize::try_from(context_size).map_err(|_| "context too large".to_owned())?;
             if prompt_count >= max_context {
                 return Err("prompt exceeds context size".to_owned());
             }
-            let physical_batch = context_size.min(512);
+            let recurrent = images.is_empty()
+                && self.profile.cache == oid_model_runner::CacheStrategy::Recurrent;
+            let mut checkpoint_positions = Vec::new();
+            if recurrent && prompt_tokens.len() > 1 {
+                if let Some(prefix_text) = formatted.cache_prefix {
+                    // A failed optimization must not reject an otherwise valid
+                    // request. Exact token validation also handles BPE merges.
+                    if let Ok(prefix) = self.tokenize_generation(&prefix_text) {
+                        if let Some(position) =
+                            verified_checkpoint_position(&prefix, &prompt_tokens)
+                        {
+                            checkpoint_positions.push(position);
+                        }
+                    }
+                }
+                checkpoint_positions.push(prompt_tokens.len() - 1);
+                checkpoint_positions.sort_unstable();
+                checkpoint_positions.dedup();
+            }
+            let trace_prefill = std::env::var("TALVIK_TRACE_PREFILL")
+                .is_ok_and(|value| matches!(value.as_str(), "1" | "true"));
+            // Preserve the advertised logical limit while avoiding unused KV
+            // allocation. Power-of-two headroom keeps nearby turns reusable;
+            // requests that outgrow the retained capacity rebuild safely.
+            // Multimodal position accounting retains its qualified full limit.
+            let required_context_size =
+                required_text_context(context_size, prompt_count, max_tokens);
+            let allocated_context_size = if images.is_empty() {
+                text_context_capacity(context_size, prompt_count, max_tokens)
+            } else {
+                context_size
+            };
+            let physical_batch = allocated_context_size.min(512);
             let mut persistent = self
                 .context
                 .lock()
@@ -1409,9 +1775,17 @@ impl NativeModel {
             let mut cache_hit = false;
             let mut reused_prompt_tokens = 0_u64;
             let reuse_len = if images.is_empty() {
-                persistent.as_ref().and_then(|cached| {
-                    compatible_prompt_reuse_len(cached, &prompt_tokens, context_size)
-                })
+                persistent
+                    .as_ref()
+                    .filter(|cached| cached.allocated_context_size >= required_context_size)
+                    .and_then(|cached| {
+                        compatible_prompt_reuse_len(
+                            cached,
+                            &prompt_tokens,
+                            context_size,
+                            self.profile.cache,
+                        )
+                    })
             } else {
                 None
             };
@@ -1423,8 +1797,22 @@ impl NativeModel {
                     .relay
                     .current
                     .store(std::ptr::from_ref(cancelled).cast_mut(), Ordering::SeqCst);
+                let restored = cached
+                    .checkpoints
+                    .iter()
+                    .find(|checkpoint| checkpoint.tokens.len() == reuse_len)
+                    .is_none_or(|checkpoint| unsafe {
+                        ffi::llama_state_seq_set_data_ext(
+                            cached.pointer,
+                            checkpoint.state.as_ptr(),
+                            checkpoint.state.len(),
+                            0,
+                            PARTIAL_STATE_ONLY,
+                        ) == checkpoint.state.len()
+                    });
                 let memory = unsafe { ffi::llama_get_memory(cached.pointer) };
-                let removed = !memory.is_null()
+                let removed = restored
+                    && !memory.is_null()
                     && unsafe {
                         ffi::llama_memory_seq_rm(
                             memory,
@@ -1456,6 +1844,7 @@ impl NativeModel {
                         unsafe { ffi::llama_memory_clear(memory, true) };
                     }
                     cached.prompt_tokens.clear();
+                    cached.checkpoints.clear();
                     (cached.pointer, 0)
                 }
             } else {
@@ -1463,11 +1852,13 @@ impl NativeModel {
                     drop(cached);
                 }
                 let mut context_params = ContextParams {
-                    n_ctx: context_size,
+                    n_ctx: allocated_context_size,
                     // Keep graph reservation bounded. Prompts larger than this
                     // physical batch are decoded incrementally below.
                     n_batch: physical_batch,
                     n_ubatch: physical_batch,
+                    n_outputs_max: 1,
+                    n_outputs_max_per_seq: 1,
                     n_threads: inference_threads(),
                     n_threads_batch: inference_threads(),
                     ..unsafe { ffi::llama_context_default_params() }
@@ -1481,14 +1872,23 @@ impl NativeModel {
                 if pointer.is_null() {
                     return Err("llama.cpp could not create a context".to_owned());
                 }
+                eprintln!("llama.cpp context allocation requested_tokens={context_size} allocated_tokens={allocated_context_size}");
                 persistent.replace(PersistentContext {
                     pointer,
                     context_size,
+                    allocated_context_size,
                     prompt_tokens: Vec::new(),
+                    checkpoints: Vec::new(),
                     relay,
                 });
                 (pointer, 0)
             };
+            if let Some(cached) = persistent.as_mut() {
+                cached.checkpoints.retain(|checkpoint| {
+                    prompt_tokens.starts_with(&checkpoint.tokens)
+                        && checkpoint_positions.contains(&checkpoint.tokens.len())
+                });
+            }
             let relay = persistent
                 .as_ref()
                 .ok_or_else(|| "native context cache disappeared".to_owned())?
@@ -1506,7 +1906,11 @@ impl NativeModel {
                 invalidate_context(&mut persistent);
                 return Err("llama.cpp could not create a sampler".to_owned());
             }
+            let vocabulary = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
             let mut samplers = Vec::with_capacity(6);
+            if constrain_json_tools {
+                samplers.push(unsafe { tool_grammar::init(vocabulary) });
+            }
             if let Some(grammar_source) = grammar_source.as_ref() {
                 let vocabulary = unsafe { ffi::llama_model_get_vocab(self.pointer.cast_const()) };
                 samplers.push(unsafe {
@@ -1525,7 +1929,13 @@ impl NativeModel {
                     // runaway repeated fragments while leaving frequency and
                     // presence penalties disabled unless they become part of
                     // the public request contract.
-                    ffi::llama_sampler_init_penalties(64, 1.1, 0.0, 0.0),
+                    ffi::llama_sampler_init_penalties(
+                        ffi::llama_vocab_n_tokens(vocabulary),
+                        64,
+                        1.1,
+                        0.0,
+                        0.0,
+                    ),
                     ffi::llama_sampler_init_temp(temperature),
                     ffi::llama_sampler_init_dist(seed),
                 ]
@@ -1548,16 +1958,26 @@ impl NativeModel {
                 }
             }
             let generation_position = if images.is_empty() {
-                let remaining_prompt = prompt_tokens
-                    .get_mut(prompt_position..)
-                    .ok_or_else(|| "cached prompt position exceeds request prompt".to_owned())?;
-                for prompt_batch in remaining_prompt.chunks_mut(
-                    usize::try_from(physical_batch).map_err(|_| "invalid batch size".to_owned())?,
-                ) {
-                    let decode_result = unsafe {
-                        ffi::llama_decode(context, make_batch(prompt_batch, prompt_position)?.batch)
-                    };
-                    prompt_position += prompt_batch.len();
+                while prompt_position < prompt_tokens.len() {
+                    let mut end = (prompt_position
+                        + usize::try_from(physical_batch)
+                            .map_err(|_| "invalid batch size".to_owned())?)
+                    .min(prompt_tokens.len());
+                    if let Some(boundary) = checkpoint_positions
+                        .iter()
+                        .copied()
+                        .find(|position| *position > prompt_position && *position < end)
+                    {
+                        end = boundary;
+                    }
+                    let final_batch = end == prompt_tokens.len();
+                    let mut batch =
+                        make_batch(&mut prompt_tokens[prompt_position..end], prompt_position)?;
+                    if !final_batch {
+                        batch.logits.fill(0);
+                    }
+                    let decode_result = unsafe { ffi::llama_decode(context, batch.batch) };
+                    prompt_position = end;
                     match classify_decode_result(
                         decode_result,
                         cancelled.load(std::sync::atomic::Ordering::SeqCst),
@@ -1576,6 +1996,14 @@ impl NativeModel {
                             }
                             invalidate_context(&mut persistent);
                             return Err(decode_error("prompt", decode_result));
+                        }
+                    }
+                    if trace_prefill {
+                        eprintln!("Talvik prefill progress processed={prompt_position} total={} elapsed_ms={} reused={reused_prompt_tokens}", prompt_tokens.len(), inference_started.elapsed().as_millis());
+                    }
+                    if checkpoint_positions.contains(&prompt_position) {
+                        if let Some(cached) = persistent.as_mut() {
+                            save_prompt_checkpoint(cached, &prompt_tokens[..prompt_position]);
                         }
                     }
                 }
@@ -1600,7 +2028,7 @@ impl NativeModel {
                             i32::try_from(physical_batch)
                                 .map_err(|_| "invalid batch size".to_owned())?,
                             true,
-                            &mut new_n_past,
+                            std::ptr::from_mut(&mut new_n_past),
                         )
                     };
                     match classify_decode_result(
@@ -1781,6 +2209,35 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn text_context_capacity_reserves_output_and_bounded_growth_headroom() {
+        assert_eq!(super::text_context_capacity(32768, 9288, 2048), 16384);
+        assert_eq!(super::text_context_capacity(32768, 6032, 2048), 16384);
+        assert_eq!(super::required_text_context(32768, 6032, 2048), 8080);
+
+        assert_eq!(super::text_context_capacity(32768, 12, 16), 512);
+        assert_eq!(super::text_context_capacity(128, 20, 8), 128);
+        assert_eq!(super::text_context_capacity(5000, 4900, 2048), 5000);
+        assert_eq!(
+            super::text_context_capacity(32768, usize::MAX, u32::MAX),
+            32768
+        );
+        assert_eq!(super::text_context_capacity(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn auxiliary_accelerators_are_not_cpu_or_gpu_runners() {
+        use super::{classify_native_device as classify, NativeBackend};
+        assert_eq!(classify(3, "blas"), None);
+        assert_eq!(classify(3, "cpu"), None);
+        assert_eq!(classify(4, "rpc"), None);
+        assert_eq!(classify(1, "unknown"), None);
+        assert_eq!(classify(0, "cpu"), Some(NativeBackend::Cpu));
+        assert_eq!(classify(1, "cuda"), Some(NativeBackend::Cuda));
+        assert_eq!(classify(2, "metal"), Some(NativeBackend::Metal));
+        assert_eq!(classify(2, "vulkan"), Some(NativeBackend::Vulkan));
+    }
+
+    #[test]
     fn prompt_cache_reuse_requires_the_native_sequence_to_match_the_prefix() {
         assert!(cached_prefix_matches(36, 35));
         assert!(!cached_prefix_matches(36, 70));
@@ -1791,35 +2248,366 @@ mod tests {
     #[cfg(native_llama_cpp)]
     #[test]
     fn prompt_reuse_requires_matching_context_and_prefix() {
+        use oid_model_runner::CacheStrategy::Attention;
         let cached = super::PersistentContext {
             pointer: std::ptr::null_mut(),
             context_size: 512,
+            allocated_context_size: 512,
             prompt_tokens: vec![1, 2, 3],
+            checkpoints: Vec::new(),
             relay: Box::new(super::CancellationRelay {
                 current: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             }),
         };
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 512),
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 512, Attention),
             Some(2)
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3, 4], 512),
-            Some(2)
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3, 4], 512, Attention),
+            Some(3)
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 9, 3], 512),
+            super::compatible_prompt_reuse_len(&cached, &[1, 9, 3], 512, Attention),
+            Some(1)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2], 512, Attention),
+            Some(1)
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 1024, Attention),
             None
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2], 512),
+            super::compatible_prompt_reuse_len(&cached, &[9, 2], 512, Attention),
             None
         );
         assert_eq!(
-            super::compatible_prompt_reuse_len(&cached, &[1, 2, 3], 1024),
+            super::compatible_prompt_reuse_len(
+                &cached,
+                &[1, 2],
+                512,
+                oid_model_runner::CacheStrategy::Recurrent
+            ),
+            None
+        );
+        assert_eq!(
+            super::compatible_prompt_reuse_len(
+                &cached,
+                &[1, 2],
+                512,
+                oid_model_runner::CacheStrategy::Disabled
+            ),
             None
         );
         std::mem::forget(cached);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires TALVIK_TEST_PROFILE_GGUF for metadata/tokenizer qualification"]
+    fn loaded_profile_applies_tokenizer_metadata_without_duplicate_bos() {
+        let path = std::env::var("TALVIK_TEST_PROFILE_GGUF").expect("GGUF fixture");
+        super::initialize().expect("initialize");
+        let model = super::load_model(&path, None, super::cpu_load_options()).expect("load");
+        assert_ne!(model.profile().architecture, "unknown");
+        assert!(model.profile().completion);
+        assert!(model.profile().chat);
+        assert!(model.profile().context_length > 0);
+        let rendered = model.format_prompt("Reply OK.").expect("format");
+        let tokens = model
+            .tokenize_generation(&rendered.text)
+            .expect("generation tokens");
+        let literal = model
+            .tokenize_with_special(&rendered.text, true)
+            .expect("literal tokens");
+        let bos = unsafe {
+            super::ffi::llama_vocab_bos(super::ffi::llama_model_get_vocab(
+                model.pointer.cast_const(),
+            ))
+        };
+        if model.profile().tokenizer_adds_bos {
+            assert_eq!(tokens.first(), Some(&bos));
+            assert_eq!(tokens.iter().filter(|t| **t == bos).count(), 1);
+            let bos_text = unsafe {
+                std::ffi::CStr::from_ptr(super::ffi::llama_vocab_get_text(
+                    super::ffi::llama_model_get_vocab(model.pointer.cast_const()),
+                    bos,
+                ))
+            }
+            .to_string_lossy();
+            let explicit = model
+                .tokenize_generation(&format!("{bos_text}Reply OK."))
+                .expect("explicit BOS");
+            assert_eq!(explicit.first(), Some(&bos));
+            assert_eq!(explicit.iter().filter(|t| **t == bos).count(), 1);
+        } else {
+            assert_eq!(tokens, literal);
+        }
+        drop(model);
+        super::shutdown();
+    }
+
+    #[test]
+    fn template_output_formats_require_a_supported_protocol() {
+        use oid_model_runner::{ReasoningFormat, ToolFormat};
+        assert_eq!(
+            super::output_formats("tools tool_calls unknown", false),
+            (true, None, None, false)
+        );
+        assert_eq!(
+            super::output_formats("tools <tool_call>{name:arguments}</tool_call>", false).1,
+            Some(ToolFormat::XmlJson)
+        );
+        assert_eq!(
+            super::output_formats(
+                "tools <tool_call><function=f><parameter=x></parameter></function></tool_call>",
+                false
+            )
+            .1,
+            Some(ToolFormat::XmlFunction)
+        );
+        assert_eq!(
+            super::output_formats("plain chat", true).2,
+            Some(ReasoningFormat::ThinkTags)
+        );
+        assert!(!super::output_formats("enable_thinking without marker", true).3);
+        assert!(super::output_formats("enable_thinking <think></think>", false).3);
+        assert_eq!(
+            super::output_formats("plain chat", false),
+            (false, None, None, false)
+        );
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires MARINA_TEST_GGUF for embedded template qualification"]
+    fn tool_system_layout_matches_the_loaded_template() {
+        let path = std::env::var("MARINA_TEST_GGUF").expect("GGUF fixture");
+        super::initialize().unwrap();
+        let model = super::load_model(&path, None, super::cpu_load_options()).unwrap();
+        let expected_order = std::env::var("TALVIK_TEST_TOOL_ORDER")
+            .expect("client-first or tools-first fixture expectation");
+        assert!(matches!(
+            expected_order.as_str(),
+            "client-first" | "tools-first"
+        ));
+        let prompt = "\u{001e}__talvik_tools\n[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}}}]\u{001e}system\nCLIENT_SCOPE_MARKER\u{001e}user\nRead a file.";
+        let rendered = model.format_prompt(prompt).unwrap();
+        #[cfg(native_chat_template)]
+        {
+            assert!(!rendered.text.contains("<parameter=argument_name>"));
+            assert!(!rendered.text.contains("\"argument_name\""));
+            assert!(rendered
+                .cache_prefix
+                .as_ref()
+                .is_some_and(|prefix| rendered.text.starts_with(prefix)));
+        }
+        assert_eq!(rendered.text.matches("<|im_start|>system\n").count(), 1);
+        let client = rendered.text.find("CLIENT_SCOPE_MARKER").unwrap();
+        let tools = rendered.text.find("# Tools").unwrap();
+        assert_eq!(client < tools, expected_order == "client-first");
+    }
+
+    #[test]
+    fn checkpoint_boundary_requires_an_exact_nontrivial_token_prefix() {
+        let prefix = vec![7; 64];
+        let mut prompt = prefix.clone();
+        prompt.extend([8, 9]);
+        assert_eq!(
+            super::verified_checkpoint_position(&prefix, &prompt),
+            Some(64)
+        );
+        assert_eq!(super::verified_checkpoint_position(&[], &prompt), None);
+        assert_eq!(
+            super::verified_checkpoint_position(&prefix[..63], &prompt),
+            None
+        );
+        assert_eq!(super::verified_checkpoint_position(&prompt, &prompt), None);
+        // A byte prefix may tokenize differently at its final boundary.
+        let mut merged = prefix.clone();
+        merged[63] = 99;
+        assert_eq!(super::verified_checkpoint_position(&merged, &prompt), None);
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn cache_boundary_comes_from_structured_roles_across_template_families() {
+        let entries = vec![
+            ("system".to_owned(), "Static instructions.".to_owned()),
+            (
+                "user".to_owned(),
+                "Content with <|im_start|>user\n and USER: inside it.".to_owned(),
+            ),
+        ];
+        for family in ["chatml", "llama3", "deepseek", "vicuna"] {
+            let template = std::ffi::CString::new(family).expect("template");
+            let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+            let prefix = prompt.cache_prefix.expect("prefix-stable template");
+            assert_eq!(
+                prefix,
+                super::render_template_messages(&template, &entries[..1], false).expect("prefix")
+            );
+            assert!(prompt.text.starts_with(&prefix));
+            assert!(!prefix.contains("Content with"));
+            assert!(prompt.text.contains("Content with"));
+            // A changed user body must not change its static boundary.
+            let mut changed = entries.clone();
+            changed[1].1 = "A different request.".to_owned();
+            assert_eq!(
+                super::render_chat_prompt(&template, &changed, None)
+                    .expect("changed")
+                    .cache_prefix
+                    .as_deref(),
+                Some(prefix.as_str())
+            );
+            let user_only =
+                super::render_chat_prompt(&template, &entries[1..], None).expect("user only");
+            assert!(user_only.cache_prefix.is_none());
+        }
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn cache_boundary_preserves_history_before_the_last_user_turn() {
+        let template = std::ffi::CString::new("llama3").expect("template");
+        let entries = vec![
+            ("system".to_owned(), "Instructions.".to_owned()),
+            ("user".to_owned(), "Previous question.".to_owned()),
+            ("assistant".to_owned(), "Previous answer.".to_owned()),
+            ("user".to_owned(), "New question.".to_owned()),
+        ];
+        let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+        let prefix = prompt.cache_prefix.expect("history prefix");
+        assert_eq!(
+            prefix,
+            super::render_template_messages(&template, &entries[..3], false).expect("prefix")
+        );
+        assert!(prefix.contains("Previous answer."));
+        assert!(!prefix.contains("New question."));
+        assert!(prompt.text.starts_with(&prefix));
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    fn merged_system_template_falls_back_without_rejecting_generation() {
+        let template = std::ffi::CString::new("gemma").expect("template");
+        let entries = vec![
+            ("system".to_owned(), "Static instructions.".to_owned()),
+            ("user".to_owned(), "Question.".to_owned()),
+        ];
+        let prompt = super::render_chat_prompt(&template, &entries, None).expect("render");
+        assert!(prompt.cache_prefix.is_none());
+        assert!(prompt.text.contains("Static instructions.\n\nQuestion."));
+        assert!(prompt.text.ends_with("<start_of_turn>model\n"));
+        let invalid = std::ffi::CString::new("unsupported-talvik-template").expect("template");
+        assert!(super::render_chat_prompt(&invalid, &entries, None).is_err());
+    }
+
+    #[cfg(native_llama_cpp)]
+    #[test]
+    #[ignore = "requires a hybrid/recurrent GGUF supplied through TALVIK_TEST_RECURRENT_GGUF"]
+    fn recurrent_checkpoint_reuse_matches_cold_output_and_clears_on_cancel() {
+        use std::sync::atomic::AtomicBool;
+        let path = std::env::var("TALVIK_TEST_RECURRENT_GGUF").expect("recurrent GGUF fixture");
+        super::initialize().expect("initialize");
+        let model = super::load_model(&path, None, super::cpu_load_options()).expect("load");
+        assert!(unsafe {
+            super::ffi::llama_model_is_hybrid(model.pointer.cast_const())
+                || super::ffi::llama_model_is_recurrent(model.pointer.cast_const())
+        });
+        // A user-only template has no static prefix before its first marker.
+        // Do not pass that empty prefix through the native token-count probe.
+        model
+            .generate_stream(
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nReply OK.",
+                2048,
+                4,
+                0.0,
+                1.0,
+                40,
+                42,
+                &[],
+                |_| true,
+                &AtomicBool::new(false),
+            )
+            .expect("user-only template has no static prefix");
+        model.reset_context().expect("reset short prompt");
+        let prefix = "A completed record.\n".repeat(16);
+        let prompt = |question: &str| {
+            format!("\u{001e}__talvik_template\nenable_thinking=false\u{001e}system\n{prefix}Answer the arithmetic question with a number only.\u{001e}user\n{question}")
+        };
+        let run = |question: &str| {
+            let mut text = String::new();
+            let stats = model
+                .generate_stream(
+                    &prompt(question),
+                    2048,
+                    16,
+                    0.0,
+                    1.0,
+                    40,
+                    42,
+                    &[],
+                    |part| {
+                        text.push_str(part);
+                        true
+                    },
+                    &AtomicBool::new(false),
+                )
+                .expect("generation");
+            (text, stats)
+        };
+        let first = run("What is 2 + 2?");
+        let repeat = run("What is 2 + 2?");
+        assert_eq!(first.0.trim(), "4");
+        assert_eq!(repeat.0, first.0);
+        assert!(repeat.1.cache_hit);
+        assert!(repeat.1.reused_prompt_tokens >= repeat.1.prompt_tokens - 2);
+        let changed = run("What is 3 + 3?");
+        assert!(changed.1.cache_hit);
+        assert!(changed.1.reused_prompt_tokens > 32);
+        model.reset_context().expect("reset");
+        let cold_changed = run("What is 3 + 3?");
+        assert!(!cold_changed.1.cache_hit);
+        assert_eq!(changed.0, cold_changed.0);
+        assert_eq!(changed.0.trim(), "6");
+        let cancellation = AtomicBool::new(false);
+        assert!(model
+            .generate_stream(
+                &prompt("What is 3 + 3?"),
+                2048,
+                32,
+                0.0,
+                1.0,
+                40,
+                42,
+                &[],
+                |_| {
+                    cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
+                    false
+                },
+                &cancellation
+            )
+            .is_err());
+        let recovered = run("What is 3 + 3?");
+        assert!(!recovered.1.cache_hit);
+        assert_eq!(recovered.0, cold_changed.0);
+        let context = model.context.lock().expect("context");
+        let cache = context.as_ref().expect("cache");
+        assert!(cache.checkpoints.len() <= 2);
+        assert!(
+            cache
+                .checkpoints
+                .iter()
+                .map(|checkpoint| checkpoint.state.len())
+                .sum::<usize>()
+                <= super::MAX_TOTAL_CHECKPOINT_BYTES
+        );
+        drop(context);
+        drop(model);
+        super::shutdown();
     }
 
     #[cfg(native_llama_cpp)]
@@ -1833,10 +2621,26 @@ mod tests {
             .expect("test GGUF should load");
         let formatted = model
             .format_prompt("Reply with exactly: MARINA_OK")
-            .expect("embedded chat template should format the prompt");
+            .expect("embedded chat template should format the prompt")
+            .text;
         assert!(formatted.contains("<|im_start|>user"));
         assert!(formatted.contains("Reply with exactly: MARINA_OK"));
         assert!(formatted.contains("<|im_start|>assistant"));
+        let marker = model
+            .tokenize_with_special("<|im_start|>", true)
+            .expect("special marker");
+        assert_eq!(marker.len(), 1);
+        let prompt_tokens = model
+            .tokenize_with_special(&formatted, true)
+            .expect("formatted tokens");
+        assert!(prompt_tokens.contains(&marker[0]));
+        assert!(
+            model
+                .tokenize("<|im_start|>")
+                .expect("literal marker")
+                .len()
+                > 1
+        );
         drop(model);
         super::shutdown();
     }
@@ -1873,7 +2677,7 @@ mod tests {
         let mut answer = String::new();
         model
             .generate_stream_with_grammar_and_images(
-                "What color is the square? Answer with one color. <__media__>",
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nWhat color is the square? Answer with one color. <__media__>",
                 512,
                 32,
                 0.0,
@@ -1894,7 +2698,7 @@ mod tests {
 
         let cancellation = std::sync::atomic::AtomicBool::new(false);
         let cancelled_generation = model.generate_stream_with_grammar_and_images(
-            "Describe every object in the image in detail. <__media__>",
+            "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nDescribe every object in the image in detail. <__media__>",
             512,
             256,
             0.0,
@@ -1915,7 +2719,7 @@ mod tests {
         let mut recovered = String::new();
         model
             .generate_stream_with_grammar_and_images(
-                "What color is the square? Answer with one color. <__media__>",
+                "\u{001e}__talvik_template\nenable_thinking=false\u{001e}user\nWhat color is the square? Answer with one color. <__media__>",
                 512,
                 32,
                 0.0,
@@ -2136,6 +2940,40 @@ mod tests {
         assert!(continued_turn_result.cache_hit);
         assert!(continued_turn_result.reused_prompt_tokens > 0);
 
+        let run_text = |text: &str| {
+            let mut output = String::new();
+            let stats = model
+                .generate_stream(
+                    text,
+                    128,
+                    8,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |piece| {
+                        output.push_str(piece);
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("prefix probe");
+            (output, stats)
+        };
+        model.reset_context().expect("start changed-turn test cold");
+        run_text("Answer this question briefly: what is two plus two?");
+        let changed = run_text("Answer this question briefly: what is three plus three?");
+        assert!(changed.1.cache_hit);
+        model.reset_context().expect("cold comparison");
+        let cold_changed = run_text("Answer this question briefly: what is three plus three?");
+        assert_eq!(changed.0, cold_changed.0);
+        let shorter = run_text("Answer this question briefly: why?");
+        assert!(shorter.1.cache_hit);
+        model.reset_context().expect("shortened cold comparison");
+        let cold_shorter = run_text("Answer this question briefly: why?");
+        assert_eq!(shorter.0, cold_shorter.0);
+
         let unrelated = model
             .generate_stream(
                 "This is a separate conversation. Reply briefly.",
@@ -2150,11 +2988,11 @@ mod tests {
                 &cancelled,
             )
             .expect("independent conversation should succeed");
-        assert!(!unrelated.cache_hit);
+        assert!(unrelated.reused_prompt_tokens < unrelated.prompt_tokens);
         let after_unrelated = model
             .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
             .expect("original conversation should remain isolated");
-        assert!(!after_unrelated.cache_hit);
+        assert!(after_unrelated.reused_prompt_tokens < after_unrelated.prompt_tokens);
 
         model
             .reset_context()
@@ -2182,6 +3020,95 @@ mod tests {
             .generate_stream(prompt, 128, 1, 0.0, 0.95, 40, 42, &[], |_| true, &cancelled)
             .expect("inference should recover after cancellation");
         assert!(!after_cancellation.cache_hit);
+        let run_capacity = |text: &str| {
+            let mut output = String::new();
+            let stats = model
+                .generate_stream(
+                    text,
+                    4096,
+                    1,
+                    0.0,
+                    0.95,
+                    40,
+                    42,
+                    &[],
+                    |piece| {
+                        output.push_str(piece);
+                        true
+                    },
+                    &cancelled,
+                )
+                .expect("capacity probe");
+            (output, stats)
+        };
+        model.reset_context().expect("capacity probe reset");
+        let small = "\u{001e}system\nReply OK only.\u{001e}user\nShort record.";
+        run_capacity(small);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            512
+        );
+        // Fresh allocation would reserve 1K, but the existing 512-token
+        // context can still satisfy this request's actual maximum.
+        let fits = model
+            .generate_stream(
+                small,
+                4096,
+                400,
+                0.0,
+                0.95,
+                40,
+                42,
+                &[],
+                |_| true,
+                &cancelled,
+            )
+            .expect("reuse within actual capacity");
+        assert!(fits.cache_hit);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            512
+        );
+        let large = format!(
+            "\u{001e}system\nReply OK only.\u{001e}user\n{}",
+            "A completed record.\n".repeat(192)
+        );
+        let grown = run_capacity(&large);
+        assert!(!grown.1.cache_hit, "growth must rebuild before decoding");
+        let grown_capacity = model
+            .context
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .allocated_context_size;
+        assert!(grown_capacity > 512 && grown_capacity <= 4096);
+        model.reset_context().expect("capacity cold comparison");
+        assert_eq!(grown.0, run_capacity(&large).0);
+        assert!(run_capacity(small).1.cache_hit);
+        assert_eq!(
+            model
+                .context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .allocated_context_size,
+            grown_capacity,
+            "shorter turns retain the existing allocation"
+        );
         drop(model);
         super::shutdown();
     }
@@ -2217,19 +3144,85 @@ mod tests {
         }
         assert_eq!(output, "11,664 ");
         assert!(terminal);
-        assert!(filter.finish().is_empty());
+        assert_eq!(filter.finish(), "");
     }
 
     #[test]
-    fn partial_marker_prefix_is_flushed_when_generation_ends() {
+    fn partial_marker_prefix_is_discarded_when_generation_ends() {
         let mut filter = super::EndMarkerFilter::default();
         let (text, seen) = filter.push("a <|im");
         assert_eq!(text, "a ");
         assert!(!seen);
-        assert_eq!(filter.finish(), "<|im");
+        assert_eq!(filter.finish(), "");
         let (text, seen) = filter.push("plain | text");
         assert_eq!(text, "plain | text");
         assert!(!seen);
+    }
+
+    #[test]
+    fn repeated_marker_prefix_is_not_leaked_at_generation_end() {
+        let mut filter = super::EndMarkerFilter::default();
+        let (text, seen) = filter.push("answer<<");
+        assert_eq!(text, "answer");
+        assert!(!seen);
+        assert_eq!(filter.finish(), "");
+    }
+
+    #[test]
+    fn bare_marker_match_does_not_leak_its_angle_bracket_prefix() {
+        let mut filter = super::EndMarkerFilter::default();
+        let mut output = String::new();
+        let mut stopped = false;
+        for part in ["answer", "<", "|", "im", "_end", "|", ">"] {
+            let (delta, terminal) = filter.push(part);
+            output.push_str(&delta);
+            if terminal {
+                stopped = true;
+                break;
+            }
+        }
+        output.push_str(&filter.finish());
+        assert_eq!(output, "answer");
+        assert!(stopped);
+    }
+
+    #[test]
+    fn repeated_prefix_before_split_terminal_marker_is_not_emitted() {
+        let mut filter = super::EndMarkerFilter::default();
+        let mut output = String::new();
+        for part in ["answer<", "<|", "im_end", "|>"] {
+            let (delta, _) = filter.push(part);
+            output.push_str(&delta);
+        }
+        output.push_str(&filter.finish());
+        assert_eq!(output, "answer");
+        let (output, stopped) = filter.push("answer<<|im_end|>");
+        assert_eq!(output, "answer");
+        assert!(stopped);
+    }
+
+    #[test]
+    fn thinking_option_prefills_only_models_that_support_it() {
+        let template = "enable_thinking <think>";
+        let prompt = "assistant\n".to_owned();
+        let disabled = super::apply_thinking_prefill(prompt.clone(), template, Some(false));
+        assert_eq!(disabled, "assistant\n<think>\n\n</think>\n\n");
+        assert_eq!(
+            super::apply_thinking_prefill(disabled.clone(), template, Some(false)),
+            disabled
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), template, Some(true)),
+            "assistant\n<think>\n"
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), template, None),
+            prompt
+        );
+        assert_eq!(
+            super::apply_thinking_prefill(prompt.clone(), "chatml", Some(false)),
+            prompt
+        );
     }
 
     #[cfg(native_llama_cpp)]
@@ -2244,6 +3237,150 @@ mod tests {
         let (partial, terminal) = super::NativeModel::terminal_piece_prefix(b"answer<|im_");
         assert_eq!(partial, b"answer<|im_");
         assert!(!terminal);
+    }
+}
+
+#[cfg(native_llama_cpp)]
+fn model_metadata(pointer: *const c_void, key: &CStr) -> Option<String> {
+    let required =
+        unsafe { ffi::llama_model_meta_val_str(pointer, key.as_ptr(), std::ptr::null_mut(), 0) };
+    let size = usize::try_from(required).ok()?.checked_add(1)?;
+    if size > 1_048_576 {
+        return None;
+    }
+    let mut buffer = vec![0_u8; size];
+    let written = unsafe {
+        ffi::llama_model_meta_val_str(pointer, key.as_ptr(), buffer.as_mut_ptr().cast(), size)
+    };
+    if written != required {
+        return None;
+    }
+    buffer.truncate(size - 1);
+    String::from_utf8(buffer).ok()
+}
+
+#[cfg(any(native_llama_cpp, test))]
+fn output_formats(
+    template: &str,
+    think_tokens: bool,
+) -> (
+    bool,
+    Option<oid_model_runner::ToolFormat>,
+    Option<oid_model_runner::ReasoningFormat>,
+    bool,
+) {
+    let declared = template.contains("tools") || template.contains("tool_call");
+    let xml = declared && template.contains("<tool_call>") && template.contains("</tool_call>");
+    let reasoning = think_tokens || (template.contains("<think>") && template.contains("</think>"));
+    (
+        declared,
+        xml.then_some(
+            if template.contains("<function=") && template.contains("<parameter=") {
+                oid_model_runner::ToolFormat::XmlFunction
+            } else {
+                oid_model_runner::ToolFormat::XmlJson
+            },
+        ),
+        reasoning.then_some(oid_model_runner::ReasoningFormat::ThinkTags),
+        reasoning && template.contains("enable_thinking") && template.contains("<think>"),
+    )
+}
+
+#[cfg(native_llama_cpp)]
+fn inspect_loaded_profile(pointer: *const c_void, vision: bool) -> oid_model_runner::ModelProfile {
+    use oid_model_runner::{CacheStrategy, ModelProfile};
+    let architecture =
+        model_metadata(pointer, c"general.architecture").unwrap_or_else(|| "unknown".to_owned());
+    let template_pointer = unsafe { ffi::llama_model_chat_template(pointer, std::ptr::null()) };
+    let template = if template_pointer.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(template_pointer) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    #[cfg(native_chat_template)]
+    let rendered = if template_pointer.is_null() {
+        None
+    } else if template.contains("{%") || template.contains("{{") {
+        chat_template::probe(pointer, &template).ok()
+    } else {
+        render_template_messages(
+            unsafe { CStr::from_ptr(template_pointer) },
+            &[("user".to_owned(), "Hello".to_owned())],
+            true,
+        )
+        .ok()
+    };
+    #[cfg(not(native_chat_template))]
+    let rendered = if template_pointer.is_null() {
+        None
+    } else {
+        render_template_messages(
+            unsafe { CStr::from_ptr(template_pointer) },
+            &[("user".to_owned(), "Hello".to_owned())],
+            true,
+        )
+        .ok()
+    };
+    let vocab = unsafe { ffi::llama_model_get_vocab(pointer) };
+    let special_token = |text: &CStr| {
+        let mut token = [0_i32; 1];
+        let count = unsafe {
+            ffi::llama_tokenize(
+                vocab,
+                text.as_ptr(),
+                i32::try_from(text.to_bytes().len()).unwrap_or(i32::MAX),
+                token.as_mut_ptr(),
+                1,
+                false,
+                true,
+            )
+        };
+        count == 1
+            && unsafe { ffi::llama_vocab_get_attr(vocab, token[0]) & ((1 << 3) | (1 << 4)) != 0 }
+    };
+    let (tools_declared, tool_format, reasoning_format, thinking_control) = output_formats(
+        &template,
+        special_token(c"<think>") && special_token(c"</think>"),
+    );
+    #[cfg(native_chat_template)]
+    let tool_template_supported =
+        tool_format.is_some() && chat_template::probe_tools(pointer, &template).is_ok();
+    #[cfg(not(native_chat_template))]
+    let tool_template_supported = false;
+    let completion = unsafe { ffi::llama_model_has_decoder(pointer) };
+    let recurrent =
+        unsafe { ffi::llama_model_is_recurrent(pointer) || ffi::llama_model_is_hybrid(pointer) };
+    let pooling_key = CString::new(format!("{architecture}.pooling_type")).ok();
+    ModelProfile {
+        architecture,
+        context_length: u32::try_from(unsafe { ffi::llama_model_n_ctx_train(pointer) })
+            .unwrap_or(0),
+        completion,
+        chat: completion && rendered.is_some(),
+        // Pooled/encoder embedding admission and extraction are not yet
+        // implemented by this adapter; report declaration separately.
+        embedding: false,
+        embedding_declared: pooling_key
+            .as_ref()
+            .and_then(|key| model_metadata(pointer, key))
+            .is_some(),
+        vision,
+        cache: if recurrent {
+            CacheStrategy::Recurrent
+        } else if completion {
+            CacheStrategy::Attention
+        } else {
+            CacheStrategy::Disabled
+        },
+        tokenizer_adds_bos: unsafe { ffi::llama_vocab_get_add_bos(vocab) },
+        tools_declared,
+        tool_format: tool_format
+            .filter(|_| completion && rendered.is_some() && tool_template_supported),
+        reasoning_format,
+        thinking_control,
+        reasoning_prefilled: rendered.is_some_and(|text| text.trim_end().ends_with("<think>")),
     }
 }
 
@@ -2279,11 +3416,11 @@ pub fn load_model(
     #[cfg(native_llama_cpp)]
     unsafe {
         let path = CString::new(path).map_err(|_| "model path contains NUL".to_owned())?;
-        let available = devices();
+        let available = indexed_devices();
         let selected = available
             .iter()
-            .position(|device| device.backend == options.backend);
-        if options.backend != NativeBackend::Cpu && selected.is_none() {
+            .position(|(_, device)| device.backend == options.backend);
+        if selected.is_none() {
             return Err(format!(
                 "requested {} backend is not compiled, initialized, and usable",
                 options.backend.as_str()
@@ -2293,7 +3430,7 @@ pub fn load_model(
         params.n_gpu_layers = i32::try_from(options.gpu_layers).unwrap_or(i32::MAX);
         let mut native_devices = selected.map(|index| {
             vec![
-                ffi::ggml_backend_dev_get(index),
+                ffi::ggml_backend_dev_get(available[index].0),
                 std::ptr::null_mut::<c_void>(),
             ]
         });
@@ -2306,12 +3443,9 @@ pub fn load_model(
         }
         #[cfg(native_mtmd)]
         let (mtmd, mtmd_relay) = if let Some(projector_path) = projector_path {
-            let projector_path = match CString::new(projector_path) {
-                Ok(path) => path,
-                Err(_) => {
-                    ffi::llama_model_free(pointer);
-                    return Err("projector path contains NUL".to_owned());
-                }
+            let Ok(projector_path) = CString::new(projector_path) else {
+                ffi::llama_model_free(pointer);
+                return Err("projector path contains NUL".to_owned());
             };
             let relay = Box::new(CancellationRelay {
                 current: AtomicPtr::new(std::ptr::null_mut()),
@@ -2339,8 +3473,14 @@ pub fn load_model(
             return Err("this build does not include llama.cpp MTMD support".to_owned());
         }
         let memory_bytes = ffi::llama_model_size(pointer.cast_const());
-        let device = selected.map(|index| available[index].name.clone());
+        let device = selected.map(|index| available[index].1.name.clone());
+        #[cfg(native_mtmd)]
+        let vision = mtmd.is_some();
+        #[cfg(not(native_mtmd))]
+        let vision = false;
+        let profile = inspect_loaded_profile(pointer.cast_const(), vision);
         Ok(NativeModel {
+            profile,
             context: Mutex::new(None),
             #[cfg(native_mtmd)]
             mtmd,

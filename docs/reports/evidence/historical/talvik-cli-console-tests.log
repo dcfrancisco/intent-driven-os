@@ -1,0 +1,174 @@
+   Compiling oid-console v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/console)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.19s
+     Running unittests src/main.rs (target/debug/deps/oid_console-427ce018e993b2f3)
+
+running 38 tests
+test audio::tests::parses_supported_gain_and_mute_controls ... ok
+test audio::tests::falls_back_to_pulseaudio ... ok
+test audio::tests::sets_pipewire_gain_with_a_three_x_limit ... ok
+test chat_ui::tests::empty_thinking_wrappers_do_not_create_empty_sections ... ok
+test chat_ui::tests::no_color_keeps_readable_phase_labels_without_ansi ... ok
+test chat_ui::tests::ordinary_answers_do_not_claim_thinking_and_stream_before_newlines ... ok
+test chat_ui::tests::partial_markup_is_flushed_and_terminal_controls_are_filtered ... ok
+test chat_ui::tests::arbitrary_token_boundaries_do_not_change_formatting ... ok
+test chat_ui::tests::redirects_dumb_terminals_and_plain_are_unstyled ... ok
+test commands::tests::generation_uses_configured_model_when_http_residency_is_unknown ... ok
+test editor::tests::supports_editing_operations ... ok
+test history::tests::navigates_back_and_forward ... ok
+test foundation::tests::vertical_slice_publishes_lifecycle_and_evidence_events ... ok
+test input_router::tests::routes_shell_and_oid_namespaces ... ok
+test ipc_runtime::tests::generation_request_line_carries_images_and_structured_output ... ok
+test ipc_runtime::tests::generation_request_preserves_options_and_prompt_text ... ok
+test ipc_runtime::tests::generation_reader_streams_tokens_and_cleans_up_request_state ... ok
+test ipc_runtime::tests::generation_terminal_parser_preserves_metrics_and_generation_identity ... ok
+test history::tests::persists_and_reloads_commands ... ok
+test ipc_runtime::tests::legacy_generation_terminal_keeps_available_token_count_unknown_metrics ... ok
+test ipc::tests::running_socket_is_preserved_and_stale_socket_can_be_restarted ... ok
+test ipc_runtime::tests::snapshot_parser_does_not_promote_registry_loaded_status_to_residency ... ok
+test ipc_runtime::tests::snapshot_parser_uses_remote_runtime_metrics ... ok
+test ipc_runtime::tests::status_parser_preserves_empty_loaded_model_fields ... ok
+test presence::tests::cursor_state_changes_only_after_runtime_events ... ok
+test prompt::tests::compacts_long_paths_to_the_final_two_components ... ok
+test signals::tests::injected_signals_are_deterministic_and_distinct ... ok
+test signals::tests::repeated_interrupts_are_idempotently_consumed ... ok
+test shell::tests::cd_updates_persistent_directory_and_supports_cd_dash ... ok
+test status_bar::tests::supports_configurable_display_modes ... ok
+test shell::tests::shell_executes_pipelines_and_redirection ... ok
+test shell::tests::interrupted_child_returns_signal_status_and_leaves_parent_usable ... ok
+test status_bar::tests::unavailable_runtime_does_not_claim_that_no_model_is_loaded ... ok
+test status_bar::tests::renders_deterministic_placeholder_information ... ok
+test commands::tests::operation_commands_use_the_session_coordinator ... ok
+test commands::tests::exit_is_explicit ... ok
+test commands::tests::built_in_commands_return_mock_information ... ok
+test operations::tests::directory_intent_survives_restart_and_can_be_inspected_and_rolled_back ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running unittests src/bin/oid-marina-chat.rs (target/debug/deps/oid_marina_chat-2b7b357d324a3ba7)
+
+running 23 tests
+test chat_ui::tests::empty_thinking_wrappers_do_not_create_empty_sections ... ok
+test chat_ui::tests::ordinary_answers_do_not_claim_thinking_and_stream_before_newlines ... ok
+test chat_ui::tests::no_color_keeps_readable_phase_labels_without_ansi ... ok
+test chat_ui::tests::partial_markup_is_flushed_and_terminal_controls_are_filtered ... ok
+test chat_ui::tests::redirects_dumb_terminals_and_plain_are_unstyled ... ok
+test chat_ui::tests::arbitrary_token_boundaries_do_not_change_formatting ... ok
+test ipc_runtime::tests::generation_terminal_parser_preserves_metrics_and_generation_identity ... ok
+test ipc_runtime::tests::generation_request_line_carries_images_and_structured_output ... ok
+test ipc_runtime::tests::generation_request_preserves_options_and_prompt_text ... ok
+test ipc_runtime::tests::generation_reader_streams_tokens_and_cleans_up_request_state ... ok
+test ipc_runtime::tests::legacy_generation_terminal_keeps_available_token_count_unknown_metrics ... ok
+test ipc_runtime::tests::snapshot_parser_does_not_promote_registry_loaded_status_to_residency ... ok
+test ipc_runtime::tests::snapshot_parser_uses_remote_runtime_metrics ... ok
+test ipc_runtime::tests::status_parser_preserves_empty_loaded_model_fields ... ok
+test ipc::tests::running_socket_is_preserved_and_stale_socket_can_be_restarted ... ok
+test tests::benchmark_run_count_is_bounded_and_configurable ... ok
+test tests::benchmark_state_requires_residency_or_an_observed_load ... ok
+test tests::calculates_median_and_nearest_rank_p95 ... ok
+test tests::execution_display_does_not_infer_vulkan_from_unknown_placement ... ok
+test tests::execution_display_reports_cpu_and_verified_vulkan_offload ... ok
+test tests::formats_benchmark_state_names_stably ... ok
+test tests::model_selection_prefers_override_then_resident_then_smallest_estimate ... ok
+test tests::preserves_plain_invocation_and_parses_timing_mode ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/talvik.rs (target/debug/deps/talvik-3b0f9e3fff88a3b7)
+
+running 16 tests
+test chat_ui::tests::empty_thinking_wrappers_do_not_create_empty_sections ... ok
+test chat_ui::tests::no_color_keeps_readable_phase_labels_without_ansi ... ok
+test chat_ui::tests::ordinary_answers_do_not_claim_thinking_and_stream_before_newlines ... ok
+test chat_ui::tests::partial_markup_is_flushed_and_terminal_controls_are_filtered ... ok
+test chat_ui::tests::arbitrary_token_boundaries_do_not_change_formatting ... ok
+test chat_ui::tests::redirects_dumb_terminals_and_plain_are_unstyled ... ok
+test ipc_runtime::tests::generation_request_preserves_options_and_prompt_text ... ok
+test ipc_runtime::tests::generation_reader_streams_tokens_and_cleans_up_request_state ... ok
+test ipc_runtime::tests::generation_terminal_parser_preserves_metrics_and_generation_identity ... ok
+test ipc_runtime::tests::generation_request_line_carries_images_and_structured_output ... ok
+test ipc_runtime::tests::legacy_generation_terminal_keeps_available_token_count_unknown_metrics ... ok
+test ipc_runtime::tests::snapshot_parser_does_not_promote_registry_loaded_status_to_residency ... ok
+test ipc_runtime::tests::snapshot_parser_uses_remote_runtime_metrics ... ok
+test ipc_runtime::tests::status_parser_preserves_empty_loaded_model_fields ... ok
+test tests::routing_requires_an_explicit_true_value ... ok
+test ipc::tests::running_socket_is_preserved_and_stale_socket_can_be_restarted ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/talvikd.rs (target/debug/deps/talvikd-878a891002462b7f)
+
+running 42 tests
+test server::http::tests::accepts_stream_options_include_usage_only_for_streams ... ok
+test server::http::tests::accepts_ollama_json_and_schema_formats ... ok
+test server::http::tests::assigns_distinct_ids_to_multiple_tool_calls ... ok
+test server::http::tests::classifies_model_output_failures_and_gateway_status ... ok
+test server::http::tests::builds_ollama_chat_and_generate_prompts ... ok
+test server::http::tests::daemon_defaults_support_ide_context_and_allow_request_overrides ... ok
+test server::http::tests::enforces_generated_required_and_function_tool_calls ... ok
+test server::http::tests::exposes_a_bounded_context_policy ... ok
+test server::http::tests::formats_responses_sse_events_with_type_and_sequence_number ... ok
+test server::http::tests::keeps_chat_and_legacy_completion_prompts_distinct ... ok
+test server::http::tests::maps_ollama_generation_options_to_runtime_controls ... ok
+test server::http::tests::maps_openai_generation_controls_without_silently_ignoring_them ... ok
+test server::http::tests::maps_text_responses_input_and_accepts_streaming ... ok
+test server::http::tests::maps_tool_calls_to_ollama_function_shape ... ok
+test server::http::tests::normalizes_template_tool_calls_to_openai_shape ... ok
+test server::http::tests::ollama_generate_accepts_bounded_inline_base64_images ... ok
+test server::http::tests::openai_chat_content_preserves_inline_image_order ... ok
+test server::http::tests::parses_chat_template_thinking_option ... ok
+test server::http::tests::parses_fragmented_arguments_and_multiple_tool_calls ... ok
+test server::http::tests::preserves_ordinary_unicode_output_when_no_tool_call_is_present ... ok
+test server::http::tests::preserves_tool_call_id_in_tool_result_prompt ... ok
+test server::http::tests::rejects_oversized_http_bodies ... ok
+test server::http::tests::rejects_malformed_and_incomplete_streamed_tool_calls ... ok
+test server::http::tests::rejects_remote_openai_image_urls ... ok
+test server::http::tests::rejects_unavailable_ollama_features_and_options ... ok
+test server::http::tests::bounds_streamed_tool_call_size ... ok
+test server::http::tests::rejects_unsupported_options_and_invalid_generation_values ... ok
+test server::http::tests::reports_only_available_ollama_statistics_and_rfc3339_timestamps ... ok
+test server::http::tests::reports_successful_termination_without_collapsing_length_into_stop ... ok
+test server::http::tests::serializes_ollama_tool_stream_chunks_natively ... ok
+test server::http::tests::serializes_openai_tool_call_stream_deltas ... ok
+test server::http::tests::streamed_model_output_errors_do_not_end_with_success_sentinel ... ok
+test server::http::tests::streams_split_tool_markers_without_leaking_them ... ok
+test server::http::tests::validates_auto_none_required_and_function_tool_choices ... ok
+test server::http::tests::validates_openai_json_object_and_strict_schema_formats ... ok
+test server::http::tests::validates_openai_tool_result_correlation ... ok
+test server::http::tests::validates_streamed_calls_before_emitting_them ... ok
+test server::tests::accepts_legacy_generation_requests_with_empty_prompts ... ok
+test server::tests::parses_ipc_v2_generation_options_and_escaped_prompt ... ok
+test server::tests::rejects_invalid_generation_option_values ... ok
+test server::tests::parses_ipc_v3_image_content_and_json_object_constraint ... ok
+test server::ipc::tests::running_socket_is_preserved_and_stale_socket_can_be_restarted ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/ipc_chat.rs (target/debug/deps/ipc_chat-83756bff85ad4d86)
+
+running 1 test
+test standalone_chat_uses_the_talvik_ipc_daemon ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.51s
+
+     Running tests/process_signals.rs (target/debug/deps/process_signals-533962a531083960)
+
+running 6 tests
+test sighup_while_idle_restores_a_clean_process ... ok
+test sigterm_while_idle_restores_a_clean_process ... ok
+test sigterm_stops_a_child_that_ignores_term ... ok
+test interrupting_a_native_child_keeps_oid_usable ... ok
+test repeated_interrupts_do_not_corrupt_the_console ... ok
+test sigkill_restart_discovers_pending_governed_operation ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.39s
+
+     Running tests/startup.rs (target/debug/deps/startup-82b34e9a612f4e76)
+
+running 4 tests
+test local_console_rejects_http_backend_selection ... ok
+test local_console_fails_clearly_when_talvik_ipc_is_unavailable ... ok
+test console_binary_starts_with_runtime_prompt ... ok
+test daemon_rejects_an_occupied_http_port_before_starting_the_runtime ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+

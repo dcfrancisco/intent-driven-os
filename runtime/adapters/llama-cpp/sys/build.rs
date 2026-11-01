@@ -5,6 +5,8 @@ use std::{env, path::PathBuf};
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(native_llama_cpp)");
     println!("cargo:rustc-check-cfg=cfg(native_mtmd)");
+    println!("cargo:rustc-check-cfg=cfg(native_chat_template)");
+    println!("cargo:rerun-if-env-changed=LLAMA_CPP_CHAT_TEMPLATE_REQUIRED");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_LIB_DIR");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_LIBRARY");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_REQUIRED");
@@ -16,6 +18,10 @@ fn main() {
         assert!(
             env::var_os("LLAMA_CPP_REQUIRED").is_none(),
             "LLAMA_CPP_REQUIRED is set but LLAMA_CPP_LIB_DIR and HOME are not configured"
+        );
+        assert!(
+            env::var_os("LLAMA_CPP_CHAT_TEMPLATE_REQUIRED").is_none(),
+            "embedded chat templates require native llama.cpp"
         );
         return;
     };
@@ -41,6 +47,10 @@ fn main() {
             "LLAMA_CPP_MTMD_REQUIRED is set but {} does not contain libmtmd",
             lib_dir.display()
         );
+        assert!(
+            env::var_os("LLAMA_CPP_CHAT_TEMPLATE_REQUIRED").is_none(),
+            "embedded chat templates require native llama.cpp"
+        );
         return;
     }
 
@@ -57,6 +67,25 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
     }
     println!("cargo:rustc-cfg=native_llama_cpp");
+
+    let chat_library = "oid-chat-template";
+    let chat_files = [
+        lib_dir.join("liboid-chat-template.dylib"),
+        lib_dir.join("liboid-chat-template.so"),
+        lib_dir.join("oid-chat-template.lib"),
+    ];
+    for file in &chat_files {
+        println!("cargo:rerun-if-changed={}", file.display());
+    }
+    if chat_files.iter().any(|file| file.exists()) {
+        println!("cargo:rustc-link-lib=dylib={chat_library}");
+        println!("cargo:rustc-cfg=native_chat_template");
+    } else {
+        assert!(
+            env::var_os("LLAMA_CPP_CHAT_TEMPLATE_REQUIRED").is_none(),
+            "native embedded-template renderer is required; run the native setup script"
+        );
+    }
 
     let mtmd_library = "mtmd";
     let has_mtmd = [

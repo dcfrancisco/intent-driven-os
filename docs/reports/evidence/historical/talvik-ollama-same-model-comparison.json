@@ -1,0 +1,84 @@
+[
+  {
+    "runner": "talvik",
+    "phase": "cold",
+    "wall_seconds": 14.675,
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 665,
+      "generation_time_ms": 2082,
+      "inference_time_ms": 14572,
+      "latency_ms": 14631,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 12490,
+      "prompt_evaluation_time_ms": 12490,
+      "prompt_tokens_per_second": 52.281825460368296,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 12494,
+      "tokens_per_second": 5.76298803460762
+    },
+    "usage": {
+      "completion_tokens": 12,
+      "prompt_tokens": 653,
+      "total_tokens": 665
+    },
+    "text": "<think>\nOkay, so I need to figure out how to"
+  },
+  {
+    "runner": "talvik",
+    "phase": "repeat",
+    "wall_seconds": 1.886,
+    "metrics": {
+      "cache_hit": true,
+      "context_tokens": 665,
+      "generation_time_ms": 1468,
+      "inference_time_ms": 1852,
+      "latency_ms": 1852,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 383,
+      "prompt_evaluation_time_ms": 383,
+      "prompt_tokens_per_second": 1704.9608355091384,
+      "reused_prompt_tokens": 652,
+      "time_to_first_token_ms": 384,
+      "tokens_per_second": 8.171621522907882
+    },
+    "usage": {
+      "completion_tokens": 12,
+      "prompt_tokens": 653,
+      "total_tokens": 665
+    },
+    "text": "<think>\nOkay, so I need to figure out how to"
+  },
+  {
+    "runner": "ollama",
+    "phase": "cold",
+    "wall_seconds": 12.983,
+    "total_duration": 12966397208,
+    "load_duration": 2863095668,
+    "prompt_eval_count": 654,
+    "prompt_eval_duration": 9141315000,
+    "eval_count": 12,
+    "eval_duration": 932428000,
+    "message": {
+      "role": "assistant",
+      "content": "",
+      "thinking": "\nOkay, so I need to figure out how to"
+    }
+  },
+  {
+    "runner": "ollama",
+    "phase": "repeat",
+    "wall_seconds": 0.909,
+    "total_duration": 907954791,
+    "load_duration": 8100665,
+    "prompt_eval_count": 654,
+    "prompt_eval_duration": 62015000,
+    "eval_count": 12,
+    "eval_duration": 826654000,
+    "message": {
+      "role": "assistant",
+      "content": "",
+      "thinking": "\nOkay, so I need to figure out how to"
+    }
+  }
+]

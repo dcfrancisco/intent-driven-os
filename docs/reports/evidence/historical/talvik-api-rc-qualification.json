@@ -1,0 +1,27 @@
+{
+  "status": "API stabilization preview, not RC",
+  "git_sha": "e91dc0f994f83eebe7a568593ec60889dfc38f30",
+  "rust": "1.88.0",
+  "api_recovery_passed": 14,
+  "native_api_passed": 5,
+  "workspace_passed": 262,
+  "native_fixtures_explicit_passed": 5,
+  "strict_clippy": "passed",
+  "sdk_version": "2.48.0",
+  "sdk_generation_shapes_passed": 6,
+  "archive_install": "passed",
+  "ide_agent": "failed five-minute latency budget; cancelled after 350.76 seconds",
+  "ide_plan": "unqualified",
+  "manual_readiness_transitions": [
+    503,
+    200,
+    503,
+    200
+  ],
+  "native_budget_recovery": "passed",
+  "continuous_short_requests": 12,
+  "managed_crash_recovery": "passed",
+  "managed_crash_ready_seconds": 2.83,
+  "archive_sha256": "c68d0cfa8ff17c0a9bc6b7480ac4b04fe3390fea06d1d600aded1a07465deef2",
+  "source_clean": true
+}

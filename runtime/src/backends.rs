@@ -217,6 +217,10 @@ pub trait Backend: Send + Sync {
     ///
     /// Returns an error when the backend cannot service embeddings.
     fn embeddings(&self, request: &EmbeddingsRequest) -> Result<EmbeddingsResult, RuntimeError>;
+    /// Inspect a resident model without loading or switching it.
+    fn model_profile(&self, _model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        None
+    }
     /// Report tool support without exposing backend-native types.
     fn tool_support(&self, model_id: &str) -> ToolSupport;
     /// Count tokens using the backend's tokenizer when available.
@@ -519,6 +523,16 @@ impl BackendManager {
             .get(id)
             .ok_or_else(|| RuntimeError::BackendNotFound(id.to_owned()))?
             .embeddings(request)
+    }
+
+    /// Inspect a resident model through the active adapter; never loads weights.
+    #[must_use]
+    pub fn model_profile(&self, model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        let state = self.state.lock().ok()?;
+        state
+            .backends
+            .get(state.active.as_deref()?)?
+            .model_profile(model_id)
     }
 
     /// Return the active backend's tool-call capability.

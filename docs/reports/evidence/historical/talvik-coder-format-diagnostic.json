@@ -1,0 +1,45 @@
+{
+  "backend": "llama.cpp",
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "```json\n{\"name\":\"read_file\",\"arguments\":{\"path\":\"/tmp/profiles-probe.txt\"}}\n```",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1793452920,
+  "execution": {
+    "backend": "cpu",
+    "device": "CPU",
+    "fallback_reason": null,
+    "offloaded_layers": 0,
+    "requested_offloaded_layers": 0
+  },
+  "generation_id": "talvik-gen-42146-15",
+  "id": "profiles-coder-format-diagnostic",
+  "metrics": {
+    "cache_hit": false,
+    "context_tokens": 168,
+    "generation_time_ms": 5362,
+    "inference_time_ms": 9941,
+    "latency_ms": 9941,
+    "model_load_time_ms": null,
+    "prompt_eval_time_ms": 4578,
+    "prompt_evaluation_time_ms": 4578,
+    "prompt_tokens_per_second": 32.11009174311926,
+    "reused_prompt_tokens": 0,
+    "time_to_first_token_ms": 4580,
+    "tokens_per_second": 3.9159384206241863
+  },
+  "model": "qwen2.5-coder-3b-instruct-q4_k_m",
+  "object": "chat.completion",
+  "termination_reason": "stop",
+  "usage": {
+    "completion_tokens": 21,
+    "prompt_tokens": 147,
+    "total_tokens": 168
+  }
+}

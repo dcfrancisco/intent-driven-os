@@ -4,6 +4,7 @@
 #![warn(missing_docs)]
 
 mod audio;
+mod chat_ui;
 mod commands;
 mod editor;
 mod foundation;
@@ -18,6 +19,7 @@ mod renderer;
 mod shell;
 mod signals;
 mod status_bar;
+mod terminal_ui;
 mod tui;
 
 fn main() {

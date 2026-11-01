@@ -18,7 +18,7 @@ $archiveName = if ($Variant -eq "vulkan") { "talvik-windows-x86_64-vulkan-previe
 foreach ($exe in @("talvik.exe", "talvikd.exe")) {
     if (-not (Test-Path -LiteralPath (Join-Path $BinDirectory $exe))) { throw "Missing $exe in $BinDirectory" }
 }
-$required = @("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "mtmd.dll")
+$required = @("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "mtmd.dll", "oid-chat-template.dll")
 if ($Variant -eq "vulkan") { $required += "ggml-vulkan.dll" }
 foreach ($name in $required) {
     if (-not (Test-Path -LiteralPath (Join-Path $NativeLibDir $name))) { throw "Missing $name in $NativeLibDir" }

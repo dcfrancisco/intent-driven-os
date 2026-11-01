@@ -40,13 +40,15 @@ extracted archive with `--service` to install a per-user launchd definition:
 
 ```sh
 ./install-talvik-macos.sh --service
-launchctl kickstart -k "gui/$(id -u)/com.talvik.talvikd"
 ```
 
 The macOS helper does not require a privileged `.pkg`, does not modify global
-paths, and preserves models and state during uninstall. The daemon is not
-started unless `--service` is requested and the explicit `launchctl` command
-is run.
+paths, and preserves models and state during uninstall. With `--service`, installation starts one per-user daemon and enables startup
+at login. The loopback OpenAI base URL is `http://127.0.0.1:11435/v1`; health
+and readiness are `/healthz` and `/readyz`. Create a scoped client token with
+`~/.marina/bin/talvik auth token create vscode`. The service profile reserves
+a 32K context and a 2,048-token output budget; memory admission still applies.
+It does not claim GPU acceleration unless a backend has been qualified.
 
 These files implement the first system-profile image composition described by
 ADR-0023. Marina packaging remains governed by ADR-0014 and WP-0069.
@@ -96,3 +98,29 @@ verify a SHA-256 before placing an artifact in the Marina model directory.
 Install these files under their conventional `/usr/lib/systemd/system`,
 `/usr/lib/sysusers.d`, `/usr/lib/tmpfiles.d`, `/etc/marina`, and `/etc/oid`
 locations when building the image. The image builder performs this mapping.
+
+
+### Local milestone packaging and qualification
+
+A local archive is a preview until the gates in WP-0111 pass. Build both client
+and daemon from the same clean commit with the pinned native payload, then run:
+
+```sh
+scripts/package-talvik-unix.sh target/release "$HOME/.marina/lib" /tmp/talvik-local-preview.tar.gz
+TMPDIR=/tmp scripts/smoke-release-install.sh /tmp/talvik-local-preview.tar.gz
+python3 scripts/test-talvik-installers.py
+```
+
+The archive contains binaries, native libraries, installers, build identity, and
+license; it does not include models, user configuration, or authentication tokens.
+The smoke check installs into an isolated directory with developer library paths
+removed, starts a daemon without model downloads, checks CLI status, stops it,
+and verifies uninstall preserves model state.
+
+For opt-in real-model API qualification, start a native daemon and register the
+Qwen Coder and vision models, then run `python3 scripts/test-talvik-native-api.py`.
+Set `TALVIK_TEST_TOKEN_FILE` to a private token file; optional `TALVIK_TEST_BASE_URL`,
+`TALVIK_TEST_VISION_MODEL`, `TALVIK_TEST_CODER_MODEL`, and `TALVIK_TEST_REPORT`
+select the service, model IDs, and JSON evidence path. This is a bounded check
+of chat, coding, vision, standard SSE and a tool-result round trip. It does not
+execute filesystem tools or certify any IDE's Agent/Plan mode.

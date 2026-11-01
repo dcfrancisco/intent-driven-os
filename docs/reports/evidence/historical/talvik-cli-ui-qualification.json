@@ -1,0 +1,24 @@
+{
+  "source_commit": "7d775f3a7c53bae0447030625f32570e9a4c1c39",
+  "branch": "feature/qwen-coding-assistants",
+  "installed_clients": [
+    "~/.marina/bin/talvik",
+    "~/.marina/bin/oid-marina-chat"
+  ],
+  "daemon_restarted": false,
+  "workspace_tests": {
+    "passed": 255,
+    "failed": 0,
+    "ignored": 5
+  },
+  "final_console_tests": "passed",
+  "installed_pseudo_terminal_tests": {
+    "passed": 6,
+    "failed": 0
+  },
+  "strict_changed_client_clippy": "passed",
+  "format_check": "passed",
+  "live_native_check": "Waiting indicator and queued-request cancellation passed; demonstration cancelled because the service was processing another large VS Code prompt.",
+  "full_workspace_strict_clippy": "Existing daemon HTTP lint blockers remain; no RC claim.",
+  "push": "Existing GitHub authentication blocker remains."
+}

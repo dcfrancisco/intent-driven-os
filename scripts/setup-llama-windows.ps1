@@ -115,6 +115,15 @@ foreach ($nativeFile in $nativeFiles) {
     Copy-Item -LiteralPath $nativeFile.FullName -Destination $NativeLibDir -Force
 }
 
+$chatSource = Join-Path $PSScriptRoot "../runtime/adapters/llama-cpp/sys/native"
+$chatBuild = Join-Path $LlamaBuild "chat-template"
+& cmake -S $chatSource -B $chatBuild "-DLLAMA_CPP_SOURCE_DIR=$LlamaRoot" "-DLLAMA_CPP_LIB_DIR=$NativeLibDir"
+if ($LASTEXITCODE -ne 0) { throw "Chat-template CMake configuration failed." }
+& cmake --build $chatBuild --config Release --parallel 2
+if ($LASTEXITCODE -ne 0) { throw "Chat-template build failed." }
+& cmake --install $chatBuild --config Release --prefix $NativeLibDir
+if ($LASTEXITCODE -ne 0) { throw "Chat-template installation failed." }
+
 Write-Host "Native Windows x86_64 llama.cpp is installed at: $NativeLibDir"
 if ($Vulkan) {
     Write-Host "This builds Vulkan-capable llama.cpp; hardware qualification remains pending."
@@ -125,6 +134,7 @@ Write-Host "Build Talvik with:"
 Write-Host "`$env:LLAMA_CPP_LIB_DIR = '$NativeLibDir'"
 Write-Host "`$env:LLAMA_CPP_REQUIRED = '1'"
 Write-Host "`$env:LLAMA_CPP_MTMD_REQUIRED = '1'"
+Write-Host "`$env:LLAMA_CPP_CHAT_TEMPLATE_REQUIRED = '1'"
 Write-Host "cargo build --release -p oid-console --bin talvik --bin talvikd"
 if ($Vulkan -or $Cuda) {
     $llamaCli = Get-ChildItem -Path $LlamaBuild -Recurse -File -Filter "llama-cli.exe" |

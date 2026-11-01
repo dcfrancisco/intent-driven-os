@@ -1,0 +1,77 @@
+[
+  {
+    "test": "chat",
+    "passed": true,
+    "content": "4",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 26,
+      "total_tokens": 27
+    },
+    "seconds": 11.49
+  },
+  {
+    "test": "coder",
+    "passed": true,
+    "content": "```python\ndef clamp(x, low, high):\n    return max(low, min(x, high))\n```",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 22,
+      "prompt_tokens": 33,
+      "total_tokens": 55
+    },
+    "seconds": 4.1
+  },
+  {
+    "test": "vision",
+    "passed": true,
+    "content": "Red",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 31,
+      "total_tokens": 32
+    },
+    "seconds": 5.88
+  },
+  {
+    "test": "agent_tool_sse",
+    "passed": true,
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"path\":\"/tmp/talvik-check.txt\"}",
+          "name": "read_file"
+        },
+        "id": "call_http-44186-1793485084727052000_0",
+        "index": 0,
+        "type": "function"
+      }
+    ],
+    "finish_reason": "tool_calls",
+    "usage": {
+      "completion_tokens": 29,
+      "prompt_tokens": 383,
+      "total_tokens": 412
+    },
+    "seconds": 25.61
+  },
+  {
+    "test": "agent_tool_result",
+    "passed": true,
+    "content": "The content of `/tmp/talvik-check.txt` is:\nTALVIK_AGENT_OK",
+    "tool_calls": [],
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 20,
+      "prompt_tokens": 479,
+      "total_tokens": 499
+    },
+    "seconds": 25.8
+  }
+]

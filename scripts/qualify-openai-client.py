@@ -47,7 +47,7 @@ def main() -> None:
         max_tokens=4,
         stream=True,
     )
-    streamed_text = "".join(chunk.choices[0].delta.content or "" for chunk in streamed)
+    streamed_text = "".join(choice.delta.content or "" for chunk in streamed for choice in chunk.choices)
     if not streamed_text:
         raise SystemExit("streaming OpenAI response was empty")
     print("PASS streaming Chat Completions", flush=True)

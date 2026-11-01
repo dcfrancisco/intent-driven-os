@@ -1,0 +1,23 @@
+{
+  "checked_at": "2026-10-31T14:44:59+08:00",
+  "readiness": {
+    "inference_ready": true,
+    "status": "ready"
+  },
+  "daemon_process_count": 1,
+  "daemon": {
+    "health": "Healthy",
+    "backend": "llama.cpp",
+    "loaded_models": [
+      "deepseek-r1-1.5b",
+      "qwen2.5-coder-3b-instruct-q4_k_m",
+      "qwen3.5-4b-Q4_K_M"
+    ],
+    "daemon_git_sha": "7c3a5edf8bb7780ec0f607af3340ed72251e3767",
+    "daemon_dirty": "false",
+    "daemon_target": "x86_64-apple-darwin",
+    "inference_threads": "8"
+  },
+  "recurring_tests": "PAUSED",
+  "cli_commit": "7d775f3a7c53bae0447030625f32570e9a4c1c39"
+}

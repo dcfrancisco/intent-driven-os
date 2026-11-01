@@ -170,6 +170,10 @@ pub trait RuntimeService: Send + Sync {
         let _ = request;
         Err(oid_shared::RuntimeError::NotImplemented("embeddings"))
     }
+    /// Inspect a resident model without loading it. Unknown backends return None.
+    fn model_profile(&self, _model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        None
+    }
     /// Report whether the active backend can execute structured tool calls.
     fn tool_support(&self, _model_id: &str) -> ToolSupport {
         ToolSupport {

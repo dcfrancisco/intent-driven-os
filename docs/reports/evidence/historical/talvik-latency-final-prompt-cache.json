@@ -1,0 +1,98 @@
+[
+  {
+    "phase": "cold",
+    "wall_seconds": 32.51,
+    "content": "PERF_OK",
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 751,
+      "total_tokens": 754
+    },
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 754,
+      "generation_time_ms": 737,
+      "inference_time_ms": 32473,
+      "latency_ms": 32473,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 31736,
+      "prompt_evaluation_time_ms": 31736,
+      "prompt_tokens_per_second": 23.66397781699017,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 31739,
+      "tokens_per_second": 4.068282669275712
+    }
+  },
+  {
+    "phase": "repeat",
+    "wall_seconds": 1.619,
+    "content": "PERF_OK",
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 751,
+      "total_tokens": 754
+    },
+    "metrics": {
+      "cache_hit": true,
+      "context_tokens": 754,
+      "generation_time_ms": 1122,
+      "inference_time_ms": 1582,
+      "latency_ms": 1583,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 459,
+      "prompt_evaluation_time_ms": 459,
+      "prompt_tokens_per_second": 1636.165577342048,
+      "reused_prompt_tokens": 750,
+      "time_to_first_token_ms": 461,
+      "tokens_per_second": 2.671654838609499
+    }
+  },
+  {
+    "phase": "changed_user",
+    "wall_seconds": 2.556,
+    "content": "PERF_OK",
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 753,
+      "total_tokens": 756
+    },
+    "metrics": {
+      "cache_hit": true,
+      "context_tokens": 756,
+      "generation_time_ms": 1140,
+      "inference_time_ms": 2534,
+      "latency_ms": 2534,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 1394,
+      "prompt_evaluation_time_ms": 1394,
+      "prompt_tokens_per_second": 540.1721664275466,
+      "reused_prompt_tokens": 736,
+      "time_to_first_token_ms": 1394,
+      "tokens_per_second": 2.6301024101824524
+    }
+  },
+  {
+    "phase": "changed_user_cold_reference",
+    "wall_seconds": 32.721,
+    "content": "PERF_OK",
+    "usage": {
+      "completion_tokens": 3,
+      "prompt_tokens": 753,
+      "total_tokens": 756
+    },
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 756,
+      "generation_time_ms": 912,
+      "inference_time_ms": 32677,
+      "latency_ms": 32677,
+      "model_load_time_ms": null,
+      "prompt_eval_time_ms": 31765,
+      "prompt_evaluation_time_ms": 31765,
+      "prompt_tokens_per_second": 23.705336061703132,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 31768,
+      "tokens_per_second": 3.2869042117161267
+    }
+  }
+]

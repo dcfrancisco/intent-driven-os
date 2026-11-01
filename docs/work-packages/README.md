@@ -1,5 +1,7 @@
 # Work Packages
 
+Current Talvik qualification and next gates: [reports index](../reports/README.md) and [2026-11-01 status](../reports/TALVIK-STATUS-2026-11-01.md).
+
 Work Packages (WPs) turn architectural decisions into reviewable bodies of design work. They are documentation and planning units; a WP does not authorize implementation outside its stated scope.
 
 ## Initial sequence
@@ -109,5 +111,7 @@ Work Packages (WPs) turn architectural decisions into reviewable bodies of desig
 | WP-0108 | OpenAI Inference API Compatibility | Implement and qualify the OpenAI model-serving API surface |
 | WP-0109 | Talvik Ollama-Compatible Model Runner API | Implement and qualify Ollama's local model-runner API profile |
 | WP-0110 | Talvik Gemma 4 Default Model | Bootstrap the pinned Gemma 4 model and projector as Talvik's default |
+
+| WP-0111 | Working Local Runner Stabilization | Close service, API, IDE, performance, and installation gaps with explicit RC gates |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

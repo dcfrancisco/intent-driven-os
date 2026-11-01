@@ -1,0 +1,23 @@
+{
+  "id": "12d4fed8060d",
+  "mode": "agent",
+  "fixture": "/Users/abigailbangasan/codes/intent-driven-os/.talvik-rc-agent-fixture.txt",
+  "expected": "TALVIK_RC_AGENT_f0d4c2d61bd544d8",
+  "prompt": "RC_AGENT_READ_CHECK_12d4fed8060d: Use your read_file tool to read /Users/abigailbangasan/codes/intent-driven-os/.talvik-rc-agent-fixture.txt. Reply with its exact one-line content only. Do not edit any files or run shell commands; no other workspace investigation is needed.",
+  "started_at": "2026-10-31T10:50:52.386454+00:00",
+  "started_unix": 1793443852.3883939,
+  "status": "failed_latency_budget",
+  "observed_seconds": 350.76,
+  "budget_seconds": 300,
+  "actual_model": "qwen3.5-4b-Q4_K_M",
+  "prompt_tokens": 22107,
+  "request_id": "http-95382-1793443855944100000",
+  "exact_answer_observed": false,
+  "cancellation": {
+    "generation_id": "talvik-gen-95382-28",
+    "request_id": "http-95382-1793443855944100000",
+    "status": "cancellation_requested"
+  },
+  "session_path": "/Users/abigailbangasan/Library/Application Support/Code/User/workspaceStorage/e319499c198c7ee2735e082cf836db98/chatSessions/ed19846e-c1ce-4c16-95ee-7f7744e57b0f.jsonl",
+  "fixture_removed": true
+}

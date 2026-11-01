@@ -29,33 +29,48 @@ pub(crate) fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = logging::initialize();
     eprintln!("{}", build_info::display("talvikd"));
     ipc::ensure_socket_parent()?;
+    // Reserve both listeners before allocating model/runtime state. Binding
+    // HTTP in a detached thread allowed duplicate daemons to keep running.
+    let http_configuration = config::http_config().map_err(std::io::Error::other)?;
+    let http_listener = http_configuration
+        .address
+        .as_deref()
+        .map(|address| {
+            std::net::TcpListener::bind(address).map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("cannot bind Talvik HTTP listener {address}: {error}"),
+                )
+            })
+        })
+        .transpose()?;
+    let listener = ipc::bind_listener()?;
     let configuration = config::load().map_err(std::io::Error::other)?;
     let runtime = Arc::new(Runtime::start(configuration)?);
     let default_model = config::default_model().map_err(std::io::Error::other)?;
     let default_model_id = default_model.as_ref().map(|model| model.id.clone());
     let readiness = Arc::new(http::Readiness::new());
     runtime.event_bus().publish(&RuntimeEvent::RuntimeStarted);
-    let http_configuration = config::http_config().map_err(std::io::Error::other)?;
-    if let Some(address) = http_configuration.address {
+    if let Some(http_listener) = http_listener {
+        let address = http_configuration
+            .address
+            .as_deref()
+            .expect("configured HTTP listener");
         let http_runtime = Arc::clone(&runtime);
         let authentication_enabled = http_configuration.authentication_enabled;
         let http_default_model_id = default_model_id.clone();
-        let http_address = address.clone();
         let http_readiness = Arc::clone(&readiness);
         thread::spawn(move || {
-            if let Err(error) = http::serve(
-                &http_address,
+            http::serve(
+                &http_listener,
                 &http_runtime,
                 authentication_enabled,
                 http_default_model_id.as_ref(),
                 &http_readiness,
-            ) {
-                eprintln!("Model runtime HTTP server failed: {error}");
-            }
+            );
         });
         eprintln!("Model runtime HTTP listening on {address}");
     }
-    let listener = ipc::bind_listener()?;
     eprintln!("Model runtime listening on {}", ipc::endpoint());
     eprintln!(
         "Inference threads: {} (set TALVIK_THREADS to override)",
@@ -720,8 +735,8 @@ mod tests {
         assert_eq!(request.model_id, "qwen");
         assert_eq!(request.prompt, "first line\nsecond\t line");
         assert_eq!(request.options.max_tokens, 32);
-        assert_eq!(request.options.temperature, 0.4);
-        assert_eq!(request.options.top_p, 0.8);
+        assert_eq!(request.options.temperature.to_bits(), 0.4_f32.to_bits());
+        assert_eq!(request.options.top_p.to_bits(), 0.8_f32.to_bits());
         assert_eq!(request.options.top_k, 12);
         assert_eq!(request.options.seed, 7);
         assert_eq!(request.options.context_size, 2048);
@@ -789,7 +804,7 @@ mod tests {
             .expect("legacy generation request");
 
         assert_eq!(request.model_id, "qwen");
-        assert!(request.prompt.is_empty());
+        assert_eq!(request.prompt, "");
         assert_eq!(request.options.max_tokens, 16);
     }
 }

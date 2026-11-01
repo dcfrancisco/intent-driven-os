@@ -1,0 +1,385 @@
+    Blocking waiting for file lock on build directory
+    Checking oid-common v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/common)
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+    Checking oid-model-runner v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/model-runner)
+    Checking oid-shared v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/shared)
+   Compiling oid-console v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/console)
+    Checking oid-model-client v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/model-client)
+    Checking oid-docs v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/docs)
+    Checking oid-plugin-sdk v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/plugin-sdk)
+    Checking oid-linux-skills v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/linux-skills)
+    Checking oid-policy-engine v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/policy-engine)
+    Checking oid-evidence-engine v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/evidence-engine)
+    Checking oid-verification-engine v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/verification-engine)
+    Checking oid-intent-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/intent-runtime)
+    Checking oid-desktop-shell v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/desktop-shell)
+    Checking oid-operation-coordinator v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/crates/operation-coordinator)
+    Checking oid-llama-cpp-adapter v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp)
+    Checking oid-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime)
+error: used `assert!` to check that a value is not empty
+   --> runtime/src/hardware.rs:308:9
+    |
+308 |         assert!(!snapshot.operating_system.is_empty());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+    = note: `-D clippy::assert-is-empty` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::assert_is_empty)]`
+help: use `assert_ne!` to show the value on failure
+    |
+308 -         assert!(!snapshot.operating_system.is_empty());
+308 +         assert_ne!(snapshot.operating_system, "");
+    |
+
+error: used `assert!` to check that a value is not empty
+   --> runtime/src/hardware.rs:309:9
+    |
+309 |         assert!(!snapshot.architecture.is_empty());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_ne!` to show the value on failure
+    |
+309 -         assert!(!snapshot.architecture.is_empty());
+309 +         assert_ne!(snapshot.architecture, "");
+    |
+
+error: used `assert!` to check that a value is not empty
+   --> runtime/src/hardware.rs:310:9
+    |
+310 |         assert!(!snapshot.machine_variant.is_empty());
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_ne!` to show the value on failure
+    |
+310 -         assert!(!snapshot.machine_variant.is_empty());
+310 +         assert_ne!(snapshot.machine_variant, "");
+    |
+
+error: used `assert!` to check that a value is empty
+    --> runtime/src/models.rs:1100:9
+     |
+1100 |         assert!(registry.list().is_empty());
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+     |
+1100 -         assert!(registry.list().is_empty());
+1100 +         assert_eq!(registry.list(), [] as [models::ModelMetadata; 0]);
+     |
+
+error: used `assert!` to check that a value is empty
+    --> runtime/src/models.rs:1225:9
+     |
+1225 |         assert!(discovered.is_empty());
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+     |
+1225 -         assert!(discovered.is_empty());
+1225 +         assert_eq!(discovered, [] as [models::ModelMetadata; 0]);
+     |
+
+error: used `assert!` to check that a value is empty
+    --> runtime/src/models.rs:1244:9
+     |
+1244 | /         assert!(discovery
+1245 | |             .discover(&registry, "llama.cpp")
+1246 | |             .expect("discover")
+1247 | |             .is_empty());
+     | |________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+     |
+1244 ~         assert_eq!(discovery
+1245 +             .discover(&registry, "llama.cpp")
+1246 ~             .expect("discover"), [] as [models::ModelMetadata; 0]);
+     |
+
+error: used `assert!` to check that a value is empty
+    --> runtime/src/service.rs:2204:9
+     |
+2204 |         assert!(runtime.snapshot().loaded_models.is_empty());
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+     |
+2204 -         assert!(runtime.snapshot().loaded_models.is_empty());
+2204 +         assert_eq!(runtime.snapshot().loaded_models, [] as [std::string::String; 0]);
+     |
+
+error: used `assert!` to check that a value is empty
+    --> runtime/src/service.rs:2326:9
+     |
+2326 |         assert!(runtime.snapshot().loaded_models.is_empty());
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#assert_is_empty
+help: use `assert_eq!` to show the value on failure
+     |
+2326 -         assert!(runtime.snapshot().loaded_models.is_empty());
+2326 +         assert_eq!(runtime.snapshot().loaded_models, [] as [std::string::String; 0]);
+     |
+
+error: could not compile `oid-runtime` (lib test) due to 8 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: this function has too many lines (107/100)
+  --> console/src/bin/talvik.rs:47:1
+   |
+47 | fn run() -> Result<(), Box<dyn std::error::Error>> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_lines
+   = note: `-D clippy::too-many-lines` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: could not compile `oid-console` (bin "talvik" test) due to 1 previous error
+error: could not compile `oid-console` (bin "talvik") due to 1 previous error
+error: this argument is passed by value, but not consumed in the function body
+   --> console/src/bin/http.rs:184:15
+    |
+184 |     listener: TcpListener,
+    |               ^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+    = note: `-D clippy::needless-pass-by-value` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+184 |     listener: &TcpListener,
+    |               +
+
+error: this function's return value is unnecessary
+   --> console/src/bin/http.rs:183:1
+    |
+183 | / pub fn serve(
+184 | |     listener: TcpListener,
+185 | |     runtime: &Arc<MarinaRuntime>,
+186 | |     authentication_enabled: bool,
+187 | |     default_model_id: Option<&String>,
+188 | |     readiness: &Arc<Readiness>,
+189 | | ) -> std::io::Result<()> {
+    | |________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#unnecessary_wraps
+    = note: `-D clippy::unnecessary-wraps` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_wraps)]`
+help: remove the return type...
+    |
+189 - ) -> std::io::Result<()> {
+189 + ) -> () {
+    |
+help: ...and then remove returned values
+    |
+215 -     Ok(())
+    |
+
+error: this could be rewritten as `let...else`
+   --> console/src/bin/http.rs:358:13
+    |
+358 | /             let request = match parse_ollama_json_body(&mut stream, &body)? {
+359 | |                 Some(request) => request,
+360 | |                 None => return Ok(()),
+361 | |             };
+    | |______________^ help: consider writing: `let Some(request) = parse_ollama_json_body(&mut stream, &body)? else { return Ok(()) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#manual_let_else
+    = note: `-D clippy::manual-let-else` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::manual_let_else)]`
+
+error: this could be rewritten as `let...else`
+   --> console/src/bin/http.rs:369:13
+    |
+369 | /             let request = match parse_ollama_json_body(&mut stream, &body)? {
+370 | |                 Some(request) => request,
+371 | |                 None => return Ok(()),
+372 | |             };
+    | |______________^ help: consider writing: `let Some(request) = parse_ollama_json_body(&mut stream, &body)? else { return Ok(()) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#manual_let_else
+
+error: this could be rewritten as `let...else`
+   --> console/src/bin/http.rs:384:13
+    |
+384 | /             let request = match parse_ollama_json_body(&mut stream, &body)? {
+385 | |                 Some(request) => request,
+386 | |                 None => return Ok(()),
+387 | |             };
+    | |______________^ help: consider writing: `let Some(request) = parse_ollama_json_body(&mut stream, &body)? else { return Ok(()) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#manual_let_else
+
+error: this could be rewritten as `let...else`
+   --> console/src/bin/http.rs:394:13
+    |
+394 | /             let request = match parse_json_body(&mut stream, &body)? {
+395 | |                 Some(request) => request,
+396 | |                 None => return Ok(()),
+397 | |             };
+    | |______________^ help: consider writing: `let Some(request) = parse_json_body(&mut stream, &body)? else { return Ok(()) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#manual_let_else
+
+error: this could be rewritten as `let...else`
+   --> console/src/bin/http.rs:404:13
+    |
+404 | /             let request = match parse_json_body(&mut stream, &body)? {
+405 | |                 Some(request) => request,
+406 | |                 None => return Ok(()),
+407 | |             };
+    | |______________^ help: consider writing: `let Some(request) = parse_json_body(&mut stream, &body)? else { return Ok(()) };`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#manual_let_else
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1388:11
+     |
+1388 |     part: ToolStreamPart,
+     |           ^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1388 |     part: &ToolStreamPart,
+     |           +
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1498:73
+     |
+1498 | fn responses_sse_frame(event_type: &str, sequence_number: u64, payload: Value) -> String {
+     |                                                                         ^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1498 | fn responses_sse_frame(event_type: &str, sequence_number: u64, payload: &Value) -> String {
+     |                                                                         +
+
+error: this function has too many arguments (11/7)
+    --> console/src/bin/http.rs:1531:1
+     |
+1531 | / fn responses_object(
+1532 | |     request_id: &str,
+1533 | |     created: u64,
+1534 | |     model: &str,
+...    |
+1542 | |     incomplete_details: Value,
+1543 | | ) -> Value {
+     | |__________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_arguments
+     = note: `-D clippy::too-many-arguments` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::too_many_arguments)]`
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1539:13
+     |
+1539 |     output: Vec<Value>,
+     |             ^^^^^^^^^^ help: consider changing the type to: `&[Value]`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1540:12
+     |
+1540 |     usage: Value,
+     |            ^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1540 |     usage: &Value,
+     |            +
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1541:12
+     |
+1541 |     error: Value,
+     |            ^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1541 |     error: &Value,
+     |            +
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1542:25
+     |
+1542 |     incomplete_details: Value,
+     |                         ^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1542 |     incomplete_details: &Value,
+     |                         +
+
+error: this function has too many arguments (8/7)
+    --> console/src/bin/http.rs:1568:1
+     |
+1568 | / fn write_responses_stream_start(
+1569 | |     stream: &mut TcpStream,
+1570 | |     sequence_number: &mut u64,
+1571 | |     request_id: &str,
+...    |
+1576 | |     top_p: f32,
+1577 | | ) -> std::io::Result<()> {
+     | |________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_arguments
+
+error: this function has too many arguments (11/7)
+    --> console/src/bin/http.rs:1632:1
+     |
+1632 | / fn write_responses_stream_failure(
+1633 | |     stream: &mut TcpStream,
+1634 | |     sequence_number: &mut u64,
+1635 | |     request_id: &str,
+...    |
+1643 | |     message: &str,
+1644 | | ) -> std::io::Result<()> {
+     | |________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_arguments
+
+error: this argument is passed by value, but not consumed in the function body
+    --> console/src/bin/http.rs:1679:11
+     |
+1679 |     part: ToolStreamPart,
+     |           ^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+     |
+1679 |     part: &ToolStreamPart,
+     |           +
+
+error: this function has too many lines (110/100)
+    --> console/src/bin/http.rs:2079:1
+     |
+2079 | fn build_chat_content(body: &Value) -> Result<Vec<ContentPart>, String> {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_lines
+     = note: `-D clippy::too-many-lines` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::too_many_lines)]`
+
+error: this function has too many lines (238/100)
+    --> console/src/bin/http.rs:2517:1
+     |
+2517 | / fn validate_generation_request(
+2518 | |     body: &Value,
+2519 | |     endpoint: OpenAiGenerationEndpoint,
+2520 | | ) -> Result<(), (u16, String)> {
+     | |______________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#too_many_lines
+
+error: could not compile `oid-console` (bin "talvikd") due to 19 previous errors
+error: could not compile `oid-console` (bin "talvikd" test) due to 19 previous errors

@@ -1,0 +1,35 @@
+{
+  "version": {
+    "component": "talvik",
+    "dirty": false,
+    "git_sha": "f3d51b0268fd01595b8cfc72e6144337015b978e",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "source_head": "0b63532e4a29007863e67cda3df4b999f4cd51f1",
+  "binaries": [
+    {
+      "name": "talvikd",
+      "sha256": "5c8a3e76aa4d13b6829615e89e70499126f61949eb42081d866416ee1c4107b5",
+      "matches_release": true
+    },
+    {
+      "name": "talvik",
+      "sha256": "1b3f0f9718390c801e007897ed9af0a4c7c00b9360f2273ed55aa8e17bc2e2d7",
+      "matches_release": true
+    },
+    {
+      "name": "oid-console",
+      "sha256": "f34957330668829083c4bd5b9fa6ff6500770cf03fc4b17a2dcaa3db907df625",
+      "matches_release": true
+    },
+    {
+      "name": "oid-marina-chat",
+      "sha256": "2f90f4b52e3990aa4fe3a9dbec3c9d0a02d59d46061bbd2894594afeb6e8bb25",
+      "matches_release": true
+    }
+  ]
+}

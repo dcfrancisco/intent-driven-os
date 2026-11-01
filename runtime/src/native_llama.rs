@@ -256,9 +256,11 @@ impl Backend for LlamaCppAdapter {
                         prompt_evaluation_time_ms: stats
                             .prompt_eval_time
                             .map(|duration| duration.as_millis()),
-                        generation_time_ms: stats
-                            .generation_time
-                            .map(|duration| duration.as_millis()),
+                        generation_time_ms: stats.generation_time.map(|duration| {
+                            duration
+                                .saturating_sub(stats.prompt_eval_time.unwrap_or_default())
+                                .as_millis()
+                        }),
                         context_tokens: prompt_tokens + stats.generated_tokens,
                         metrics_known: stats.prompt_tokens.is_some()
                             && stats.tokens_per_second.is_some(),
@@ -300,7 +302,12 @@ impl Backend for LlamaCppAdapter {
                 }
                 Ok(GenerationEvent::Error(error)) => {
                     self.forget_cancellation(&request.request_id);
-                    return Err(RuntimeError::NativeBackend(error.to_string()));
+                    return Err(match error {
+                        oid_model_runner::ModelRunnerError::InvalidRequest(message) => {
+                            RuntimeError::InvalidRequest(message)
+                        }
+                        error => RuntimeError::NativeBackend(error.to_string()),
+                    });
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -336,6 +343,11 @@ impl Backend for LlamaCppAdapter {
             .map_err(|error| RuntimeError::NativeBackend(error.to_string()))?;
         Ok(crate::backends::EmbeddingsResult { values })
     }
+    fn model_profile(&self, model_id: &str) -> Option<oid_model_runner::ModelProfile> {
+        let id = oid_model_runner::ModelId::new(model_id.to_owned()).ok()?;
+        self.runner.model_profile(&id).ok().flatten()
+    }
+
     fn tool_support(&self, model_id: &str) -> crate::backends::ToolSupport {
         let model_id = match oid_model_runner::ModelId::new(model_id.to_owned()) {
             Ok(model_id) => model_id,
@@ -350,9 +362,9 @@ impl Backend for LlamaCppAdapter {
             Ok(supported) => crate::backends::ToolSupport {
                 supported,
                 reason: if supported {
-                    "the selected GGUF chat template advertises tool calls".to_owned()
+                    "the loaded profile selects a supported tool parser".to_owned()
                 } else {
-                    "the selected GGUF chat template does not advertise tool calls".to_owned()
+                    "the loaded model has no supported tool output format".to_owned()
                 },
             },
             Err(error) => crate::backends::ToolSupport {

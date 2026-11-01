@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[path = "../chat_ui.rs"]
+mod chat_ui;
 #[path = "../ipc.rs"]
 mod ipc;
 #[path = "../ipc_runtime.rs"]
@@ -65,13 +67,23 @@ impl std::fmt::Display for SampleState {
 
 fn main() {
     if let Err(error) = run() {
+        if matches!(
+            error.downcast_ref::<ModelClientError>(),
+            Some(ModelClientError::Cancelled)
+        ) {
+            std::process::exit(130);
+        }
         eprintln!("OID Talvik IPC client failed: {error}");
         std::process::exit(1);
     }
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut raw_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let plain = raw_arguments.first().is_some_and(|arg| arg == "--plain");
+    if plain {
+        raw_arguments.remove(0);
+    }
     let arguments = parse_arguments(&raw_arguments)?;
     let total_started = Instant::now();
     let client = ipc_runtime::IpcRuntimeService::new(EventBus::new());
@@ -99,17 +111,36 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match arguments.mode {
         Mode::Plain | Mode::Timing => {
-            let response = match chat(&client, &model, &arguments.prompt, 0, &backend) {
+            let mut display = chat_ui::ChatDisplay::new(&model, plain)?;
+            let response = match chat(
+                &client,
+                &model,
+                &arguments.prompt,
+                0,
+                &backend,
+                Some(&mut display),
+            ) {
                 Ok(response) => response,
                 Err(error) => {
+                    if matches!(error, ModelClientError::Cancelled) || display.output_started() {
+                        return Err(error.into());
+                    }
+                    drop(display);
                     let Some(fallback) = fallback_model(&models, &model) else {
                         return Err(error.into());
                     };
                     eprintln!("Model {model} failed ({error}); falling back to {fallback}");
-                    chat(&client, &fallback, &arguments.prompt, 0, &backend)?
+                    let mut fallback_display = chat_ui::ChatDisplay::new(&fallback, plain)?;
+                    chat(
+                        &client,
+                        &fallback,
+                        &arguments.prompt,
+                        0,
+                        &backend,
+                        Some(&mut fallback_display),
+                    )?
                 }
             };
-            println!("{}", response.text);
             if arguments.mode == Mode::Timing {
                 print_timing(&response, total_started.elapsed());
             }
@@ -158,7 +189,7 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, &'static str> {
             index += 2;
         } else {
             if arguments[index].starts_with("--") {
-                return Err("unknown option; usage: oid-marina-chat [--timing | --benchmark [--runs N]] <prompt>");
+                return Err("unknown option; usage: oid-marina-chat [--plain] [--timing | --benchmark [--runs N]] <prompt>");
             }
             prompt.push(arguments[index].as_str());
             index += 1;
@@ -167,7 +198,9 @@ fn parse_arguments(arguments: &[String]) -> Result<Arguments, &'static str> {
 
     let prompt = prompt.join(" ");
     if prompt.trim().is_empty() {
-        return Err("usage: oid-marina-chat [--timing | --benchmark [--runs N]] <prompt>");
+        return Err(
+            "usage: oid-marina-chat [--plain] [--timing | --benchmark [--runs N]] <prompt>",
+        );
     }
     Ok(Arguments { mode, prompt })
 }
@@ -183,7 +216,11 @@ fn fallback_model(models: &[ModelDescriptor], failed: &str) -> Option<String> {
     models
         .iter()
         .filter(|model| !model.id.eq_ignore_ascii_case(failed))
-        .filter(|model| model.estimated_memory_mib.is_some_and(|estimate| estimate > 0))
+        .filter(|model| {
+            model
+                .estimated_memory_mib
+                .is_some_and(|estimate| estimate > 0)
+        })
         .min_by_key(|model| model.estimated_memory_mib)
         .map(|model| model.id.clone())
 }
@@ -223,7 +260,10 @@ fn chat(
     prompt: &str,
     run: usize,
     backend: &str,
+    mut display: Option<&mut chat_ui::ChatDisplay>,
 ) -> Result<ChatResponse, ModelClientError> {
+    let interrupt = chat_ui::InterruptGuard::new()
+        .map_err(|error| ModelClientError::Unavailable(error.to_string()))?;
     let request_id = format!("oid-{}-{run}", std::process::id());
     let stream = client
         .generate(GenerationRequest {
@@ -240,10 +280,28 @@ fn chat(
         })
         .map_err(|error| ModelClientError::Unavailable(error.to_string()))?;
     loop {
-        match stream.recv() {
-            Ok(GenerationMessage::Token(_)) => {}
+        if interrupt.take() {
+            stream.cancel();
+            if let Some(display) = display.as_deref_mut() {
+                display.cancelling();
+            }
+        }
+        match stream.recv_timeout(Duration::from_millis(50)) {
+            Ok(GenerationMessage::Token(token)) => {
+                if let Some(display) = display.as_deref_mut() {
+                    if let Err(error) = display.token(&token) {
+                        stream.cancel();
+                        return Err(ModelClientError::Unavailable(error.to_string()));
+                    }
+                }
+            }
             Ok(GenerationMessage::Completed(result)) => {
                 let metrics = &result.statistics;
+                if let Some(display) = display.as_deref_mut() {
+                    display
+                        .finish_generation(&result, false)
+                        .map_err(|error| ModelClientError::Unavailable(error.to_string()))?;
+                }
                 let metrics_known = metrics.metrics_known;
                 return Ok(ChatResponse {
                     text: result.text,
@@ -281,12 +339,16 @@ fn chat(
                     },
                 });
             }
-            Ok(GenerationMessage::Cancelled(_)) => {
+            Ok(GenerationMessage::Cancelled(result)) => {
+                if let Some(display) = display.as_deref_mut() {
+                    let _ = display.finish_generation(&result, true);
+                }
                 return Err(ModelClientError::Cancelled);
             }
             Ok(GenerationMessage::Failed(error)) => {
                 return Err(ModelClientError::Unavailable(error.to_string()));
             }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(error) => {
                 return Err(ModelClientError::MalformedResponse(format!(
                     "Talvik IPC generation stream ended unexpectedly: {error}"
@@ -392,7 +454,7 @@ fn run_benchmark(
             .find(|candidate| candidate.id == model)
             .map(|candidate| candidate.status == oid_runtime::ModelStatus::Loaded);
         let started = Instant::now();
-        let response = chat(client, model, prompt, run + 1, backend_name)?;
+        let response = chat(client, model, prompt, run + 1, backend_name, None)?;
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         let state = classify_state(resident_before, response.metrics.model_load_time_ms);
         reported_backend = reported_backend.or(response.backend);
@@ -479,7 +541,7 @@ fn percentile(samples: &[f64], percentile: Percentile) -> Option<f64> {
     match percentile {
         Percentile::Median if sorted.len() % 2 == 0 => {
             let upper = sorted.len() / 2;
-            Some((sorted[upper - 1] + sorted[upper]) / 2.0)
+            Some(f64::midpoint(sorted[upper - 1], sorted[upper]))
         }
         Percentile::Median => Some(sorted[sorted.len() / 2]),
         Percentile::P95 => {
@@ -529,7 +591,7 @@ fn format_execution(execution: Option<&ExecutionPlacement>) -> String {
     let fallback = execution
         .fallback_reason
         .as_deref()
-        .map_or_else(|| "none".to_owned(), |reason| reason.to_owned());
+        .map_or_else(|| "none".to_owned(), std::borrow::ToOwned::to_owned);
     format!(
         "backend {backend}; device {device}; requested GPU layers {requested_layers}; GPU layers offloaded {offloaded_layers}; Vulkan {vulkan}; fallback {fallback}"
     )

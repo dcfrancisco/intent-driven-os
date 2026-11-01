@@ -1,0 +1,64 @@
+[
+  {
+    "model": "qwen2.5-coder-3b-instruct-q4_k_m",
+    "wall_seconds": 16.316,
+    "content": "OK",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 501,
+      "total_tokens": 502
+    },
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 502,
+      "generation_time_ms": 122,
+      "inference_time_ms": 12355,
+      "latency_ms": 12355,
+      "model_load_time_ms": 3930,
+      "prompt_eval_time_ms": 12232,
+      "prompt_evaluation_time_ms": 12232,
+      "prompt_tokens_per_second": 40.958142576847614,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 12232,
+      "tokens_per_second": 8.141055045890232
+    },
+    "execution": {
+      "backend": "cpu",
+      "device": "CPU",
+      "fallback_reason": null,
+      "offloaded_layers": 0,
+      "requested_offloaded_layers": 0
+    }
+  },
+  {
+    "model": "qwen3.5-4b-Q4_K_M",
+    "wall_seconds": 35.395,
+    "content": "OK",
+    "usage": {
+      "completion_tokens": 1,
+      "prompt_tokens": 585,
+      "total_tokens": 586
+    },
+    "metrics": {
+      "cache_hit": false,
+      "context_tokens": 586,
+      "generation_time_ms": 434,
+      "inference_time_ms": 28649,
+      "latency_ms": 28662,
+      "model_load_time_ms": 6697,
+      "prompt_eval_time_ms": 28214,
+      "prompt_evaluation_time_ms": 28214,
+      "prompt_tokens_per_second": 20.734387183667682,
+      "reused_prompt_tokens": 0,
+      "time_to_first_token_ms": 28219,
+      "tokens_per_second": 2.301700233047839
+    },
+    "execution": {
+      "backend": "cpu",
+      "device": "CPU",
+      "fallback_reason": null,
+      "offloaded_layers": 0,
+      "requested_offloaded_layers": 0
+    }
+  }
+]

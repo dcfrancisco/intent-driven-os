@@ -1,0 +1,6 @@
+{
+  "passed": true,
+  "function": "clamp",
+  "cases_passed": 6,
+  "execution": "AST-restricted pure function with min/max only"
+}

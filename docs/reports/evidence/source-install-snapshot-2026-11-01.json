@@ -1,0 +1,19 @@
+{
+  "date": "2026-11-01",
+  "timezone": "Asia/Manila",
+  "source_commit": "5d5925bcab3cc34089243099151d954472e6628c",
+  "branch": "feature/qwen-coding-assistants",
+  "installed_cli": {
+    "component": "talvik",
+    "dirty": false,
+    "git_sha": "6d323e79b33c5fbad1cb55b981dd01f980d9397e",
+    "native_backend": null,
+    "object": "talvik.build",
+    "profile": "release",
+    "target": "x86_64-apple-darwin",
+    "version": "0.1.0"
+  },
+  "daemon_identity": "Not freshly queried by this documentation task; do not infer from CLI version.",
+  "qualification": "The native library was built/installed during implementation; the new Rust release has not been installed or live-IDE-qualified in the captured evidence.",
+  "recurring_jobs": "talvik-qwen-soak-test deleted; no other project-matching automation found."
+}

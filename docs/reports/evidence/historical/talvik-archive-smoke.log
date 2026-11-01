@@ -1,0 +1,13 @@
+
+Installed model runner daemon:  /tmp/talvik-release-smoke.1DWIuh/prefix/bin/talvikd
+Installed model runner client:  /tmp/talvik-release-smoke.1DWIuh/prefix/bin/talvik
+Runtime state directory:        /tmp/talvik-release-smoke.1DWIuh/state
+Model directory:                /tmp/talvik-release-smoke.1DWIuh/state/models
+
+Start the service with: talvikd
+Check it with: talvik status
+Add /tmp/talvik-release-smoke.1DWIuh/prefix/bin to PATH if needed.
+Native backend libraries:       /tmp/talvik-release-smoke.1DWIuh/prefix/lib
+scripts/smoke-release-install.sh: line 43: 28268 Terminated: 15          TALVIK_AUTO_DOWNLOAD=false TALVIK_AUTO_LOAD=false TALVIK_HTTP_ADDR=127.0.0.1:0 TALVIK_HOME="$STATE" TALVIK_SOCKET="$SOCKET" env -u DYLD_LIBRARY_PATH -u LD_LIBRARY_PATH "$PREFIX/bin/talvikd" > "$WORK/daemon.log" 2>&1
+Removed Talvik executables and native libraries from /tmp/talvik-release-smoke.1DWIuh/prefix; models and state were preserved.
+Talvik release install smoke: PASS

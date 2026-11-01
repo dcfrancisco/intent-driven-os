@@ -1,0 +1,20 @@
+{
+  "session_id": "27c19c38-0055-4b95-bc35-473d6e0d9adc",
+  "installed_build": "f3d51b0",
+  "execution_passed": true,
+  "build_only_scope_passed": false,
+  "terminal_invocations": [
+    {
+      "tool": "run_in_terminal",
+      "command": "mvn clean install",
+      "exit_code": 0,
+      "complete": true,
+      "build_success": true,
+      "tests_ran": true
+    }
+  ],
+  "timings": {
+    "firstProgress": 337370,
+    "totalElapsed": 352241
+  }
+}
