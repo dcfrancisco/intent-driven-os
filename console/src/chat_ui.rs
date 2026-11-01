@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 const RESET: &str = "\x1b[0m";
 const CYAN: &str = "\x1b[36m";
+const MAGENTA: &str = "\x1b[35m";
 const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 
@@ -359,7 +360,7 @@ impl StreamRenderer {
             output.push_str("\n\n");
         }
         let (label, style) = if phase == Phase::Thinking {
-            ("Thinking", DIM)
+            ("Thinking", MAGENTA)
         } else {
             ("Generating", CYAN)
         };
@@ -460,7 +461,7 @@ impl StreamRenderer {
                 self.heading = true;
             }
             let style = if self.phase == Phase::Thinking {
-                DIM
+                MAGENTA
             } else if self.context != MarkupContext::Prose || ch == '`' {
                 CYAN
             } else if self.bold || self.heading {
@@ -523,6 +524,17 @@ mod tests {
             renderer.push("<think>reason</think>answer"),
             "Thinking\nreason\n\nGenerating\nanswer"
         );
+    }
+
+    #[test]
+    fn thinking_and_generation_use_distinct_colors() {
+        let mut renderer = StreamRenderer::new(features(true));
+        let output = renderer.push("<think>reason</think>answer");
+
+        assert!(output.contains("\x1b[35mThinking\x1b[0m"));
+        assert!(output.contains("\x1b[35mreason"));
+        assert!(output.contains("\x1b[36mGenerating\x1b[0m"));
+        assert!(output.contains("answer"));
     }
 
     #[test]
