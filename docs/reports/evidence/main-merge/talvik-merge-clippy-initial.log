@@ -1,0 +1,17 @@
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+   Compiling oid-console v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/console)
+    Checking oid-llama-cpp-adapter v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp)
+    Checking oid-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime)
+error: implicitly cloning a `PathBuf` by calling `to_path_buf` on its dereferenced type
+   --> console/tests/support/mod.rs:116:6
+    |
+116 |     (endpoint.to_path_buf(), listener)
+    |      ^^^^^^^^^^^^^^^^^^^^^^ help: consider using: `endpoint.clone()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#implicit_clone
+    = note: `-D clippy::implicit-clone` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::implicit_clone)]`
+
+error: could not compile `oid-console` (test "startup") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `oid-console` (test "process_signals") due to 1 previous error

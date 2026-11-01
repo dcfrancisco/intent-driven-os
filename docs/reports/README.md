@@ -2,6 +2,10 @@
 
 The [2026-11-01 status report](TALVIK-STATUS-2026-11-01.md) is the current assessment of implementation, tests, installation, Agent behavior, performance and RC gates. The [manual qualification runbook](TALVIK-QUALIFICATION-RUNBOOK.md) defines the next checks. Dates use Asia/Manila unless an original log states otherwise.
 
+## Main integration update
+
+[2026-11-01 main merge and regression report](TALVIK-MAIN-MERGE-2026-11-01.md) records integration of `origin/main` (`8b7dd2e`) with the preserved feature history. Earlier status reports retain their original implementation and installation snapshots.
+
 ## Current evidence
 
 - Source implementation: `5d5925b`, branch `feature/qwen-coding-assistants`, pushed to origin.

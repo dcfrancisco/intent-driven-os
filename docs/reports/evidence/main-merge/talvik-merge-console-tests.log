@@ -1,0 +1,35 @@
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+   Compiling oid-llama-cpp-adapter v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp)
+   Compiling oid-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime)
+   Compiling oid-console v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/console)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.38s
+     Running tests/ipc_chat.rs (target/debug/deps/ipc_chat-82a53af30518b568)
+
+running 2 tests
+test standalone_chat_uses_the_talvik_ipc_daemon ... ok
+test import_preserves_source_id_and_checksum_in_the_cli_request ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/process_signals.rs (target/debug/deps/process_signals-e20a86752b82e60b)
+
+running 6 tests
+test sigterm_while_idle_restores_a_clean_process ... ok
+test sighup_while_idle_restores_a_clean_process ... ok
+test interrupting_a_native_child_keeps_oid_usable ... ok
+test repeated_interrupts_do_not_corrupt_the_console ... ok
+test sigterm_stops_a_child_that_ignores_term ... ok
+test sigkill_restart_discovers_pending_governed_operation ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+     Running tests/startup.rs (target/debug/deps/startup-d1b6325c0e1ea834)
+
+running 4 tests
+test local_console_fails_clearly_when_talvik_ipc_is_unavailable ... ok
+test local_console_rejects_http_backend_selection ... ok
+test console_binary_starts_with_runtime_prompt ... ok
+test daemon_rejects_an_occupied_http_port_before_starting_the_runtime ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+

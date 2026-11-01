@@ -2050,12 +2050,15 @@ mod tests {
             EventBus::new(),
             Box::new(MockBackend),
             HardwareService::from_snapshot(HardwareSnapshot {
-                // Include the 125% peak-load reserve; the one-model limit drives eviction.
-                available_ram_bytes: Some(672 * 1_048_576),
+                // Leave enough headroom for the post-eviction model load peak;
+                // the one-resident limit, not an impossible memory budget, is
+                // what this recovery scenario is exercising.
+                available_ram_bytes: Some(1_024 * 1_048_576),
                 ..HardwareSnapshot::default()
             }),
         );
         runtime.resource_policy.max_resident_models = 1;
+        runtime.resource_policy.idle_retention = std::time::Duration::ZERO;
         for id in ["alpha", "beta"] {
             runtime
                 .models
@@ -2143,6 +2146,15 @@ mod tests {
                 | GenerationMessage::Cancelled(_)
                 | GenerationMessage::Failed(_)
         ));
+        let active_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while runtime.snapshot().active_requests != 0 {
+            assert!(
+                std::time::Instant::now() < active_deadline,
+                "active generation slot was not released"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(runtime.eviction_candidate("beta").as_deref(), Some("alpha"));
         let request = |id: &str| GenerationRequest {
             request_id: format!("request-{id}"),
             model_id: id.to_owned(),

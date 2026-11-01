@@ -577,6 +577,36 @@
       "path": "evidence/native-jinja/talvik-jinja-workspace.log",
       "origin": "native Jinja implementation qualification logs preceding source commit 5d5925b",
       "sha256": "df5aaa00dcca9b7566a04f0b20695833b7eb287a7b707a912464d742e040014b"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-http-tests.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "87860df7bbdcb7c368d37bcb4e8c4e6d7742c497f23f05f8f5d9ba604ca5bff6"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-runtime-tests.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "8aacb7a4170abacbd244edae49622c91cc2fd506c7b2e929913fc95330f7d9b3"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-console-tests.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "242f919ab31a14c497d6b733d322f2bbb4dbe5bda255740df919093abc6e96d2"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-workspace-tests.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "9fac0282763bfd091eef9775c5b15ad6fccfe16f388fc3a5591628d7b234f607"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-clippy.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "78ef16c3ccabda58f6c800589e2abe5a565ee0f7f995816199d220a032b64d6a"
+    },
+    {
+      "path": "evidence/main-merge/talvik-merge-clippy-initial.log",
+      "origin": "Manual verification of merge between a8c66a4 and origin/main 8b7dd2e; no inference or service restart",
+      "sha256": "c25c40775395ed9d22443aeddd2569aeff2308c08c915f8c6f3dec707029046a"
     }
   ]
 }

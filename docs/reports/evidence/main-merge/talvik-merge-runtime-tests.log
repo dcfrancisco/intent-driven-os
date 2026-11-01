@@ -1,0 +1,80 @@
+   Compiling libc v0.2.189
+   Compiling oid-llama-cpp-sys v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp/sys)
+   Compiling oid-llama-cpp-adapter v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime/adapters/llama-cpp)
+   Compiling sysinfo v0.33.1
+   Compiling oid-runtime v0.1.0 (/Users/abigailbangasan/codes/intent-driven-os/runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.94s
+     Running unittests src/lib.rs (target/debug/deps/oid_runtime-a3dbd2aa3e9e02fb)
+
+running 51 tests
+test auth::tests::compares_tokens_without_prefix_confusion ... ok
+test auth::tests::token_identity_requires_explicit_scopes ... ok
+test backends::tests::mock_backend_reports_load_memory_and_token_count ... ok
+test backends::tests::controllable_backend_lifecycle_can_reload ... ok
+test backends::tests::manager_registers_enables_and_selects_backend ... ok
+test backends::tests::manager_queries_tool_support_for_the_selected_model ... ok
+test backends::tests::backend_streaming_delivers_fragments_and_statistics ... ok
+test config::tests::bootstrap_flags_default_to_enabled_and_accept_false_values ... ok
+test config::tests::default_model_can_be_disabled_or_overridden ... ok
+test backends::tests::backend_discovery_does_not_wait_for_streaming_generation ... ok
+test config::tests::default_model_is_pinned_gemma_4_with_a_vision_projector ... ok
+test config::tests::reads_small_yaml_key_value_config ... ok
+test config::tests::reads_nested_listener_schema_and_flattens_listener_fields ... ok
+test models::tests::derives_filename_from_windows_paths_and_file_urls ... ok
+test models::tests::discovers_only_gguf_files_and_registers_metadata ... ok
+test models::tests::acquires_file_url_and_preserves_explicit_id ... ok
+test models::tests::acquires_local_gguf_atomically_and_derives_metadata ... ok
+test config::tests::rejects_non_loopback_http_without_explicit_override ... ok
+test models::tests::persists_metadata_across_registry_instances ... ok
+test models::tests::registers_inspects_and_removes_metadata ... ok
+test models::tests::discovery_does_not_register_a_paired_vision_projector_as_a_model ... ok
+test models::tests::discovery_skips_artifacts_registered_under_another_id_and_prunes_stubs ... ok
+test models::tests::discovery_skips_unpaired_mmproj_files ... ok
+test models::tests::sha256_matches_known_vector ... ok
+test models::tests::verifies_sha256_of_existing_artifacts ... ok
+test service::tests::aggregate_budget_includes_resident_models_once ... ok
+test models::tests::rejects_checksum_without_leaving_partial_artifact ... ok
+test models::tests::resumes_local_partial_artifact_and_records_observed_checksum ... ok
+test models::tests::persists_explicit_projector_pairs_and_reads_legacy_records ... ok
+test service::tests::memory_admission_accepts_exact_boundary_and_rejects_one_byte_below ... ok
+test service::tests::memory_admission_rejects_unknown_and_insufficient_capacity ... ok
+test service::tests::context_reset_requires_a_resident_idle_model ... ok
+test service::tests::generation_recovers_by_eviction_and_reloads_registered_models ... ok
+curl: (18) transfer closed with 21 bytes remaining to read
+Warning: Problem (retrying all errors). Will retry in 1 seconds. 3 retries 
+Warning: left.
+test service::tests::marina_runtime_is_deterministic_and_publishes_events ... ok
+test core::tests::composition_root_starts_the_production_service ... ok
+test service::tests::model_pull_imports_local_artifact_into_configured_store ... ok
+test service::tests::resident_model_is_not_counted_as_a_new_physical_allocation ... ok
+test service::tests::rejected_model_load_preserves_existing_resident_model ... ok
+test hardware::tests::detects_portable_snapshot_without_accelerator_requirements ... ok
+test service::tests::retention_keeps_recent_idle_models_until_the_expiry_boundary ... ok
+test service::tests::retention_selects_expired_lru_and_respects_pinning_and_active_requests ... ok
+test service::tests::queue_capacity_and_admission_deadline_are_bounded ... ok
+test backends::tests::controllable_generation_cancels_and_manager_recovers ... ok
+test service::tests::simultaneous_generation_requests_queue_without_rejection_or_lost_wakeup ... ok
+test service::tests::vision_requests_require_an_explicit_projector_pairing ... ok
+test service::tests::startup_clears_persisted_transient_model_statuses ... ok
+test service::tests::unload_rejects_nonresident_model_and_repairs_stale_loaded_status ... ok
+test service::tests::projector_configuration_is_validated_and_locked_to_model_residency ... ok
+test service::tests::unload_reports_pinned_and_active_lifecycle_blocks_explicitly ... ok
+test service::tests::multiple_resident_models_are_independently_loadable_and_unloadable ... ok
+#=#=#                                                                          
+curl: (18) transfer closed with 21 bytes remaining to read
+Warning: Problem (retrying all errors). Will retry in 2 seconds. 2 retries 
+Warning: left.
+##O#-#                                                                         
+curl: (18) transfer closed with 21 bytes remaining to read
+Warning: Problem (retrying all errors). Will retry in 4 seconds. 1 retries 
+Warning: left.
+##O=#  #                                                                       
+curl: (18) transfer closed with 21 bytes remaining to read
+
+
+######################################################################## 100.0%
+######################################################################## 100.0%
+test models::tests::resumes_interrupted_http_transfer_with_range_request ... ok
+
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.08s
+

@@ -18,6 +18,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const MAX_REQUEST_BODY_BYTES: usize = 56 * 1_048_576;
 const MAX_CONTEXT_TOKENS: u64 = 32_768;
 const CANCELLATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+const SSE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const IMAGE_MARKER: &str = "<__media__>";
 
 fn decode_data_image(value: &str) -> Result<ImageInput, String> {
@@ -934,6 +935,7 @@ fn generate_ollama(
     };
     stream.set_read_timeout(Some(Duration::from_millis(1)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let generation_started_at = Instant::now();
     let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(true);
     if streaming {
         write!(
@@ -961,6 +963,7 @@ fn generate_ollama(
     let mut reasoning = String::new();
     let mut pending_completion = None;
     let mut output = String::new();
+    let mut first_token_logged = false;
     loop {
         if peer_disconnected(stream)? {
             generation.cancel();
@@ -992,6 +995,15 @@ fn generate_ollama(
             Ok(GenerationMessage::Token(token)) => {
                 if token.is_empty() {
                     continue;
+                }
+                if !first_token_logged {
+                    first_token_logged = true;
+                    eprintln!(
+                        "Talvik HTTP first token request_id={} model={} elapsed_ms={}",
+                        request_id,
+                        model,
+                        generation_started_at.elapsed().as_millis()
+                    );
                 }
                 if let Some(parser) = tool_parser.as_mut() {
                     let parts = match parser.push(&token) {
@@ -1630,6 +1642,16 @@ fn write_responses_sse_event(
     *sequence_number = sequence_number.saturating_add(1);
     stream.write_all(frame.as_bytes())?;
     stream.flush()
+}
+
+fn openai_chat_stream_start_event(request_id: &str, created: u64, model: &str) -> Value {
+    json!({
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": Value::Null}]
+    })
 }
 
 fn responses_output_message(request_id: &str, status: &str, text: &str) -> Value {
@@ -3489,11 +3511,11 @@ fn generate(
         {
             if streaming
                 && stream_headers_sent
-                && last_keepalive.elapsed() >= Duration::from_secs(5)
+                && last_keepalive.elapsed() >= SSE_HEARTBEAT_INTERVAL
             {
                 // SSE comments are ignored by OpenAI clients. They keep a long
                 // prefill connection live without inventing content or usage.
-                stream.write_all(b": keep-alive\n\n")?;
+                stream.write_all(b": talvik keep-alive\n\n")?;
                 stream.flush()?;
                 last_keepalive = Instant::now();
             }
@@ -4300,13 +4322,7 @@ fn write_chat_stream_role(
     created: u64,
     model: &str,
 ) -> std::io::Result<()> {
-    let event = json!({
-        "id": request_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": Value::Null}]
-    });
+    let event = openai_chat_stream_start_event(request_id, created, model);
     write!(stream, "data: {event}\n\n")?;
     stream.flush()
 }
@@ -4525,17 +4541,17 @@ mod tests {
         build_response_prompt, completion_finish_reason, completion_termination_reason,
         flatten_content, generation_options, iso8601_now, ollama_generation_options, ollama_prompt,
         ollama_request_content, ollama_tool_call, ollama_tool_stream_chunk,
-        openai_model_output_error, openai_stream_error_frame, openai_tool_stream_delta,
-        parse_chat_template_kwargs, parse_ollama_format, parse_openai_response_format,
-        parse_tool_calls, reason, request_body_size_is_allowed, responses_sse_frame,
-        tool_call_output_error_code, validate_generated_tool_calls, validate_generation_request,
-        validate_ollama_generation_request, validate_openai_tool_history,
-        validate_streamed_tool_call, GenerationTermination, OllamaGenerationEndpoint,
-        OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser, ToolStreamPart,
-        MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
+        openai_chat_stream_start_event, openai_model_output_error, openai_stream_error_frame,
+        openai_tool_stream_delta, parse_chat_template_kwargs, parse_ollama_format,
+        parse_openai_response_format, parse_tool_calls, reason, request_body_size_is_allowed,
+        responses_sse_frame, tool_call_output_error_code, validate_generated_tool_calls,
+        validate_generation_request, validate_ollama_generation_request,
+        validate_openai_tool_history, validate_streamed_tool_call, GenerationTermination,
+        OllamaGenerationEndpoint, OpenAiGenerationEndpoint, OpenAiToolChoice, ToolCallStreamParser,
+        ToolStreamPart, MAX_CONTEXT_TOKENS, MAX_REQUEST_BODY_BYTES, MAX_TOOL_CALL_BYTES,
     };
     use base64::Engine as _;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn chat_stream_acknowledges_role_without_fabricating_output_or_completion() {
@@ -5365,6 +5381,21 @@ mod tests {
         assert_eq!(event["type"], "response.output_text.delta");
         assert_eq!(event["sequence_number"], 3);
         assert_eq!(event["delta"], "hello");
+    }
+
+    #[test]
+    fn openai_chat_stream_starts_with_assistant_role_chunk() {
+        let event = openai_chat_stream_start_event("req-1", 1, "qwen");
+        assert_eq!(event["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(event["choices"][0]["finish_reason"], Value::Null);
+    }
+
+    #[test]
+    fn sse_heartbeat_is_a_comment_frame() {
+        assert!(b": talvik keep-alive\n\n".starts_with(b":"));
+        assert!(std::str::from_utf8(b": talvik keep-alive\n\n")
+            .expect("valid SSE comment")
+            .ends_with("\n\n"));
     }
 
     #[test]
