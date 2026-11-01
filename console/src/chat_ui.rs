@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 const RESET: &str = "\x1b[0m";
 const CYAN: &str = "\x1b[36m";
-const MAGENTA: &str = "\x1b[35m";
+const BLUE: &str = "\x1b[94m";
 const DIM: &str = "\x1b[2m";
 const BOLD: &str = "\x1b[1m";
 
@@ -97,6 +97,7 @@ pub struct ChatDisplay {
     waiting: Option<WaitingIndicator>,
     started: Instant,
     output_started: bool,
+    output_line_open: bool,
     finished: bool,
 }
 
@@ -120,6 +121,7 @@ impl ChatDisplay {
                 .then(|| WaitingIndicator::start(features)),
             started: Instant::now(),
             output_started: false,
+            output_line_open: false,
             finished: false,
         })
     }
@@ -142,6 +144,7 @@ impl ChatDisplay {
         self.stop_waiting();
         self.output_started = true;
         let text = self.renderer.push(token);
+        self.output_line_open = output_line_open_after(self.output_line_open, &text);
         let mut output = io::stdout().lock();
         output.write_all(text.as_bytes())?;
         output.flush()
@@ -151,7 +154,13 @@ impl ChatDisplay {
     pub fn cancelling(&mut self) {
         self.stop_waiting();
         if self.features.interactive {
-            let _ = writeln!(io::stderr(), "{}", self.features.paint(DIM, "Cancelling…"));
+            let line_break = if self.output_line_open { "\n" } else { "" };
+            let _ = writeln!(
+                io::stderr(),
+                "{line_break}{}",
+                self.features.paint(DIM, "Cancelling…")
+            );
+            self.output_line_open = false;
         }
     }
 
@@ -249,6 +258,13 @@ fn safe_label(text: &str) -> String {
         .filter(|ch| !ch.is_control())
         .take(72)
         .collect()
+}
+
+fn output_line_open_after(previous: bool, rendered: &str) -> bool {
+    rendered
+        .chars()
+        .last()
+        .map_or(previous, |last| last != '\n')
 }
 
 #[derive(Debug)]
@@ -360,7 +376,7 @@ impl StreamRenderer {
             output.push_str("\n\n");
         }
         let (label, style) = if phase == Phase::Thinking {
-            ("Thinking", MAGENTA)
+            ("Thinking", BLUE)
         } else {
             ("Generating", CYAN)
         };
@@ -460,9 +476,7 @@ impl StreamRenderer {
             if self.line_start && ch == '#' {
                 self.heading = true;
             }
-            let style = if self.phase == Phase::Thinking {
-                MAGENTA
-            } else if self.context != MarkupContext::Prose || ch == '`' {
+            let style = if self.context != MarkupContext::Prose || ch == '`' {
                 CYAN
             } else if self.bold || self.heading {
                 BOLD
@@ -488,7 +502,7 @@ impl StreamRenderer {
 
 #[cfg(test)]
 mod tests {
-    use super::{StreamRenderer, TerminalFeatures};
+    use super::{output_line_open_after, StreamRenderer, TerminalFeatures};
 
     fn features(color: bool) -> TerminalFeatures {
         TerminalFeatures {
@@ -531,10 +545,18 @@ mod tests {
         let mut renderer = StreamRenderer::new(features(true));
         let output = renderer.push("<think>reason</think>answer");
 
-        assert!(output.contains("\x1b[35mThinking\x1b[0m"));
-        assert!(output.contains("\x1b[35mreason"));
+        assert!(output.contains("\x1b[94mThinking\x1b[0m"));
+        assert!(!output.contains("\x1b[94mreason"));
         assert!(output.contains("\x1b[36mGenerating\x1b[0m"));
         assert!(output.contains("answer"));
+    }
+
+    #[test]
+    fn cancellation_notice_starts_a_new_line_after_streamed_text() {
+        assert!(output_line_open_after(false, "Thinking\nreason"));
+        assert!(output_line_open_after(true, ""));
+        assert!(!output_line_open_after(true, "reason\n"));
+        assert!(!output_line_open_after(false, ""));
     }
 
     #[test]
