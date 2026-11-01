@@ -49,6 +49,11 @@ find "$NATIVE_LIB_DIR" -maxdepth 1 \( -type f -o -type l \) \
 [[ -e "$PKG/usr/lib/marina/libllama.so" || -e "$PKG/usr/lib/marina/libllama.so.0" ]] || {
   echo "native payload does not contain libllama.so" >&2; exit 1;
 }
+for component in ggml ggml-base ggml-cpu mtmd oid-chat-template; do
+  [[ -n "$(find "$PKG/usr/lib/marina" -maxdepth 1 -type f -name "lib${component}.so*" -print -quit)" ]] || {
+    echo "native payload does not contain lib${component}.so" >&2; exit 1;
+  }
+done
 install -m 0644 "$ROOT/packaging/marina/config.yaml" "$PKG/etc/marina/config.yaml"
 install -m 0640 /dev/null "$PKG/etc/oid/marina-client.env"
 install -m 0644 "$ROOT/packaging/marina/talvikd.service" "$PKG/usr/lib/systemd/system/"

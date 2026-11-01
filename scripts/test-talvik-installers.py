@@ -31,7 +31,7 @@ class InstallerTests(unittest.TestCase):
             p = payload / "bin" / name
             p.write_text("#!/bin/sh\necho fake-payload\n")
             p.chmod(0o755)
-        for name in ["llama", "ggml", "ggml-base", "ggml-cpu", "mtmd"]:
+        for name in ["llama", "ggml", "ggml-base", "ggml-cpu", "mtmd", "oid-chat-template"]:
             p = payload / "lib" / f"lib{name}.1.dylib"
             p.write_bytes(b"fixture")
             p.with_name(f"lib{name}.dylib").symlink_to(p.name)
@@ -68,6 +68,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(p["EnvironmentVariables"]["TALVIK_STATE_DIR"], str(prefix.resolve()))
         self.assertTrue((prefix / "lib/libmtmd.dylib").is_file())
         self.assertTrue((prefix / "lib/libmtmd.dylib").is_symlink())
+        self.assertTrue((prefix / "lib/liboid-chat-template.dylib").is_file())
+        self.assertTrue((prefix / "lib/liboid-chat-template.dylib").is_symlink())
 
     def test_archive_install_preserves_native_vision_library_and_escaped_paths(self):
         scripts, prefix, agents, env = self.fixture("archive")
@@ -90,6 +92,16 @@ class InstallerTests(unittest.TestCase):
                                  "--prefix", str(prefix)], env=env, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("libmtmd is missing", result.stderr)
+        self.assertFalse((prefix / "bin/talvikd").exists())
+
+    def test_missing_chat_template_renderer_is_rejected_before_binary_install(self):
+        scripts, prefix, agents, env = self.fixture("archive")
+        for p in (scripts / "lib").glob("liboid-chat-template*"):
+            p.unlink()
+        result = subprocess.run(["bash", str(scripts / "install-model-runner.sh"),
+                                 "--prefix", str(prefix)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("liboid-chat-template is missing", result.stderr)
         self.assertFalse((prefix / "bin/talvikd").exists())
 
     def test_release_payload_is_not_overwritten_by_host_library_environment(self):
@@ -115,6 +127,34 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((prefix / "bin/talvikd").exists())
         self.assertFalse((agents / "com.talvik.talvikd.plist").exists())
         self.assertFalse(list((prefix / "lib").glob("libmtmd*")) if (prefix / "lib").exists() else [])
+        self.assertFalse(list((prefix / "lib").glob("liboid-chat-template*")) if (prefix / "lib").exists() else [])
+
+    def test_unix_release_packager_includes_required_chat_template_renderer(self):
+        with tempfile.TemporaryDirectory(prefix="talvik-package-test-") as directory:
+            root = pathlib.Path(directory)
+            binaries = root / "bin"
+            libraries = root / "lib"
+            binaries.mkdir()
+            libraries.mkdir()
+            for name in ["talvik", "talvikd"]:
+                executable = binaries / name
+                executable.write_text("#!/bin/sh\nprintf '{}\\n'\n")
+                executable.chmod(0o755)
+            for name in ["llama", "ggml", "ggml-base", "ggml-cpu", "mtmd", "oid-chat-template"]:
+                (libraries / f"lib{name}.dylib").write_bytes(b"fixture")
+            archive = root / "talvik.tar.gz"
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/package-talvik-unix.sh"),
+                 str(binaries), str(libraries), str(archive)],
+                capture_output=True, text=True, timeout=30
+            )
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            listing = subprocess.run(
+                ["tar", "-tzf", str(archive)],
+                capture_output=True, text=True, check=True
+            ).stdout.splitlines()
+            self.assertIn("talvik/lib/liboid-chat-template.dylib", listing)
+            self.assertTrue(pathlib.Path(f"{archive}.sha256").is_file())
 
 
 if __name__ == "__main__":

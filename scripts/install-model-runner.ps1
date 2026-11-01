@@ -46,6 +46,11 @@ try {
             throw "Invalid Talvik archive; missing $relativePath"
         }
     }
+    foreach ($library in @("llama.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "mtmd.dll", "oid-chat-template.dll")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $packageRoot "lib\$library"))) {
+            throw "Invalid Talvik archive; missing native library lib\$library"
+        }
+    }
 
     New-Item -ItemType Directory -Force -Path $prefixPath | Out-Null
     # Remove previously installed native DLLs so switching between the CPU and

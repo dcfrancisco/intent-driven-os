@@ -237,8 +237,8 @@ fn select_model(
     }
     models
         .iter()
-        .find(|model| model.is_default == Some(true))
-        .or_else(|| models.iter().find(|model| model.resident == Some(true)))
+        .find(|model| model.resident == Some(true))
+        .or_else(|| models.iter().find(|model| model.is_default == Some(true)))
         .or_else(|| {
             models
                 .iter()
@@ -722,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn model_selection_prefers_override_then_resident_then_smallest_estimate() {
+    fn model_selection_prefers_override_then_resident_then_default_then_smallest_estimate() {
         let models = [
             ModelDescriptor {
                 id: "large".to_owned(),
@@ -752,12 +752,12 @@ mod tests {
 
         assert_eq!(
             select_model(&models, None).expect("resident model"),
-            "default"
-        );
-        let resident_fallback = [models[0].clone(), models[2].clone(), models[3].clone()];
-        assert_eq!(
-            select_model(&resident_fallback, None).expect("resident model fallback"),
             "resident"
+        );
+        let default_fallback = [models[0].clone(), models[1].clone(), models[2].clone()];
+        assert_eq!(
+            select_model(&default_fallback, None).expect("default model fallback"),
+            "default"
         );
         let unresident = [models[0].clone(), models[2].clone()];
         assert_eq!(

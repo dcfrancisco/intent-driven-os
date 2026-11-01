@@ -24,6 +24,11 @@ done
 command -v dpkg-deb >/dev/null || { echo "dpkg-deb is required" >&2; exit 1; }
 [[ -x "$TALVIKD" && -x "$TALVIK" ]] || { echo "release talvik and talvikd binaries are required" >&2; exit 1; }
 [[ -n "$NATIVE_LIB_DIR" && -d "$NATIVE_LIB_DIR" ]] || { echo "--native-lib-dir is required" >&2; exit 1; }
+for component in llama ggml ggml-base ggml-cpu mtmd oid-chat-template; do
+  [[ -n "$(find "$NATIVE_LIB_DIR" -maxdepth 1 -type f -name "lib${component}.so*" -print -quit)" ]] || {
+    echo "incomplete native payload: lib${component}.so is missing from $NATIVE_LIB_DIR" >&2; exit 1;
+  }
+done
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/talvik-deb.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -44,7 +49,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Maintainer: Talvik Project
-Depends: libc6, systemd | systemd-sysv
+Depends: libc6, libstdc++6, systemd | systemd-sysv
 Description: Talvik local GGUF model runner
  Standalone CPU-first local model serving daemon and CLI.
 EOF

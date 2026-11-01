@@ -25,6 +25,11 @@ done
 command -v rpmbuild >/dev/null || { echo "rpmbuild is required" >&2; exit 1; }
 [[ -x "$TALVIKD" && -x "$TALVIK" ]] || { echo "release talvik and talvikd binaries are required" >&2; exit 1; }
 [[ -n "$NATIVE_LIB_DIR" && -d "$NATIVE_LIB_DIR" ]] || { echo "--native-lib-dir is required" >&2; exit 1; }
+for component in llama ggml ggml-base ggml-cpu mtmd oid-chat-template; do
+  [[ -n "$(find "$NATIVE_LIB_DIR" -maxdepth 1 -type f -name "lib${component}.so*" -print -quit)" ]] || {
+    echo "incomplete native payload: lib${component}.so is missing from $NATIVE_LIB_DIR" >&2; exit 1;
+  }
+done
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/talvik-rpm.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -43,6 +48,7 @@ Summary: Talvik local GGUF model runner
 License: Apache-2.0
 BuildArch: x86_64
 Requires: systemd
+Requires: libstdc++.so.6()(64bit)
 
 %description
 Standalone CPU-first local GGUF model runner and daemon.

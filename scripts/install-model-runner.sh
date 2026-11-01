@@ -44,7 +44,7 @@ if [[ -x "$SCRIPT_DIR/bin/talvik" && -x "$SCRIPT_DIR/bin/talvikd" ]]; then
 fi
 if [[ "$UNINSTALL" == 1 ]]; then
   rm -f "$PREFIX/bin/talvik" "$PREFIX/bin/talvikd"
-  find "$PREFIX/lib" -maxdepth 1 \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' \) -delete 2>/dev/null || true
+  find "$PREFIX/lib" -maxdepth 1 \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' -o -name 'liboid-chat-template.*' \) -delete 2>/dev/null || true
   rmdir "$PREFIX/bin" "$PREFIX/lib" 2>/dev/null || true
   echo "Removed Talvik executables and native libraries from $PREFIX; models and state were preserved."
   exit 0
@@ -58,7 +58,7 @@ else
   native_check_dir="$NATIVE_LIB_DIR"
 fi
 if [[ "$NATIVE_LIB_OVERRIDE" == 1 ]]; then native_check_dir="$NATIVE_LIB_DIR"; fi
-for component in llama ggml ggml-base ggml-cpu mtmd; do
+for component in llama ggml ggml-base ggml-cpu mtmd oid-chat-template; do
   if [[ ! -d "$native_check_dir" ]] || [[ -z "$(find "$native_check_dir" -maxdepth 1 -type f -name "lib${component}.*" -print -quit)" ]]; then
     echo "Native payload is incomplete: lib${component} is missing from $native_check_dir. Use a complete Talvik release or --native-lib-dir DIR." >&2
     exit 1
@@ -71,7 +71,7 @@ if [[ -x "$ROOT/bin/talvik" && -x "$ROOT/bin/talvikd" ]]; then
   if [[ -d "$ROOT/lib" ]]; then
     find "$ROOT/lib" -maxdepth 1 \
       \( -type f -o -type l \) \
-      \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' \) \
+      \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' -o -name 'liboid-chat-template.*' \) \
       -exec cp -a {} "$PREFIX/lib/" \;
   fi
   chmod 0755 "$PREFIX/bin/talvik" "$PREFIX/bin/talvikd"
@@ -87,6 +87,7 @@ if [[ -n "$NATIVE_LIB_DIR" ]]; then
 fi
 export LLAMA_CPP_REQUIRED=1
 export LLAMA_CPP_MTMD_REQUIRED=1
+export LLAMA_CPP_CHAT_TEMPLATE_REQUIRED=1
 cargo install --path "$ROOT/console" --root "$PREFIX" --locked --force \
   --bin talvik --bin talvikd
 fi
@@ -99,7 +100,7 @@ if [[ -n "$NATIVE_LIB_DIR" && ( "$PAYLOAD_INSTALL" == 0 || "$NATIVE_LIB_OVERRIDE
   if [[ "$native_source_dir" != "$native_target_dir" ]]; then
     find "$NATIVE_LIB_DIR" -maxdepth 1 \
       \( -type f -o -type l \) \
-      \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' -o -name 'llama.dll' -o -name 'ggml*.dll' \) \
+      \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' -o -name 'liboid-chat-template.*' -o -name 'llama.dll' -o -name 'ggml*.dll' -o -name 'oid-chat-template.dll' \) \
       -exec cp -a {} "$PREFIX/lib/" \;
   fi
 fi

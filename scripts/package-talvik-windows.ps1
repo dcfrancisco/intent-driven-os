@@ -42,7 +42,7 @@ try {
     $package = Join-Path $stage "talvik"
     New-Item -ItemType Directory -Force -Path (Join-Path $package "bin"), (Join-Path $package "lib") | Out-Null
     Copy-Item (Join-Path $BinDirectory "talvik.exe"), (Join-Path $BinDirectory "talvikd.exe") (Join-Path $package "bin")
-    Get-ChildItem -LiteralPath $NativeLibDir -File | Where-Object { $_.Extension -in ".dll", ".lib" } |
+    Get-ChildItem -LiteralPath $NativeLibDir -File -Filter "*.dll" |
         Copy-Item -Destination (Join-Path $package "lib")
     Get-ChildItem -LiteralPath $crtPath.FullName -Filter "*.dll" -File | Copy-Item -Destination (Join-Path $package "lib")
     Get-ChildItem -LiteralPath (Join-Path $package "lib") -Filter "*.dll" -File | Copy-Item -Destination (Join-Path $package "bin")

@@ -113,6 +113,10 @@ python3 scripts/test-talvik-installers.py
 
 The archive contains binaries, native libraries, installers, build identity, and
 license; it does not include models, user configuration, or authentication tokens.
+The native payload must include `liboid-chat-template` as well as llama.cpp,
+ggml, and mtmd. The installer rejects archives missing this required renderer.
+Linux DEB/RPM packages also declare the `libstdc++` runtime dependency used by
+the native llama.cpp and chat-template libraries.
 The smoke check installs into an isolated directory with developer library paths
 removed, starts a daemon without model downloads, checks CLI status, stops it,
 and verifies uninstall preserves model state.

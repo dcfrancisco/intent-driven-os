@@ -54,7 +54,7 @@ jobs:
           - name: windows-x86_64
             os: windows-2022
             target: x86_64-pc-windows-msvc
-            archive: talvik-windows-x86_64.zip
+            archive: talvik-windows-x86_64-preview.zip
             shell: pwsh
     runs-on: ${{ matrix.os }}
     defaults:
@@ -101,54 +101,48 @@ jobs:
           find "$RUNNER_TEMP/llama-build" \( -type f -o -type l \) \( -name 'libllama.*' -o -name 'libggml*.*' -o -name 'libmtmd.*' \) -exec cp -a {} "$RUNNER_TEMP/talvik/lib" \;
           test -n "$(find "$RUNNER_TEMP/talvik/lib" -maxdepth 1 -type f -name 'libllama.*' -print -quit)"
           test -n "$(find "$RUNNER_TEMP/talvik/lib" -maxdepth 1 -type f -name 'libmtmd.*' -print -quit)"
+      - name: Build native chat-template renderer (Unix)
+        if: runner.os != 'Windows'
+        env:
+          LLAMA_CPP_ROOT: ${{ runner.temp }}/llama.cpp
+          LLAMA_CPP_INSTALL_DIR: ${{ runner.temp }}/talvik/lib
+          TALVIK_CHAT_TEMPLATE_BUILD: ${{ runner.temp }}/llama-build/chat-template
+        run: bash scripts/setup-chat-template.sh
       - name: Collect native libraries (Windows)
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/talvik/lib" | Out-Null
           Get-ChildItem -Path "$env:RUNNER_TEMP/llama-build" -Recurse -File -Include llama.lib,ggml*.lib,mtmd.lib,llama.dll,ggml*.dll,mtmd.dll | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/lib"
           if (-not (Get-ChildItem -Path "$env:RUNNER_TEMP/talvik/lib" -Filter "llama.dll" -File)) { throw "llama.dll was not produced" }
+      - name: Build native chat-template renderer (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S runtime/adapters/llama-cpp/sys/native -B "$env:RUNNER_TEMP/llama-build/chat-template" "-DLLAMA_CPP_SOURCE_DIR=$env:RUNNER_TEMP/llama.cpp" "-DLLAMA_CPP_LIB_DIR=$env:RUNNER_TEMP/talvik/lib" -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "Chat-template CMake configuration failed" }
+          cmake --build "$env:RUNNER_TEMP/llama-build/chat-template" --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Chat-template build failed" }
+          cmake --install "$env:RUNNER_TEMP/llama-build/chat-template" --config Release --prefix "$env:RUNNER_TEMP/talvik/lib"
+          if ($LASTEXITCODE -ne 0) { throw "Chat-template installation failed" }
       - name: Build Talvik (Unix)
         if: runner.os != 'Windows'
         run: |
-          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/talvik/lib" LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
+          LLAMA_CPP_LIB_DIR="$RUNNER_TEMP/talvik/lib" LLAMA_CPP_REQUIRED=1 LLAMA_CPP_MTMD_REQUIRED=1 LLAMA_CPP_CHAT_TEMPLATE_REQUIRED=1 cargo install --path console --root "$RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
       - name: Build Talvik (Windows)
         if: runner.os == 'Windows'
         run: |
           $env:LLAMA_CPP_LIB_DIR = "$env:RUNNER_TEMP/talvik/lib"
           $env:LLAMA_CPP_REQUIRED = "1"
           $env:LLAMA_CPP_MTMD_REQUIRED = "1"
+          $env:LLAMA_CPP_CHAT_TEMPLATE_REQUIRED = "1"
           cargo install --path console --root "$env:RUNNER_TEMP/talvik" --locked --force --bin talvik --bin talvikd
       - name: Package Unix
         if: runner.os != 'Windows'
         run: |
-          cp scripts/install-model-runner.sh "$RUNNER_TEMP/talvik/"
-          cp scripts/install-talvik-macos.sh "$RUNNER_TEMP/talvik/" 2>/dev/null || true
-          cp packaging/talvik/talvikd.plist.in "$RUNNER_TEMP/talvik/" 2>/dev/null || true
-          cp LICENSE "$RUNNER_TEMP/talvik/" 2>/dev/null || true
-          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/${{ matrix.archive }}" talvik
-          shasum -a 256 "$RUNNER_TEMP/${{ matrix.archive }}" > "$RUNNER_TEMP/${{ matrix.archive }}.sha256"
+          scripts/package-talvik-unix.sh "$RUNNER_TEMP/talvik/bin" "$RUNNER_TEMP/talvik/lib" "$RUNNER_TEMP/${{ matrix.archive }}"
       - name: Package Windows
         if: runner.os == 'Windows'
         run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe was not found: $vswhere" }
-          $vsPath = & $vswhere -latest -products "*" -property installationPath
-          if ($LASTEXITCODE -ne 0 -or -not $vsPath) { throw "Visual Studio installation was not found" }
-          $redistRoot = Join-Path $vsPath "VC\Redist\MSVC"
-          $crtPath = Get-ChildItem -LiteralPath $redistRoot -Directory |
-            Sort-Object { [version]$_.Name } -Descending |
-            ForEach-Object { Join-Path $_.FullName "x64\Microsoft.VC143.CRT" } |
-            Where-Object { Test-Path -LiteralPath $_ } |
-            Select-Object -First 1
-          if (-not $crtPath) { throw "The x64 Microsoft Visual C++ runtime redistributable was not found under $redistRoot" }
-          Get-ChildItem -LiteralPath $crtPath -Filter "*.dll" -File | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/lib" -Force
-          Get-ChildItem -Path "$env:RUNNER_TEMP/talvik/lib" -Filter "*.dll" -File | Copy-Item -Destination "$env:RUNNER_TEMP/talvik/bin" -Force
-          if (Test-Path LICENSE) { Copy-Item LICENSE "$env:RUNNER_TEMP/talvik/" }
-          Copy-Item scripts/install-model-runner.ps1 "$env:RUNNER_TEMP/talvik/"
-          Copy-Item packaging/talvik/README-WINDOWS.txt "$env:RUNNER_TEMP/talvik/"
-          Copy-Item packaging/talvik/SETUP-WINDOWS.cmd "$env:RUNNER_TEMP/talvik/"
-          Compress-Archive -Path "$env:RUNNER_TEMP/talvik/*" -DestinationPath "$env:RUNNER_TEMP/${{ matrix.archive }}"
-          (Get-FileHash "$env:RUNNER_TEMP/${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.archive }}" | Out-File "$env:RUNNER_TEMP/${{ matrix.archive }}.sha256"
+          ./scripts/package-talvik-windows.ps1 -Variant cpu -BinDirectory "$env:RUNNER_TEMP/talvik/bin" -NativeLibDir "$env:RUNNER_TEMP/talvik/lib" -OutputDirectory "$env:RUNNER_TEMP"
       - name: Smoke install Unix payload
         if: runner.os != 'Windows'
         run: ./scripts/smoke-release-install.sh "$RUNNER_TEMP/${{ matrix.archive }}"
