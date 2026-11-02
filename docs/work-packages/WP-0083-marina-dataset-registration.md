@@ -24,4 +24,14 @@ WP-0082, ADR-0020, WP-0077, existing evidence persistence.
 
 ## Status
 
-Planned. Registration and validation only; no training execution.
+In progress. `runtime/src/training.rs` implements an internal production
+registry for explicitly selected UTF-8 SFT JSONL files. It validates bounded
+prompt/completion and conversational records, explicit train/validation
+partitions, malformed records, encoding, size/record limits, and duplicates;
+publishes SHA-256-addressed immutable artifacts; persists metadata atomically;
+and verifies managed paths and artifact integrity on restart.
+
+The registry is not yet composed into `talvikd`, exposed through authenticated
+management API/CLI operations, connected to audit evidence or sensitive-data
+checks, or qualified on the cross-platform matrix. Those are required before
+WP-0083 can be called tested or complete. No training execution is included.

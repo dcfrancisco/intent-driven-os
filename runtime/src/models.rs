@@ -609,7 +609,7 @@ fn normalize_checksum(value: &str) -> Result<String, RuntimeError> {
 }
 
 #[allow(clippy::large_stack_arrays)]
-fn sha256_file(path: &Path) -> Result<String, RuntimeError> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, RuntimeError> {
     let mut file =
         File::open(path).map_err(|error| RuntimeError::Persistence(error.to_string()))?;
     let mut hasher = Sha256::default();

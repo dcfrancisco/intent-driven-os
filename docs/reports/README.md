@@ -1,5 +1,9 @@
 # Talvik reports
 
+The [ADR-0020 implementation traceability report](ADR-0020-IMPLEMENTATION-TRACEABILITY-2026-11-02.md)
+records the Phase 0 training/lifecycle gap audit and first WP-0082/WP-0083
+hardware-independent implementation slice. It is not evidence of real training.
+
 The [2026-11-01 status report](TALVIK-STATUS-2026-11-01.md) is the current assessment of implementation, tests, installation, Agent behavior, performance and RC gates. The [manual qualification runbook](TALVIK-QUALIFICATION-RUNBOOK.md) defines the next checks. Dates use Asia/Manila unless an original log states otherwise.
 
 ## Main integration update

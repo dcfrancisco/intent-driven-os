@@ -20,6 +20,7 @@ pub mod models;
 pub mod native_llama;
 pub mod security;
 pub mod service;
+pub mod training;
 
 pub use api::{ResidentModelSnapshot, RuntimeApi, RuntimeService, RuntimeSnapshot};
 pub use backends::{
@@ -36,6 +37,11 @@ pub use models::{ModelAcquirer, ModelMetadata, ModelRegistry, ModelStatus};
 pub use native_llama::LlamaCppAdapter;
 pub use oid_shared::{LifecycleState, RuntimeConfig, RuntimeError, RuntimeEvent, RuntimeStatus};
 pub use service::{MarinaRuntime, ResourcePolicy};
+pub use training::{
+    DatasetDiagnostic, DatasetError, DatasetFormat, DatasetImportRequest, DatasetLimits,
+    DatasetRegistry, DatasetValidationReport, DatasetVersion, TrainingBackendCapabilities,
+    TrainingConfig, TrainingJobState, TrainingMethod,
+};
 
 // Shared serving facts contain no engine-native handles.
 pub use oid_model_runner::{CacheStrategy, ModelProfile, ReasoningFormat, ToolFormat};

@@ -29,4 +29,12 @@ ADR-0020, ADR-0021, WP-0077, WP-0058, WP-0070, WP-0071.
 
 ## Status
 
-Planned. Contract design only; no training execution.
+In progress. The first hardware-independent contract slice is implemented in
+`runtime/src/training.rs`: explicit LoRA/QLoRA/full/scratch method identities,
+backend capability and requested-device declarations, bounded training
+configuration validation with no silent fallback, and deterministic job-state
+transitions. Dataset identity and validation contracts are also implemented.
+
+Backend process SPI, artifact/checkpoint/evaluation/promotion schemas, durable
+job records, management API/CLI exposure, and worker execution remain planned.
+No training backend or training execution is implemented by this slice.
