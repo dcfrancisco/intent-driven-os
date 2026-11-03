@@ -47,7 +47,7 @@ if [[ ! -d "$LLAMA_CPP_ROOT/.git" ]]; then
   git clone --depth 1 "$LLAMA_CPP_REPOSITORY" "$LLAMA_CPP_ROOT"
 fi
 git -C "$LLAMA_CPP_ROOT" fetch --depth 1 origin "$LLAMA_CPP_COMMIT"
-git -C "$LLAMA_CPP_ROOT" checkout --detach "$LLAMA_CPP_COMMIT"
+git -C "$LLAMA_CPP_ROOT" checkout --detach FETCH_HEAD
 
 cmake -S "$LLAMA_CPP_ROOT" -B "$LLAMA_CPP_BUILD" \
   -DGGML_NATIVE=OFF \

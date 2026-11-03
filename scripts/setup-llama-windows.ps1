@@ -72,7 +72,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $LlamaRoot ".git"))) {
 
 & git -C $LlamaRoot fetch --depth 1 origin $Commit
 if ($LASTEXITCODE -ne 0) { throw "Failed to fetch llama.cpp revision $Commit." }
-& git -C $LlamaRoot checkout --detach $Commit
+& git -C $LlamaRoot checkout --detach FETCH_HEAD
 if ($LASTEXITCODE -ne 0) { throw "Failed to select llama.cpp revision $Commit." }
 
 $vulkanOption = if ($Vulkan) { "ON" } else { "OFF" }

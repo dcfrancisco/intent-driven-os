@@ -75,14 +75,14 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
           git -C "$RUNNER_TEMP/llama.cpp" fetch --depth 1 origin "$env:LLAMA_CPP_COMMIT"
-          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach "$env:LLAMA_CPP_COMMIT"
+          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach FETCH_HEAD
         if: runner.os == 'Windows'
       - name: Checkout llama.cpp (Unix)
         if: runner.os != 'Windows'
         run: |
           git clone --depth 1 https://github.com/ggml-org/llama.cpp.git "$RUNNER_TEMP/llama.cpp"
           git -C "$RUNNER_TEMP/llama.cpp" fetch --depth 1 origin "$LLAMA_CPP_COMMIT"
-          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach "$LLAMA_CPP_COMMIT"
+          git -C "$RUNNER_TEMP/llama.cpp" checkout --detach FETCH_HEAD
       - name: Configure llama.cpp
         run: >-
           cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama-build"
