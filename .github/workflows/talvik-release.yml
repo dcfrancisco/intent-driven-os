@@ -235,7 +235,7 @@ jobs:
           sudo curl --fail --location --silent --show-error "$QUALIFY_MODEL_URL" \
             -o "/var/lib/talvik/models/$QUALIFY_MODEL_ID.gguf"
           printf '%s  %s\n' "$QUALIFY_MODEL_SHA256" "/var/lib/talvik/models/$QUALIFY_MODEL_ID.gguf" \
-            | sha256sum -c -
+            | sudo sha256sum -c -
           sudo chown -R talvik:talvik /var/lib/talvik/models
           token="$(sudo -u talvik env TALVIK_HOME=/var/lib/talvik TALVIK_CONFIG=/etc/talvik/config.yaml \
             TALVIK_MODEL_DIR=/var/lib/talvik/models TALVIK_REGISTRY=/var/lib/talvik/models.registry \
