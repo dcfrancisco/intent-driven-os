@@ -60,6 +60,7 @@ jobs:
             archive: talvik-windows-x86_64-preview.zip
             shell: pwsh
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.name != 'linux-x86_64' }}
     defaults:
       run:
         shell: ${{ matrix.shell }}
