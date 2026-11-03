@@ -34,12 +34,16 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/talvik-deb.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 PKG="$WORK/package"
 install -d "$PKG/DEBIAN" "$PKG/usr/lib/talvik/bin" "$PKG/usr/lib/talvik/lib" \
-  "$PKG/usr/share/talvik" "$PKG/usr/lib/systemd/user" "$PKG/usr/bin"
+  "$PKG/usr/share/talvik" "$PKG/usr/lib/systemd/system" "$PKG/usr/lib/sysusers.d" \
+  "$PKG/usr/lib/tmpfiles.d" "$PKG/etc/talvik" "$PKG/usr/bin"
 install -m 0755 "$TALVIKD" "$PKG/usr/lib/talvik/bin/talvikd"
 install -m 0755 "$TALVIK" "$PKG/usr/lib/talvik/bin/talvik"
 cp -a "$NATIVE_LIB_DIR"/. "$PKG/usr/lib/talvik/lib/"
-install -m 0644 "$ROOT/packaging/talvik/talvikd.service" "$PKG/usr/lib/systemd/user/talvikd.service"
+install -m 0644 "$ROOT/packaging/talvik/talvikd.service" "$PKG/usr/lib/systemd/system/talvikd.service"
+install -m 0644 "$ROOT/packaging/talvik/config.yaml" "$PKG/etc/talvik/config.yaml"
 install -m 0644 "$ROOT/packaging/talvik/default-model.yaml" "$PKG/usr/share/talvik/default-model.yaml"
+install -m 0644 "$ROOT/packaging/sysusers/talvik.conf" "$PKG/usr/lib/sysusers.d/talvik.conf"
+install -m 0644 "$ROOT/packaging/tmpfiles/talvik.conf" "$PKG/usr/lib/tmpfiles.d/talvik.conf"
 ln -s /usr/lib/talvik/bin/talvik "$PKG/usr/bin/talvik"
 ln -s /usr/lib/talvik/bin/talvikd "$PKG/usr/bin/talvikd"
 cat >"$PKG/DEBIAN/control" <<EOF
@@ -49,10 +53,34 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Maintainer: Talvik Project
-Depends: libc6, libstdc++6, systemd | systemd-sysv
+Depends: libc6 (>= 2.35), libstdc++6, systemd | systemd-sysv
 Description: Talvik local GGUF model runner
  Standalone CPU-first local model serving daemon and CLI.
 EOF
+cat >"$PKG/DEBIAN/conffiles" <<'EOF'
+/etc/talvik/config.yaml
+EOF
+cat >"$PKG/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -eu
+command -v systemd-sysusers >/dev/null 2>&1 && systemd-sysusers || true
+command -v systemd-tmpfiles >/dev/null 2>&1 && systemd-tmpfiles --create || true
+command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload || true
+exit 0
+EOF
+cat >"$PKG/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -eu
+if command -v systemctl >/dev/null 2>&1 && [ "$1" = remove ]; then systemctl disable --now talvikd.service >/dev/null 2>&1 || true; fi
+exit 0
+EOF
+cat >"$PKG/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -eu
+command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload || true
+exit 0
+EOF
+chmod 0755 "$PKG/DEBIAN/postinst" "$PKG/DEBIAN/prerm" "$PKG/DEBIAN/postrm"
 install -d "$(dirname "$OUTPUT")"
 dpkg-deb --build --root-owner-group "$PKG" "$OUTPUT" >/dev/null
 sha256sum "$OUTPUT"

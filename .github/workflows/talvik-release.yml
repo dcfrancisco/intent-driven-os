@@ -10,7 +10,10 @@ permissions:
   contents: write
 
 env:
-  LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
+  LLAMA_CPP_COMMIT: b12060
+  QUALIFY_MODEL_ID: qwen2.5-0.5b-instruct-q4_k_m
+  QUALIFY_MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/6dd44a1/qwen2.5-0.5b-instruct-q4_k_m.gguf
+  QUALIFY_MODEL_SHA256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
 
 jobs:
   check:
@@ -83,10 +86,13 @@ jobs:
       - name: Configure llama.cpp
         run: >-
           cmake -S "$RUNNER_TEMP/llama.cpp" -B "$RUNNER_TEMP/llama-build"
-          -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+          -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF
+          -DGGML_AVX512=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF
+          -DGGML_SSE42=OFF -DGGML_BMI2=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
           -DGGML_BLAS=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
           -DLLAMA_BUILD_COMMON=OFF -DLLAMA_BUILD_TOOLS=OFF -DLLAMA_BUILD_MTMD=ON
-          -DMTMD_VIDEO=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+          -DMTMD_VIDEO=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_RPATH='$ORIGIN'
+          -DCMAKE_INSTALL_RPATH='$ORIGIN' -DCMAKE_BUILD_TYPE=Release
       - name: Enable Apple BLAS for macOS CPU prompt processing
         if: runner.os == 'macOS'
         run: >-
@@ -168,7 +174,7 @@ jobs:
           name: linux-x86_64
           path: release
       - name: Install RPM tooling
-        run: sudo apt-get update && sudo apt-get install --yes rpm
+        run: sudo apt-get update && sudo apt-get install --yes rpm systemd-container curl
       - name: Build packages
         run: |
           set -euo pipefail
@@ -196,7 +202,55 @@ jobs:
           mkdir -p release
           cp "$RUNNER_TEMP/talvik_${version}_amd64.deb" release/
           cp "$RUNNER_TEMP/packages"/talvik-*.rpm release/
-          (cd release && sha256sum talvik-*.deb talvik-*.rpm > checksums.sha256)
+          (cd release && sha256sum talvik-*.deb talvik-*.rpm > SHA256SUMS)
+      - name: Validate package payloads and native linkage
+        run: |
+          set -euo pipefail
+          deb="$(find release -name 'talvik_*.deb' -print -quit)"
+          rpm="$(find release -name 'talvik-*.rpm' -print -quit)"
+          dpkg-deb --contents "$deb" | grep -E '/usr/lib/systemd/system/talvikd.service$'
+          dpkg-deb --contents "$deb" | grep -E '/usr/lib/sysusers.d/talvik.conf$'
+          dpkg-deb --contents "$deb" | grep -E '/usr/lib/talvik/lib/libllama.so'
+          rpm -qpl "$rpm" | grep -E '/usr/lib/systemd/system/talvikd.service$'
+          rpm -qpl "$rpm" | grep -E '/usr/lib/sysusers.d/talvik.conf$'
+          rpm -qpl "$rpm" | grep -E '/usr/lib/talvik/lib/libllama.so'
+          readelf -A "$RUNNER_TEMP/talvik-package/talvik/lib/libllama.so" | tee "$RUNNER_TEMP/llama-attributes.txt" || true
+          if command -v objdump >/dev/null; then
+            ! objdump -d "$RUNNER_TEMP/talvik-package/talvik/lib/libllama.so" | grep -Eq '\<(vaddps|vfmadd|vpadd|vpxor)';
+          fi
+      - name: Install DEB and exercise service health
+        run: |
+          set -euo pipefail
+          deb="$(find release -name 'talvik_*.deb' -print -quit)"
+          sudo apt-get install -y "./$deb"
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now talvikd.service
+          for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:11434/healthz && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:11434/healthz
+          sudo systemctl restart talvikd.service
+          curl --fail --silent http://127.0.0.1:11434/healthz
+          test "$(stat -c '%U' /var/lib/talvik)" = talvik
+          sudo curl --fail --location --silent --show-error "$QUALIFY_MODEL_URL" \
+            -o "/var/lib/talvik/models/$QUALIFY_MODEL_ID.gguf"
+          printf '%s  %s\n' "$QUALIFY_MODEL_SHA256" "/var/lib/talvik/models/$QUALIFY_MODEL_ID.gguf" \
+            | sha256sum -c -
+          sudo chown -R talvik:talvik /var/lib/talvik/models
+          token="$(sudo -u talvik env TALVIK_HOME=/var/lib/talvik TALVIK_CONFIG=/etc/talvik/config.yaml \
+            TALVIK_MODEL_DIR=/var/lib/talvik/models TALVIK_REGISTRY=/var/lib/talvik/models.registry \
+            TALVIK_TOKEN_FILE=/var/lib/talvik/tokens /usr/bin/talvik auth token create ci \
+            --scopes=models:read,inference,inference:cancel:self)"
+          TALVIK_API_KEY="$token" /usr/bin/talvik load "$QUALIFY_MODEL_ID"
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            http://127.0.0.1:11434/v1/chat/completions \
+            -d "{\"model\":\"$QUALIFY_MODEL_ID\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly PACKAGE_QUALIFIED\"}],\"max_tokens\":8}")"
+          printf '%s\n' "$response" | grep -q PACKAGE_QUALIFIED
+          echo '# local upgrade marker' | sudo tee -a /etc/talvik/config.yaml >/dev/null
+          sudo apt-get install -y "./$deb"
+          grep -q 'local upgrade marker' /etc/talvik/config.yaml
+          sudo systemctl disable --now talvikd.service
+          sudo apt-get remove -y talvik
+          test -d /var/lib/talvik/models
       - uses: actions/upload-artifact@v4.6.2
         with:
           name: linux-packages

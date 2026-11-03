@@ -1,18 +1,43 @@
 [Unit]
-Description=Talvik local model daemon
+Description=Talvik local GGUF model runner
+Documentation=https://github.com/dannyfrancisco/intent-driven-os/tree/main/docs
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=talvik
+Group=talvik
 ExecStart=/usr/lib/talvik/bin/talvikd
-Environment=TALVIK_HOME=%h/.marina
-Environment=TALVIK_STATE_DIR=%h/.marina
-Environment=TALVIK_MODEL_DIR=%h/.marina/models
-Environment=TALVIK_REGISTRY=%h/.marina/models.registry
-Environment=TALVIK_TOKEN_FILE=%h/.marina/tokens
+Environment=TALVIK_HOME=/var/lib/talvik
+Environment=TALVIK_CONFIG=/etc/talvik/config.yaml
+Environment=TALVIK_STATE_DIR=/var/lib/talvik
+Environment=TALVIK_MODEL_DIR=/var/lib/talvik/models
+Environment=TALVIK_REGISTRY=/var/lib/talvik/models.registry
+Environment=TALVIK_TOKEN_FILE=/var/lib/talvik/tokens
+Environment=TALVIK_HTTP_ADDR=127.0.0.1:11434
+Environment=TALVIK_HTTP_AUTH=true
+Environment=TALVIK_BACKEND=cpu
+Environment=LD_LIBRARY_PATH=/usr/lib/talvik/lib
 Restart=on-failure
-RestartSec=2
+RestartSec=3s
 KillSignal=SIGTERM
+RuntimeDirectory=talvik
+StateDirectory=talvik
+CacheDirectory=talvik
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/talvik /var/cache/talvik /run/talvik
+LimitNOFILE=4096
+TimeoutStopSec=30s
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

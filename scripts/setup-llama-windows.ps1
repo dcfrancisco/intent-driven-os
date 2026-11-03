@@ -6,7 +6,9 @@ param(
     [switch]$Vulkan,
     [switch]$Cuda,
     [string]$Repository = "https://github.com/ggml-org/llama.cpp.git",
-    [string]$Commit = "18443257a30c884d5332abb8e7dc43c7ffe42fda"
+    # b12060 includes the Gemma 4 model architecture used by Gemma 4 and
+    # Nemotron 3.5 Bolt E4B GGUF artifacts.
+    [string]$Commit = "b12060"
 )
 
 $ErrorActionPreference = "Stop"

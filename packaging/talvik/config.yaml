@@ -1,0 +1,19 @@
+# System package defaults. Models are intentionally not downloaded at install time.
+name: talvik-system
+version: 1
+state_directory: /var/lib/talvik
+model_directory: /var/lib/talvik/models
+registry_path: /var/lib/talvik/models.registry
+placement_policy: cpu_only
+execution_backend: cpu
+auto_bootstrap: false
+auto_download: false
+auto_load: false
+server:
+  listeners:
+    - name: local-http
+      transport: tcp
+      bind_address: 127.0.0.1
+      port: 11434
+  authentication:
+    enabled: true

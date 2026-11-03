@@ -17,7 +17,9 @@ if [[ -z "${LLAMA_CPP_INSTALL_DIR:-}" ]]; then
   fi
 fi
 LLAMA_CPP_REPOSITORY="${LLAMA_CPP_REPOSITORY:-https://github.com/ggml-org/llama.cpp.git}"
-LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-18443257a30c884d5332abb8e7dc43c7ffe42fda}"
+# b12060 includes the Gemma 4 model architecture used by Gemma 4 and
+# Nemotron 3.5 Bolt E4B GGUF artifacts. Override for a qualification pin.
+LLAMA_CPP_COMMIT="${LLAMA_CPP_COMMIT:-b12060}"
 
 case "$TALVIK_LLAMA_BACKEND" in
   cpu) GGML_CUDA=OFF; GGML_VULKAN=OFF ;;

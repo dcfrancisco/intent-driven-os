@@ -19,21 +19,29 @@ Standalone package builders are separate from the OID image package:
 ```
 
 Both builders fail closed when release binaries or native libraries are
-missing. They do not download models, start services, or remove `.marina`
-state. The user systemd unit stores models and registry data under the
-invoking user's `$HOME/.marina`; enabling it remains an explicit operator
-action with `systemctl --user enable --now talvikd.service`.
+missing. They do not download models, start services, or remove existing
+model state. The packages install a system profile under `/usr/lib/talvik`,
+create the unprivileged `talvik` account, and preserve `/var/lib/talvik` on
+upgrade/removal. The service is enabled explicitly by the operator:
+
+```sh
+sudo apt install ./talvik_*.deb       # Debian/Ubuntu x86_64
+sudo systemctl enable --now talvikd
+# or: sudo dnf install ./talvik-*.rpm # Fedora/RHEL-family x86_64
+```
+
+Linux artifacts target x86_64 systems with glibc 2.35 or newer and systemd.
+The RPM workflow is qualified only on the GitHub Ubuntu packaging builder;
+Fedora/RHEL installation remains a package-layout check until a native RPM
+runner is added. The native CPU build disables AVX, AVX2, AVX-512, FMA, F16C,
+SSE4.2, and BMI2 and does not use `-march=native`; final AMD Phenom II
+acceptance still requires hardware execution. Models are never downloaded
+during package installation.
 
 The tagged Talvik release workflow publishes both the Debian package and the
 RPM package alongside the Linux, macOS Intel, macOS Apple Silicon, and Windows
-archives. The Linux packages install the binaries, native libraries, default
-model metadata, and the per-user systemd unit; they do not enable or start the
-daemon as root. Enable the service for the logged-in user with:
-
-```sh
-systemctl --user daemon-reload
-systemctl --user enable --now talvikd.service
-```
+archives. It also emits `SHA256SUMS` for the release payloads. Manual runs
+publish the same files as GitHub Actions artifacts.
 
 The macOS archives contain `install-talvik-macos.sh`. Run it from the
 extracted archive with `--service` to install a per-user launchd definition:

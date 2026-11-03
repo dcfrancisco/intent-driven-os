@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
+  LLAMA_CPP_COMMIT: b12060
 
 jobs:
   qualify:
@@ -72,7 +72,7 @@ jobs:
           MARINA_HTTP_AUTH: "true"
           LLAMA_CPP_LIB_DIR: ${{ runner.temp }}/marina/lib
           LLAMA_CPP_REQUIRED: "1"
-          LLAMA_CPP_COMMIT: 18443257a30c884d5332abb8e7dc43c7ffe42fda
+          LLAMA_CPP_COMMIT: b12060
           MARINA_MODEL: ${{ inputs.model_id }}
           MARINA_MODEL_SHA256: ${{ inputs.model_sha256 }}
           MARINA_BINARY: ${{ runner.temp }}/marina/bin/talvikd

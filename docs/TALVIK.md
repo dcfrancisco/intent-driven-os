@@ -27,6 +27,29 @@ performance, and IDE integration are currently **UNVERIFIED**. See
 [`qualification/talvik-gpu-qualification.md`](./qualification/talvik-gpu-qualification.md)
 for build variants, exact commands, evidence requirements, and memory controls.
 
+## Model architecture support
+
+Talvik builds one native llama.cpp backend per release; model artifacts do not
+require model-specific compilation. The native setup scripts pin llama.cpp
+`b12060`, which includes the `gemma4` architecture. This covers Gemma 4 GGUFs
+and NVIDIA Nemotron 3.5 Bolt E4B GGUFs, whose architecture is `gemma4` (8B
+total parameters, 4B effective parameters). The Unsloth Bolt E4B repository
+provides text GGUF quants from approximately 3.5 GiB to 15 GiB and advertises
+up to 64K input/output context; actual context and placement remain bounded by
+the host's memory and Talvik admission policy.
+
+The base Bolt E4B GGUF is a supported text-generation target. Its optional
+DFlash drafter is not yet wired into Talvik's speculative-decoding path, so
+Talvik runs the target model without DFlash acceleration. Vision projector
+files must be paired explicitly and are not implied by a model's filename.
+
+`talvik import` acquires, verifies, and registers a GGUF without loading its
+weights. `talvik load` parses the artifact through the installed backend and
+reserves memory/context; `talvik run` then generates from the resident model.
+Unsupported architectures must be reported at load/inspection time rather than
+requiring a user rebuild. Updating llama.cpp is a Talvik release-maintenance
+operation, not a per-model setup step.
+
 ## Current product boundary
 
 The qualified CPU-first slice supports multiple resident GGUF models, one

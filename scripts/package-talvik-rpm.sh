@@ -39,6 +39,9 @@ install -m 0755 "$TALVIKD" "$TOP/SOURCES/talvikd"
 install -m 0755 "$TALVIK" "$TOP/SOURCES/talvik"
 tar -C "$NATIVE_LIB_DIR" -czf "$TOP/SOURCES/talvik-libs.tar.gz" .
 cp "$ROOT/packaging/talvik/talvikd.service" "$TOP/SOURCES/talvikd.service"
+cp "$ROOT/packaging/talvik/config.yaml" "$TOP/SOURCES/config.yaml"
+cp "$ROOT/packaging/sysusers/talvik.conf" "$TOP/SOURCES/talvik.conf"
+cp "$ROOT/packaging/tmpfiles/talvik.conf" "$TOP/SOURCES/talvik-tmpfiles.conf"
 cp "$ROOT/packaging/talvik/default-model.yaml" "$TOP/SOURCES/default-model.yaml"
 cat >"$TOP/SPECS/talvik.spec" <<EOF
 Name: talvik
@@ -48,6 +51,7 @@ Summary: Talvik local GGUF model runner
 License: Apache-2.0
 BuildArch: x86_64
 Requires: systemd
+Requires: glibc >= 2.35
 Requires: libstdc++.so.6()(64bit)
 
 %description
@@ -60,7 +64,10 @@ Standalone CPU-first local GGUF model runner and daemon.
 %install
 install -D -m 0755 %{_sourcedir}/talvik %{buildroot}/usr/lib/talvik/bin/talvik
 install -D -m 0755 %{_sourcedir}/talvikd %{buildroot}/usr/lib/talvik/bin/talvikd
-install -D -m 0644 %{_sourcedir}/talvikd.service %{buildroot}/usr/lib/systemd/user/talvikd.service
+install -D -m 0644 %{_sourcedir}/talvikd.service %{buildroot}/usr/lib/systemd/system/talvikd.service
+install -D -m 0644 %{_sourcedir}/config.yaml %{buildroot}/etc/talvik/config.yaml
+install -D -m 0644 %{_sourcedir}/talvik.conf %{buildroot}/usr/lib/sysusers.d/talvik.conf
+install -D -m 0644 %{_sourcedir}/talvik-tmpfiles.conf %{buildroot}/usr/lib/tmpfiles.d/talvik.conf
 install -D -m 0644 %{_sourcedir}/default-model.yaml %{buildroot}/usr/share/talvik/default-model.yaml
 mkdir -p %{buildroot}/usr/lib/talvik/lib %{buildroot}/usr/bin
 tar -xzf %{_sourcedir}/talvik-libs.tar.gz -C %{buildroot}/usr/lib/talvik/lib
@@ -71,17 +78,24 @@ ln -s /usr/lib/talvik/bin/talvikd %{buildroot}/usr/bin/talvikd
 /usr/bin/talvik
 /usr/bin/talvikd
 /usr/lib/talvik
-/usr/lib/systemd/user/talvikd.service
+/usr/lib/systemd/system/talvikd.service
+/usr/lib/sysusers.d/talvik.conf
+/usr/lib/tmpfiles.d/talvik.conf
+%config(noreplace) /etc/talvik/config.yaml
 /usr/share/talvik/default-model.yaml
 
 %post
-%systemd_user_post talvikd.service
+if command -v systemd-sysusers >/dev/null 2>&1; then systemd-sysusers || :; fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then systemd-tmpfiles --create || :; fi
+if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload || :; fi
 
 %preun
-%systemd_user_preun talvikd.service
+if [ "$1" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now talvikd.service >/dev/null 2>&1 || :
+fi
 
 %postun
-%systemd_user_postun_with_restart talvikd.service
+if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload || :; fi
 EOF
 rpmbuild --define "_topdir $TOP" -bb "$TOP/SPECS/talvik.spec" >/dev/null
 install -d "$OUTPUT_DIR"
