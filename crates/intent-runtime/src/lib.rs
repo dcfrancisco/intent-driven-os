@@ -35,6 +35,85 @@ pub enum IntentState {
     RollbackFailed,
 }
 
+/// Risk class assigned to a proposed system intent before execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntentRisk {
+    /// Observation only; no system mutation is allowed.
+    ReadOnly,
+    /// A user-scoped change with a defined rollback or recovery path.
+    ReversibleUser,
+    /// A privileged change that still has a defined rollback or recovery path.
+    PrivilegedReversible,
+    /// A destructive, security-sensitive, or externally consequential change.
+    Sensitive,
+}
+
+/// A validated, backend-neutral intent proposal.
+///
+/// Model output may populate this proposal, but it is not an execution plan.
+/// Policy, the operation coordinator, and the selected skill must validate it
+/// again before any operation is authorized or executed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IntentProposal {
+    /// Stable identity of the user request.
+    pub id: IntentId,
+    /// Authenticated requester identity.
+    pub requester: String,
+    /// Desired user-visible outcome.
+    pub desired_outcome: String,
+    /// Resources the proposal may inspect or change.
+    pub targets: Vec<String>,
+    /// Typed capabilities required by the proposal.
+    pub required_capabilities: Vec<String>,
+    /// Policy risk classification.
+    pub risk: IntentRisk,
+    /// Authority required by the proposed operation.
+    pub required_authority: String,
+    /// Human-readable proposed steps; these are explanatory until compiled to
+    /// a typed operation by a trusted coordinator.
+    pub proposed_steps: Vec<String>,
+    /// Observable postconditions that must be checked after execution.
+    pub verification_criteria: Vec<String>,
+    /// Explicit execution limits such as time, scope, or resource budgets.
+    pub execution_constraints: Vec<String>,
+}
+
+impl IntentProposal {
+    /// Validate the minimum contract shared by all `MarinaOS` intent adapters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OidError::InvalidInput`] when a required field is missing.
+    pub fn validate(&self) -> Result<(), OidError> {
+        let required = [
+            ("requester", self.requester.as_str()),
+            ("desired outcome", self.desired_outcome.as_str()),
+            ("required authority", self.required_authority.as_str()),
+        ];
+        for (name, value) in required {
+            if value.trim().is_empty() {
+                return Err(OidError::InvalidInput(name.to_owned()));
+            }
+        }
+        if self.targets.is_empty() {
+            return Err(OidError::InvalidInput("targets".to_owned()));
+        }
+        if self.required_capabilities.is_empty() {
+            return Err(OidError::InvalidInput("required capabilities".to_owned()));
+        }
+        if self.proposed_steps.is_empty() {
+            return Err(OidError::InvalidInput("proposed steps".to_owned()));
+        }
+        if self.verification_criteria.is_empty() {
+            return Err(OidError::InvalidInput("verification criteria".to_owned()));
+        }
+        if self.execution_constraints.is_empty() {
+            return Err(OidError::InvalidInput("execution constraints".to_owned()));
+        }
+        Ok(())
+    }
+}
+
 impl IntentState {
     /// Return whether this is a terminal state.
     #[must_use]

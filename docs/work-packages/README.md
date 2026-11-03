@@ -4,6 +4,8 @@ Current Talvik qualification and next gates: [reports index](../reports/README.m
 
 Work Packages (WPs) turn architectural decisions into reviewable bodies of design work. They are documentation and planning units; a WP does not authorize implementation outside its stated scope.
 
+MarinaOS consolidation deliverables: [product architecture](../MARINAOS-PRODUCT-ARCHITECTURE.md), [migration plan](../MARINAOS-MIGRATION-PLAN.md), [capability contracts](../MARINAOS-CAPABILITY-CONTRACTS.md), and [roadmap/qualification](../MARINAOS-ROADMAP-AND-QUALIFICATION.md).
+
 ## Initial sequence
 
 | ID | Work package | Primary outcome |
