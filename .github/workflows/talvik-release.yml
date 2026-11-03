@@ -203,7 +203,7 @@ jobs:
           mkdir -p release
           cp "$RUNNER_TEMP/talvik_${version}_amd64.deb" release/
           cp "$RUNNER_TEMP/packages"/talvik-*.rpm release/
-          (cd release && sha256sum talvik-*.deb talvik-*.rpm > SHA256SUMS)
+(cd release && sha256sum talvik_*.deb talvik-*.rpm > SHA256SUMS)
       - name: Validate package payloads and native linkage
         run: |
           set -euo pipefail
