@@ -44,21 +44,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: talvik-linux-x86_64.tar.gz
             shell: bash
-          - name: macos-intel
-            os: macos-15-intel
-            target: x86_64-apple-darwin
-            archive: talvik-macos-intel.tar.gz
-            shell: bash
-          - name: macos-apple-silicon
-            os: macos-15
-            target: aarch64-apple-darwin
-            archive: talvik-macos-apple-silicon.tar.gz
-            shell: bash
-          - name: windows-x86_64
-            os: windows-2022
-            target: x86_64-pc-windows-msvc
-            archive: talvik-windows-x86_64-preview.zip
-            shell: pwsh
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.name != 'linux-x86_64' }}
     defaults:
