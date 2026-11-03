@@ -539,7 +539,7 @@ fn percentile(samples: &[f64], percentile: Percentile) -> Option<f64> {
     let mut sorted = samples.to_vec();
     sorted.sort_by(f64::total_cmp);
     match percentile {
-        Percentile::Median if sorted.len() % 2 == 0 => {
+        Percentile::Median if sorted.len().is_multiple_of(2) => {
             let upper = sorted.len() / 2;
             Some(f64::midpoint(sorted[upper - 1], sorted[upper]))
         }

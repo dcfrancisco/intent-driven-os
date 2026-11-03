@@ -750,6 +750,7 @@ pub struct NativeLoadOptions {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 const fn cpu_load_options() -> NativeLoadOptions {
     NativeLoadOptions {
         backend: NativeBackend::Cpu,
@@ -1280,6 +1281,8 @@ impl NativeModel {
     }
 
     fn tokenize_with_special(&self, text: &str, parse_special: bool) -> Result<Vec<i32>, String> {
+        #[cfg(not(native_llama_cpp))]
+        let _ = self;
         #[cfg(native_llama_cpp)]
         unsafe {
             let vocabulary = ffi::llama_model_get_vocab(self.pointer.cast_const());
@@ -1591,7 +1594,8 @@ impl NativeModel {
     #[allow(
         clippy::missing_panics_doc,
         clippy::too_many_arguments,
-        clippy::too_many_lines
+        clippy::too_many_lines,
+        unused_mut
     )]
     pub fn generate_stream_with_grammar_and_images<F>(
         &self,
