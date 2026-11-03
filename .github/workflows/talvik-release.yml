@@ -224,9 +224,11 @@ jobs:
           sudo chown -R talvik:talvik /var/lib/talvik/models
           token="$(sudo -u talvik env TALVIK_HOME=/var/lib/talvik TALVIK_CONFIG=/etc/talvik/config.yaml \
             TALVIK_MODEL_DIR=/var/lib/talvik/models TALVIK_REGISTRY=/var/lib/talvik/models.registry \
-            TALVIK_TOKEN_FILE=/var/lib/talvik/tokens /usr/bin/talvik auth token create ci \
+            TALVIK_TOKEN_FILE=/var/lib/talvik/tokens LD_LIBRARY_PATH=/usr/lib/talvik/lib \
+            /usr/bin/talvik auth token create ci \
             --scopes=models:read,inference,inference:cancel:self)"
-          TALVIK_API_KEY="$token" /usr/bin/talvik load "$QUALIFY_MODEL_ID"
+          TALVIK_API_KEY="$token" LD_LIBRARY_PATH=/usr/lib/talvik/lib \
+            /usr/bin/talvik load "$QUALIFY_MODEL_ID"
           response="$(curl --fail --silent --show-error \
             -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
             http://127.0.0.1:11434/v1/chat/completions \
