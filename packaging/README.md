@@ -1,5 +1,29 @@
 # OID/Talvik image packaging
 
+## MarinaOS foundation package
+
+scripts/package-marinaos-core-deb.sh builds the independent marinaos-core
+Ubuntu amd64 package from the release marinaosctl binary. It installs only the
+MarinaOS foundation control plane and systemd assets; Talvik is optional and
+is not a dependency. The builder emits a .deb and .deb.sha256 sidecar.
+scripts/qualify-marinaos-core-deb.sh performs isolated package-content and
+removal-retention checks without modifying host services.
+
+On a clean supported Ubuntu VM, install and exercise the package with:
+
+    sudo apt install ./marinaos-core_*.deb
+    sudo systemctl enable --now marinaos-foundation.service
+    marinaosctl status
+    marinaosctl doctor
+    marinaosctl hardware
+    sudo systemctl restart marinaos-foundation.service
+    sudo apt remove marinaos-core
+
+The removal command intentionally preserves /var/lib/marinaos and the
+conffile. This procedure is documentation until it has been executed on a
+clean Ubuntu VM and recorded with hashes and logs; the repository does not
+claim a bootable image.
+
 ## Standalone Talvik packages
 
 Standalone package builders are separate from the OID image package:

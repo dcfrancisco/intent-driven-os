@@ -115,5 +115,10 @@ MarinaOS consolidation deliverables: [product architecture](../MARINAOS-PRODUCT-
 | WP-0110 | Talvik Gemma 4 Default Model | Bootstrap the pinned Gemma 4 model and projector as Talvik's default |
 
 | WP-0111 | Working Local Runner Stabilization | Close service, API, IDE, performance, and installation gaps with explicit RC gates |
+| WP-0112 | MarinaOS Linux Foundation | Independent Ubuntu foundation DEB, service, diagnostics, and lifecycle evidence |
+| WP-0113 | MarinaOS Ubuntu Clean-VM Qualification | Execute install, service, upgrade, removal, offline, and degraded-mode gates |
+| WP-0114 | MarinaOS Package Split | Separate core daemon and CLI packages with matching versioned dependencies |
+| WP-0115 | MarinaOS Local IPC | Read-only daemon/client socket contract and restart behavior |
+| WP-0116 | MarinaOS Native Desktop UI Foundation | User-session GTK/libadwaita shell connected to foundation IPC with explicit unavailable states |
 
 WPs may be refined or split as decisions mature. Dependencies indicate design order, not an implementation commitment.

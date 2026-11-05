@@ -1,0 +1,13 @@
+[Unit]
+Description=MarinaOS user-session desktop
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/marina-desktop
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

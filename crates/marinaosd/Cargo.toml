@@ -1,0 +1,16 @@
+[package]
+name = "marinaosd"
+description = "MarinaOS Linux foundation daemon and local control boundary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "marinaosd"
+path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+[Unit]
+Description=MarinaOS foundation daemon
+Documentation=https://github.com/dannyfrancisco/intent-driven-os/blob/main/docs/adr/0057-marinaos-local-ipc.md
+After=local-fs.target
+
+[Service]
+Type=simple
+User=marinaos
+Group=marinaos
+ExecStart=/usr/libexec/marinaosd --config /etc/marinaos/marinaos.conf
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=marinaos
+StateDirectory=marinaos
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/var/lib/marinaos /run/marinaos
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

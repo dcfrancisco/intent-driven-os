@@ -1,0 +1,15 @@
+[package]
+name = "marina-desktop"
+description = "MarinaOS native user-session desktop shell"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.88"
+authors = ["Open Intelligence Desktop contributors"]
+repository = "https://github.com/open-intelligence-desktop/open-intelligence-desktop"
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk4 = { version = "0.9", package = "gtk4" }
+libadwaita = { version = "0.7", package = "libadwaita", features = ["v1_5"] }

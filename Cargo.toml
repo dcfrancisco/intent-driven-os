@@ -18,7 +18,10 @@ members = [
     "crates/desktop-shell",
     "crates/operation-coordinator",
     "crates/docs",
+    "crates/marinaosctl",
+    "crates/marinaosd",
 ]
+exclude = ["apps/marina-desktop"]
 
 [workspace.package]
 version = "0.1.0"

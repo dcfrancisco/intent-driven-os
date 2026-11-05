@@ -91,6 +91,23 @@ future orchestrator is OID-owned or Marina-branded is an explicit open decision.
 WP-0104 is design-only until ADR-0027 and the capability contract are reviewed;
 no system or user executor daemon is implied to exist.
 
+## MarinaOS Phase 1 Linux foundation
+
+The Phase 1 operating-system boundary is the independently installable
+marinaos-core Ubuntu amd64 package. It contains marinaosctl and the
+unprivileged marinaos-foundation.service, which owns readiness and foundation
+state under /var/lib/marinaos. The package does not contain OID, Talvik,
+models, or external AI integrations. Talvik remains an optional separate
+package and its absence must not affect boot, status, doctor, or hardware
+reporting.
+
+The proposed qualification baseline is Ubuntu 24.04 LTS amd64. The existing
+Debian Bookworm image/manifest.yaml remains a historical prototype and is not
+a qualified MarinaOS image. The package CI produces a DEB and SHA-256
+sidecar; clean-VM installation, systemd lifecycle, upgrade, removal, and
+hardware gates require recorded execution evidence before status can advance
+beyond BUILT or UNIT_TESTED.
+
 ## Operation lifecycle
 
 ```mermaid

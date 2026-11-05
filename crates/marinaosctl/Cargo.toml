@@ -1,0 +1,16 @@
+[package]
+name = "marinaosctl"
+description = "MarinaOS Linux foundation status, diagnostics, hardware, and service helper."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "marinaosctl"
+path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,70 @@
+name: MarinaOS Linux foundation
+
+on:
+  push:
+    paths:
+      - 'crates/marinaosctl/**'
+      - 'crates/marinaosd/**'
+      - 'packaging/marinaos/**'
+      - 'packaging/sysusers/marinaos.conf'
+      - 'packaging/tmpfiles/marinaos.conf'
+      - 'scripts/package-marinaos-core-deb.sh'
+      - 'scripts/qualify-marinaos-core-deb.sh'
+      - 'scripts/smoke-marinaos-ipc.sh'
+      - '.github/workflows/marinaos-foundation.yml'
+  pull_request:
+    paths:
+      - 'crates/marinaosctl/**'
+      - 'packaging/marinaos/**'
+      - 'packaging/sysusers/marinaos.conf'
+      - 'packaging/tmpfiles/marinaos.conf'
+      - 'scripts/package-marinaos-core-deb.sh'
+      - 'scripts/qualify-marinaos-core-deb.sh'
+      - '.github/workflows/marinaos-foundation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@1.90.0
+      - name: Build and test foundation control plane
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p marinaosctl -p marinaosd
+          cargo build --locked --release -p marinaosctl -p marinaosd
+          cargo build --locked -p marinaosctl -p marinaosd
+          ./scripts/smoke-marinaos-ipc.sh
+      - name: Build DEB and checksum
+        run: |
+          VERSION_TAG="$(git rev-parse --short=12 HEAD)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            ./scripts/package-marinaos-core-deb.sh --version "0.1.0+"$VERSION_TAG \
+              --output-dir artifacts
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" \
+            ./scripts/package-marinaos-core-deb.sh --version "0.1.1+"$VERSION_TAG \
+              --output-dir artifacts
+      - name: Qualify isolated package lifecycle
+        run: |
+          VERSION_TAG="$(git rev-parse --short=12 HEAD)"
+          ./scripts/qualify-marinaos-core-deb.sh \
+            --core-package "artifacts/marinaos-core_0.1.0+"$VERSION_TAG"_amd64.deb" \
+            --cli-package "artifacts/marinaos-cli_0.1.0+"$VERSION_TAG"_amd64.deb" \
+            --upgrade-core-package "artifacts/marinaos-core_0.1.1+"$VERSION_TAG"_amd64.deb" \
+            --upgrade-cli-package "artifacts/marinaos-cli_0.1.1+"$VERSION_TAG"_amd64.deb" \
+            --report artifacts/marinaos-core-qualification.json
+      - name: Verify systemd unit syntax
+        run: systemd-analyze verify packaging/marinaos/marinaosd.service
+      - name: Upload DEB, checksum, and evidence
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: marinaos-core-ubuntu-24.04-amd64
+          path: |
+            artifacts/marinaos-core_*.deb
+            artifacts/marinaos-core_*.deb.sha256
+            artifacts/marinaos-core-qualification.json

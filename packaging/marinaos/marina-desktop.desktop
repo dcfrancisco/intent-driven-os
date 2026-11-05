@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=MarinaOS
+Comment=Trustworthy, observable system operations
+Exec=marina-desktop
+Icon=org.marinaos.Desktop
+Terminal=false
+Type=Application
+Categories=System;Utility;
+Keywords=diagnostics;system;MarinaOS;
+StartupNotify=true
+X-GNOME-UsesNotifications=false
